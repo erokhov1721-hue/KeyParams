@@ -1,1 +1,4 @@
+pip-system-certs>=0
 Flask>=3.0,<4.0
+easyocr>=1.7,<2.0
+Pillow>=10.0,<13.0
