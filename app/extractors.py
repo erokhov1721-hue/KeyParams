@@ -114,7 +114,21 @@ def _numeric_cell_value(cell):
     return parse_number(match.group(1))
 
 
-def _label_end_index(row, must_contain):
+def _token_matches(token, text):
+    if isinstance(token, tuple):
+        return any(t in text for t in token)
+    return token in text
+
+
+def _label_matches(label, must_contain, must_not_contain):
+    if not all(_token_matches(token, label) for token in must_contain):
+        return False
+    if any(token in label for token in must_not_contain):
+        return False
+    return True
+
+
+def _label_end_index(row, must_contain, must_not_contain=()):
     """Index of the last cell of the label matching ``must_contain``, else None.
 
     The label has to fit in at most ``MAX_LABEL_CELLS`` adjacent non-numeric
@@ -132,18 +146,18 @@ def _label_end_index(row, must_contain):
             if any(_numeric_cell_value(cell) is not None for cell in window):
                 break
             joined = ' '.join(str(cell or '') for cell in window).lower()
-            if all(token in joined for token in must_contain):
+            if _label_matches(joined, must_contain, must_not_contain):
                 return start + length - 1
     return None
 
 
-def _find_area_value(tables, must_contain):
+def _find_area_value(tables, must_contain, must_not_contain=()):
     """First number that follows a cell (or cell pair) labelled with the tokens."""
     for table in tables:
         for row in table:
             if not row:
                 continue
-            end = _label_end_index(row, must_contain)
+            end = _label_end_index(row, must_contain, must_not_contain)
             if end is None:
                 continue
             for cell in row[end + 1:]:
@@ -153,13 +167,45 @@ def _find_area_value(tables, must_contain):
     return None
 
 
+LINE_NUMBER_RE = re.compile(r'(?<!\w)[-+]?\d[\d\s]*(?:[.,]\d+)?')
+
+
+def _last_number_in_line(line):
+    matches = LINE_NUMBER_RE.findall(line)
+    if not matches:
+        return None
+    return parse_number(matches[-1])
+
+
+def _find_area_value_in_text(lines, must_contain, must_not_contain=()):
+    """Like ``_find_area_value``, but over flat text lines (e.g. OCR output)
+    instead of table rows: a label and its number don't sit in separate grid
+    cells, so the number is taken from the rest of the matching line, or —
+    if the label fills the whole line — from the line right after it."""
+    for i, line in enumerate(lines):
+        label = line.lower()
+        if not _label_matches(label, must_contain, must_not_contain):
+            continue
+        value = _last_number_in_line(line)
+        if value is not None:
+            return value
+        if i + 1 < len(lines):
+            value = _last_number_in_line(lines[i + 1])
+            if value is not None:
+                return value
+    return None
+
+
 def extract_underground_area(tz):
     return _find_area_value(tz.tables, ('площад', 'подземн'))
 
 
 def extract_aboveground_area(tz):
-    return _find_area_value(tz.tables, ('площад', 'надземн'))
+    return _find_area_value(tz.tables, ('площад', ('надземн', 'наземн')))
 
 
 def extract_total_area(tz):
-    return _find_area_value(tz.tables, ('обща', 'площад'))
+    return _find_area_value(
+        tz.tables, ('обща', 'площад'),
+        must_not_contain=('подземн', 'надземн', 'наземн'),
+    )

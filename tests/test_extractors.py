@@ -248,3 +248,54 @@ def test_real_aboveground_area_not_present(real_tz):
 
 def test_real_total_area_not_present(real_tz):
     assert extractors.extract_total_area(real_tz) is None
+
+
+def test_extract_aboveground_area_accepts_nazemnaya_variant():
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["1", "Общая наземная площадь", "м2", "54 116"]]],
+    )
+    assert extractors.extract_aboveground_area(tz) == 54116.0
+
+
+def test_extract_total_area_ignores_subarea_rows():
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["1", "Общая площадь подземного паркинга", "м2", "13 297"],
+            ["2", "Общая наземная площадь", "м2", "54 116"],
+            ["3", "Общая площадь", "м2", "67 413"],
+        ]],
+    )
+    assert extractors.extract_total_area(tz) == 67413.0
+
+
+def test_find_area_value_in_text_same_line():
+    lines = ["Общая площадь м2 67 413"]
+    value = extractors._find_area_value_in_text(
+        lines, ('обща', 'площад'),
+        must_not_contain=('подземн', 'надземн', 'наземн'),
+    )
+    assert value == 67413.0
+
+
+def test_find_area_value_in_text_next_line():
+    lines = ["Площадь подземной части", "м2 13 297"]
+    assert extractors._find_area_value_in_text(lines, ('площад', 'подземн')) == 13297.0
+
+
+def test_find_area_value_in_text_disambiguates_total_from_subareas():
+    lines = [
+        "Общая площадь подземного паркинга м2 13 297",
+        "Общая наземная площадь м2 54 116",
+        "Общая площадь м2 67 413",
+    ]
+    value = extractors._find_area_value_in_text(
+        lines, ('обща', 'площад'),
+        must_not_contain=('подземн', 'надземн', 'наземн'),
+    )
+    assert value == 67413.0
+
+
+def test_find_area_value_in_text_not_found():
+    assert extractors._find_area_value_in_text(["Ничего релевантного"], ('обща', 'площад')) is None
