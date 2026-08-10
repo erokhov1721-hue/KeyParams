@@ -837,7 +837,11 @@ def _apply_ocr_fallback(data, dgp, tz):
         return []
 
     needs_dgp_ocr = any(f in TEXT_FIELDS for f in missing)
-    needs_tz_ocr = any(f in TEXT_FIELDS or f in AREA_FIELDS for f in missing)
+    # Deliberately narrower than "any missing field" — TEXT_FIELDS ∪ AREA_FIELDS
+    # covers all 6 fields, which would make this unconditionally True past the
+    # `if not missing` guard above and defeat the point of checking at all.
+    # Only building_class and the area fields are ever sourced from tz.
+    needs_tz_ocr = any(f == "building_class" or f in AREA_FIELDS for f in missing)
 
     dgp_lines = _ocr_lines(dgp.images) if needs_dgp_ocr else []
     tz_lines = _ocr_lines(tz.images) if needs_tz_ocr else []
