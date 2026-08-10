@@ -83,7 +83,11 @@ def project_page(slug):
         abort(404)
     data = passport_module.load_passport(path)
     return render_template(
-        "project.html", slug=slug, passport=data, fields=passport_module.PASSPORT_FIELDS
+        "project.html",
+        slug=slug,
+        passport=data,
+        fields=passport_module.PASSPORT_FIELDS,
+        field_labels=passport_module.FIELD_LABELS,
     )
 
 

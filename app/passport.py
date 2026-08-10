@@ -10,6 +10,16 @@ PASSPORT_FIELDS = [
     "aboveground_area_sqm", "total_area_sqm",
 ]
 
+FIELD_LABELS = {
+    "project_name": "Название проекта",
+    "year_signed": "Год подписания договора",
+    "building_class": "Класс здания",
+    "general_contractor": "Генподрядчик",
+    "underground_area_sqm": "Площадь подземной части, м²",
+    "aboveground_area_sqm": "Площадь надземной части, м²",
+    "total_area_sqm": "Общая площадь комплекса, м²",
+}
+
 
 def build_passport(project_name: str, dgp_path, tz_path) -> dict:
     dgp = read_docx(dgp_path)

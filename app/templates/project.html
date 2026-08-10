@@ -1,18 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>{{ passport.project_name }}</h2>
+<div class="page-head">
+  <div>
+    <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
+    <h1>{{ passport.project_name }}</h1>
+    <p class="page-sub">
+      Поля с зелёной пометкой заполнены автоматически из документов,
+      с жёлтой — нужно заполнить вручную.
+    </p>
+  </div>
+</div>
+
 <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
-{% for field in fields %}
-  {% if field != "project_name" %}
-  <p>
-    <label>{{ field }}:
-      <input type="text" name="{{ field }}"
-             value="{{ passport[field] if passport[field] is not none else '' }}"
-             {% if passport[field] is none %}style="background:#fff3cd"{% endif %}>
-    </label>
-  </p>
-  {% endif %}
-{% endfor %}
-<button type="submit">Сохранить</button>
+  <div class="card fields-card">
+    {% for field in fields %}
+      {% if field != "project_name" %}
+      {% set value = passport[field] %}
+      <div class="field-row {{ 'is-empty' if value is none else 'is-filled' }}">
+        <div class="field-label-col">
+          <span class="field-label">{{ field_labels.get(field, field) }}</span>
+          {% if value is none %}
+            <span class="badge badge-warning">Заполните вручную</span>
+          {% else %}
+            <span class="badge badge-success">Заполнено автоматически</span>
+          {% endif %}
+        </div>
+        <input type="text" name="{{ field }}" value="{{ value if value is not none else '' }}" placeholder="Введите значение">
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Сохранить изменения</button>
+  </div>
 </form>
 {% endblock %}
