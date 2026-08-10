@@ -133,6 +133,49 @@ def test_extract_underground_area_ignores_floor_count_row():
     assert extractors.extract_underground_area(tz) is None
 
 
+def test_extract_total_area_takes_first_value_column():
+    # "Итого / Корпус 1 / Корпус 2" breakdown: the value belonging to the
+    # label is the one right after it, not the rightmost number in the row.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["№", "Наименование", "Ед.изм", "Итого", "Корпус 1", "Корпус 2"],
+            ["1", "Общая площадь", "м2", "50000", "20000", "30000"],
+        ]],
+    )
+    assert extractors.extract_total_area(tz) == 50000.0
+
+
+def test_extract_underground_area_ignores_floor_count_row_with_area_column():
+    # The row is about a floor *count*; the tokens "площад" and "подземн" only
+    # both appear because an unrelated "Площадь застройки" column sits in the
+    # same row. Joining the whole row into one label would return 999.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["1", "Количество подземных этажей", "этаж", "2", "Площадь застройки", "999"],
+        ]],
+    )
+    assert extractors.extract_underground_area(tz) is None
+
+
+def test_extract_area_skips_unit_cell_as_value():
+    # "м2" must not be read as the number 2.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["1", "Площадь надземной части", "м2", "2 000"]]],
+    )
+    assert extractors.extract_aboveground_area(tz) == 2000.0
+
+
+def test_extract_area_label_split_across_two_cells():
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["Площадь", "подземной части", "1 234"]]],
+    )
+    assert extractors.extract_underground_area(tz) == 1234.0
+
+
 # --- real fixtures: documented expectations from the design spec ---
 
 def test_real_general_contractor(real_dgp):

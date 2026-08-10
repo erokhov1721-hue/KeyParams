@@ -14,6 +14,14 @@ BUILDING_CLASS_KEYWORD_RE = re.compile(
     r'бизнес|премиум|комфорт|эконом|элит', re.IGNORECASE
 )
 WHITESPACE_RE = re.compile(r'\s+')
+# A cell holding a value: a number, optionally with a trailing unit of measure.
+NUMERIC_CELL_RE = re.compile(
+    r'^[-+−]?\d[\d\s .,]*'
+    r'(?:\s*(?:м2|м²|кв\.?\s*м\.?|га|шт\.?|эт\.?|этаж(?:а|ей)?)\.?)?$',
+    re.IGNORECASE,
+)
+# Longest label the area extractors accept, in adjacent table cells.
+MAX_LABEL_CELLS = 2
 
 
 def parse_number(text):
@@ -79,18 +87,60 @@ def extract_building_class(dgp, tz):
     return None
 
 
+def _numeric_cell_value(cell):
+    """Value of a cell that is a bare number, otherwise None.
+
+    A cell like "м2" is a unit of measure, not a value, even though
+    ``parse_number`` happily digs a 2 out of it. Recognising which cells are
+    numbers at all is what lets ``_find_area_value`` scan left-to-right from a
+    label; the previous implementation had to scan right-to-left to step over
+    unit cells, which made it return the rightmost number of a multi-column
+    row instead of the one belonging to the matched label.
+    """
+    text = str(cell or '').strip()
+    if not text:
+        return None
+    if not NUMERIC_CELL_RE.match(text):
+        return None
+    return parse_number(text)
+
+
+def _label_end_index(row, must_contain):
+    """Index of the last cell of the label matching ``must_contain``, else None.
+
+    The label has to fit in at most ``MAX_LABEL_CELLS`` adjacent non-numeric
+    cells — Word tables sometimes split a caption over two cells, but a label
+    is never spread across a whole row. Joining the entire row instead (as the
+    previous implementation did) matched rows that merely happen to mention
+    the tokens in unrelated columns, e.g. a "количество подземных этажей" row
+    that also has a "Площадь застройки" column further right.
+    """
+    for start in range(len(row)):
+        for length in range(1, MAX_LABEL_CELLS + 1):
+            window = row[start:start + length]
+            if len(window) < length:
+                break
+            if any(_numeric_cell_value(cell) is not None for cell in window):
+                break
+            joined = ' '.join(str(cell or '') for cell in window).lower()
+            if all(token in joined for token in must_contain):
+                return start + length - 1
+    return None
+
+
 def _find_area_value(tables, must_contain):
+    """First number that follows a cell (or cell pair) labelled with the tokens."""
     for table in tables:
         for row in table:
             if not row:
                 continue
-            # Check if any cell in the row contains all required tokens
-            label = ' '.join(str(cell or '') for cell in row).lower()
-            if all(token in label for token in must_contain):
-                for cell in reversed(row[1:]):
-                    value = parse_number(cell)
-                    if value is not None:
-                        return value
+            end = _label_end_index(row, must_contain)
+            if end is None:
+                continue
+            for cell in row[end + 1:]:
+                value = _numeric_cell_value(cell)
+                if value is not None:
+                    return value
     return None
 
 

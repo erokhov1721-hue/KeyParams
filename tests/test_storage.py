@@ -40,10 +40,22 @@ def test_list_project_slugs_on_empty_root(tmp_path):
     assert storage.list_project_slugs(empty_root) == []
 
 
+def _finish_project(root, slug):
+    """Make a created project dir look complete by giving it a passport.json."""
+    storage.passport_path(root, slug).write_text("{}", encoding="utf-8")
+
+
 def test_list_project_slugs_returns_sorted_names(tmp_path):
-    storage.create_project(tmp_path, "Bravo")
-    storage.create_project(tmp_path, "Alpha")
+    for name in ("Bravo", "Alpha"):
+        _finish_project(tmp_path, storage.create_project(tmp_path, name))
     assert storage.list_project_slugs(tmp_path) == ["Alpha", "Bravo"]
+
+
+def test_list_project_slugs_skips_dir_without_passport(tmp_path):
+    """An orphaned project dir (no passport.json) must not be listed."""
+    storage.create_project(tmp_path, "Orphan")
+    _finish_project(tmp_path, storage.create_project(tmp_path, "Good"))
+    assert storage.list_project_slugs(tmp_path) == ["Good"]
 
 
 def test_raw_dir_and_passport_path(tmp_path):

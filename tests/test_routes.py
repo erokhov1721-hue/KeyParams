@@ -1,5 +1,4 @@
 import io
-from urllib.parse import unquote
 
 from app import create_app
 from tests.helpers import build_docx_bytes, document_xml
@@ -99,7 +98,7 @@ def test_update_project_saves_manual_field(tmp_path):
         "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
     }, content_type="multipart/form-data")
     project_url = create_resp.headers["Location"]
-    slug = unquote(project_url.rstrip("/").rsplit("/", 1)[-1])
+    slug = "Правка"
 
     update_resp = client.post(project_url, data={
         "year_signed": "2025",
@@ -117,12 +116,83 @@ def test_update_project_saves_manual_field(tmp_path):
     assert saved["aboveground_area_sqm"] == 2000.0
 
 
-def test_path_traversal_blocked(tmp_path):
-    """Verify that traversal slugs like .. are blocked."""
-    app = create_app(tmp_path)
-    client = app.test_client()
+def _root_with_passport_above(tmp_path):
+    """Projects root with a real passport.json planted one level above it.
+
+    Without the slug whitelist guard, the slug ".." would resolve to that
+    planted file, so the route would answer 200 instead of 404.
+    """
+    root = tmp_path / "projects"
+    root.mkdir()
+    (tmp_path / "passport.json").write_text(
+        '{"project_name": "Похищенный"}', encoding="utf-8"
+    )
+    return root
+
+
+def test_path_traversal_blocked_on_get(tmp_path):
+    root = _root_with_passport_above(tmp_path)
+    assert (root / ".." / "passport.json").exists(), "test setup must be a real repro"
+
+    client = create_app(root).test_client()
     resp = client.get("/projects/..")
     assert resp.status_code == 404
+
+
+def test_path_traversal_blocked_on_post(tmp_path):
+    root = _root_with_passport_above(tmp_path)
+    assert (root / ".." / "passport.json").exists(), "test setup must be a real repro"
+
+    client = create_app(root).test_client()
+    resp = client.post("/projects/..", data={"building_class": "Бизнес"})
+    assert resp.status_code == 404
+    # The planted passport must be untouched.
+    assert "Похищенный" in (tmp_path / "passport.json").read_text(encoding="utf-8")
+
+
+def test_create_project_with_name_that_slugifies_to_empty(tmp_path):
+    """A name made only of stripped characters is a 400, not a 500."""
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": '???',
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 400
+
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_with_hash_in_name_redirect_is_followable(tmp_path):
+    """A '#' in the project name must not truncate the redirect target."""
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Дом #5 100%",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 302
+
+    page = client.get(resp.headers["Location"])
+    assert page.status_code == 200
+
+
+def test_docx_error_message_hides_server_paths(tmp_path):
+    """The user-facing error must not leak absolute filesystem paths."""
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Тест",
+        "dgp_file": (io.BytesIO(b"this has a .docx name but is not a real zip"), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 400
+    body = resp.data.decode("utf-8")
+    assert "dgp.docx" not in body
+    assert str(tmp_path) not in body
 
 
 def test_no_orphan_on_corrupted_docx(tmp_path):

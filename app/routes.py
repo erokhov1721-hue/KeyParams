@@ -1,6 +1,6 @@
 import shutil
 
-from flask import Blueprint, abort, current_app, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, redirect, render_template, request, url_for
 
 from . import extractors, passport as passport_module, storage
 from .document_reader import DocxReadError
@@ -40,7 +40,16 @@ def create_project():
     if not tz_file or not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
         return render_template("new_project.html", error="Загрузите файл ТЗ в формате .docx"), 400
 
-    slug = storage.create_project(root, project_name)
+    try:
+        slug = storage.create_project(root, project_name)
+    except ValueError:
+        # The name is non-empty but consists only of characters slugify
+        # strips (e.g. "***"), so there is no usable folder name for it.
+        return render_template(
+            "new_project.html",
+            error="Название проекта должно содержать хотя бы одну букву или цифру",
+        ), 400
+
     raw = storage.raw_dir(root, slug)
     dgp_path = raw / "dgp.docx"
     tz_path = raw / "tz.docx"
@@ -50,13 +59,18 @@ def create_project():
     try:
         data = passport_module.build_passport(project_name, dgp_path, tz_path)
     except DocxReadError as e:
-        shutil.rmtree(storage.project_dir(root, slug))
-        return render_template("new_project.html", error=f"Не удалось прочитать файл: {e}"), 400
+        # Don't let a cleanup failure (file lock, permissions) turn the
+        # intended 400 into a 500 — the orphan directory is harmless anyway,
+        # storage.list_project_slugs ignores directories without a passport.
+        current_app.logger.warning("Не удалось разобрать загруженный файл: %s", e)
+        shutil.rmtree(storage.project_dir(root, slug), ignore_errors=True)
+        return render_template(
+            "new_project.html",
+            error="Не удалось прочитать файл — убедитесь, что это корректный .docx",
+        ), 400
 
     passport_module.save_passport(data, storage.passport_path(root, slug))
-    resp = make_response("", 302)
-    resp.headers["Location"] = f"/projects/{slug}"
-    return resp
+    return redirect(url_for("main.project_page", slug=slug))
 
 
 @bp.route("/projects/<slug>", methods=["GET"])
@@ -93,6 +107,4 @@ def update_project(slug):
         else:
             data[field] = raw_value
     passport_module.save_passport(data, path)
-    resp = make_response("", 302)
-    resp.headers["Location"] = f"/projects/{slug}"
-    return resp
+    return redirect(url_for("main.project_page", slug=slug))

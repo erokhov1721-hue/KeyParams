@@ -21,26 +21,51 @@ RELS = (
 )
 
 
-def _paragraph_xml(text):
+class Raw(str):
+    """Marker for a cell whose value is literal XML rather than plain text.
+
+    Lets a test put arbitrary content (e.g. a nested ``<w:tbl>``) inside a
+    table cell: ``table_xml([[ "label", Raw(table_xml(...)) ]])``.
+    """
+
+
+def paragraph_xml(text):
     return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
 
 
-def _table_xml(rows):
+def table_xml(rows):
     trs = ""
     for row in rows:
-        tcs = "".join(f"<w:tc>{_paragraph_xml(cell)}</w:tc>" for cell in row)
+        tcs = ""
+        for cell in row:
+            inner = cell if isinstance(cell, Raw) else paragraph_xml(cell)
+            tcs += f"<w:tc>{inner}</w:tc>"
         trs += f"<w:tr>{tcs}</w:tr>"
     return f"<w:tbl>{trs}</w:tbl>"
 
 
-def document_xml(paragraphs=(), tables=()):
-    body = "".join(_paragraph_xml(p) for p in paragraphs)
-    body += "".join(_table_xml(t) for t in tables)
+def sdt_xml(inner_xml):
+    """Wrap literal XML in a content control, as real Word documents do."""
+    return f"<w:sdt><w:sdtPr/><w:sdtContent>{inner_xml}</w:sdtContent></w:sdt>"
+
+
+# Backwards-compatible private aliases (kept so older call sites keep working).
+_paragraph_xml = paragraph_xml
+_table_xml = table_xml
+
+
+def document_xml_from_body(body_xml):
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f'<w:body>{body}</w:body></w:document>'
+        f'<w:body>{body_xml}</w:body></w:document>'
     )
+
+
+def document_xml(paragraphs=(), tables=()):
+    body = "".join(paragraph_xml(p) for p in paragraphs)
+    body += "".join(table_xml(t) for t in tables)
+    return document_xml_from_body(body)
 
 
 def build_docx_bytes(doc_xml):
