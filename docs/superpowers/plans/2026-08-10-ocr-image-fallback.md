@@ -9,71 +9,58 @@
 
 **Architecture:** `document_reader.py` дополнительно достаёт байты всех
 растровых картинок из архива .docx (`DocxContent.images`). Новый модуль
-`app/ocr.py` — единственная точка входа в Tesseract OCR, никогда не бросает
-исключений. `passport.py` считает поля как раньше и, только если что-то
-осталось `None`, лениво распознаёт нужные картинки и повторяет те же самые
-функции поиска из `extractors.py` (для текстовых полей — через временный
-`DocxContent`, для трёх площадей — через новую функцию для плоского текста).
-Список полей, заполненных из OCR, сохраняется в `passport.json` как
-`ocr_fields` и показывается в интерфейсе отдельным значком.
+`app/ocr.py` — единственная точка входа в распознавание текста (EasyOCR),
+никогда не бросает исключений. `passport.py` считает поля как раньше и,
+только если что-то осталось `None`, лениво распознаёт нужные картинки и
+повторяет те же самые функции поиска из `extractors.py` (для текстовых
+полей — через временный `DocxContent`, для трёх площадей — через новую
+функцию для плоского текста). Список полей, заполненных из OCR,
+сохраняется в `passport.json` как `ocr_fields` и показывается в интерфейсе
+отдельным значком.
 
-**Tech Stack:** Python 3, Flask (без изменений), Tesseract OCR (системная
-программа, локально) + `pytesseract` + `Pillow` (новые зависимости), pytest.
+**Tech Stack:** Python 3, Flask (без изменений), EasyOCR (`pip`-библиотека,
+без системных программ и без прав администратора) + `Pillow` (для
+тестовых картинок), pytest.
 
 ## Global Constraints
 
 - Никаких внешних облачных LLM/API — распознавание текста с картинок тоже
-  выполняется полностью локально (Tesseract OCR, без интернета в рантайме).
+  выполняется полностью локально (EasyOCR, без интернета в рантайме; при
+  первом использовании один раз скачивает файлы модели).
+- Никаких системных программ и прав администратора — только обычные
+  Python-пакеты через `pip install -r requirements-dev.txt`, как и всё
+  остальное в проекте.
 - Заполнение полей — автоматическое, без запроса подтверждения; поле,
   заполненное через OCR, дополнительно помечается в интерфейсе как требующее
   проверки (в отличие от обычного автозаполнения), но подставляется сразу.
-- Сбой распознавания (нет Tesseract, битая картинка, нет языкового пакета)
-  никогда не должен приводить к ошибке всего запроса — поле просто остаётся
-  `null`, как и без этой функции.
+- Сбой распознавания (не скачалась модель, битая картинка, неподдерживаемый
+  формат) никогда не должен приводить к ошибке всего запроса — поле просто
+  остаётся `null`, как и без этой функции.
 - Платформа — Windows; пути через `pathlib.Path`.
 - Дизайн: `docs/superpowers/specs/2026-08-10-ocr-image-fallback-design.md`.
 
 ---
 
-## Task 1: Установка Tesseract OCR и Python-зависимостей
+## Task 1: Python-зависимости для распознавания текста
 
 **Files:**
 - Modify: `requirements.txt`
 
 **Interfaces:**
-- Produces: рабочий движок Tesseract OCR с русским языковым пакетом,
-  доступный из Python через `pytesseract`; сборка Pillow для открытия картинок.
+- Produces: рабочая библиотека распознавания текста (`easyocr`), доступная
+  из Python; `Pillow` для сборки тестовых картинок в тестах Task 3.
 
-- [ ] **Step 1: Установить движок Tesseract OCR**
+Никаких системных программ и прав администратора не требуется — только
+`pip`-пакеты, как и всё остальное в этом проекте. Первая инициализация
+`easyocr.Reader` скачивает файлы модели распознавания (десятки-сотни МБ) —
+на это нужен интернет один раз, дальше не требуется.
 
-```bash
-choco install tesseract -y
-```
-
-Ожидается: устанавливается в `C:\Program Files\Tesseract-OCR\`.
-
-- [ ] **Step 2: Проверить, что движок работает**
-
-```bash
-"C:\Program Files\Tesseract-OCR\tesseract.exe" --version
-```
-
-Ожидается: печатает версию, например `tesseract 5.x.x`.
-
-- [ ] **Step 3: Скачать русский языковой пакет**
-
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/rus.traineddata" -OutFile "C:\Program Files\Tesseract-OCR\tessdata\rus.traineddata"
-```
-
-Ожидается: файл `rus.traineddata` появляется в папке `tessdata`.
-
-- [ ] **Step 4: Добавить Python-зависимости**
+- [ ] **Step 1: Добавить Python-зависимости**
 
 `requirements.txt`:
 ```
 Flask>=3.0,<4.0
-pytesseract>=0.3,<0.4
+easyocr>=1.7,<2.0
 Pillow>=10.0,<13.0
 ```
 
@@ -81,28 +68,32 @@ Pillow>=10.0,<13.0
 pip install -r requirements-dev.txt
 ```
 
-- [ ] **Step 5: Проверить всё вместе из Python**
+Ожидается: устанавливается `easyocr` и его зависимости (в том числе
+`torch`/`opencv-python-headless` — это большая загрузка, может занять
+несколько минут в зависимости от скорости интернета).
+
+- [ ] **Step 2: Проверить, что распознавание инициализируется**
 
 ```bash
-python -c "import pytesseract; print(pytesseract.get_tesseract_version()); print('rus' in pytesseract.get_languages())"
+python -c "import easyocr; easyocr.Reader(['ru', 'en'], gpu=False); print('ok')"
 ```
 
-Ожидается: печатает номер версии, затем `True`.
+Ожидается: после паузы (загрузка модели при первом запуске, затем её
+загрузка в память) печатает `ok`. Предупреждения от `torch`/`easyocr` в
+духе "Using CPU. Note: This module is much faster with a GPU." — это
+нормально, не ошибка.
 
-Если команда падает с `TesseractNotFoundError` (PATH не обновился после
-установки) — выполнить проверку так, указав путь явно, и убедиться что
-после этого работает:
-```bash
-python -c "import pytesseract; pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'; print(pytesseract.get_tesseract_version())"
-```
-`app/ocr.py` в Task 3 уже учитывает эту ситуацию программно — эта проверка
-здесь просто убеждается, что сам движок и языковые данные на месте.
+Если команда падает из-за отсутствия сети (модель не может скачаться) —
+это ожидаемая деградация: сама библиотека установлена и импортируется, но
+распознавание временно недоступно. Отметить это в отчёте по задаче и
+продолжать — `app/ocr.py` в Task 3 обрабатывает такой сбой как "картинка не
+дала текста", без падения всего приложения.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add requirements.txt
-git commit -m "chore: add pytesseract and Pillow for OCR fallback extraction"
+git commit -m "chore: add easyocr and Pillow for OCR fallback extraction"
 ```
 
 ---
@@ -266,8 +257,21 @@ git commit -m "feat: extract embedded raster images from docx"
   Task 2).
 - Produces:
   - `recognize_text(images: list[bytes]) -> list[str]` — по одной строке
-    распознанного текста на каждую картинку (пустая строка, если картинку
-    не удалось прочитать или распознать). **Никогда не бросает исключений.**
+    (может содержать `\n` внутри — по одной строке текста на визуальную
+    строку картинки) распознанного текста на каждую картинку (пустая
+    строка, если картинку не удалось прочитать или распознать). **Никогда
+    не бросает исключений.**
+  - `_group_into_lines(detections) -> list[str]` — внутренний помощник:
+    собирает результат EasyOCR (список отдельных распознанных фраз со
+    своими координатами) в список строк по вертикальному положению.
+
+EasyOCR распознаёт не целую строку целиком (как делал бы Tesseract), а
+отдельные фразы/слова каждое со своими 4 угловыми координатами на картинке
+(`readtext()` возвращает список `(bbox, text, confidence)`). Чтобы
+дальнейший код (Task 4/5) мог работать с обычным списком строк текста,
+`_group_into_lines` группирует эти фразы: те, чей вертикальный центр близко
+друг к другу (в пределах ~60% высоты фразы) — одна строка; внутри строки
+сортирует слева направо.
 
 - [ ] **Step 1: Написать падающие тесты**
 
@@ -291,18 +295,17 @@ def _text_image(text):
     return buf.getvalue()
 
 
-def _tesseract_available():
+def _easyocr_available():
     try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
+        ocr._get_reader()
         return True
     except Exception:
         return False
 
 
 def test_recognize_text_reads_clear_text():
-    if not _tesseract_available():
-        pytest.skip("Tesseract OCR не установлен в этой среде")
+    if not _easyocr_available():
+        pytest.skip("EasyOCR не смог инициализироваться в этой среде (нет сети для загрузки модели?)")
     result = ocr.recognize_text([_text_image("HELLO 12345")])
     assert len(result) == 1
     assert "12345" in result[0]
@@ -320,6 +323,22 @@ def test_recognize_text_empty_list():
 def test_recognize_text_preserves_order_and_count():
     result = ocr.recognize_text([b"bad-1", b"bad-2", b"bad-3"])
     assert result == ["", "", ""]
+
+
+def test_group_into_lines_groups_by_vertical_position():
+    # Two phrases roughly on the same visual line (y around 0-20), one
+    # phrase well below (y around 100-120) — mirrors how EasyOCR splits
+    # "Общая площадь" and "67 413" into separate detections.
+    detections = [
+        ([[0, 0], [50, 0], [50, 20], [0, 20]], "Общая", 0.9),
+        ([[60, 2], [140, 2], [140, 22], [60, 22]], "площадь", 0.9),
+        ([[0, 100], [80, 100], [80, 120], [0, 120]], "67 413", 0.9),
+    ]
+    assert ocr._group_into_lines(detections) == ["Общая площадь", "67 413"]
+
+
+def test_group_into_lines_empty_input():
+    assert ocr._group_into_lines([]) == []
 ```
 
 - [ ] **Step 2: Запустить тесты, убедиться что падают**
@@ -333,40 +352,73 @@ pytest tests/test_ocr.py -v
 - [ ] **Step 3: Реализовать `app/ocr.py`**
 
 ```python
-import io
+import easyocr
 
-import pytesseract
-from PIL import Image
-
-DEFAULT_TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_READER = None
 
 
-def _ocr_image(img):
-    try:
-        return pytesseract.image_to_string(img, lang="rus")
-    except pytesseract.TesseractNotFoundError:
-        # PATH may not include Tesseract until the shell/session restarts
-        # after installing it; the standard Windows installer always puts
-        # it at this location, so retry once by pointing at it directly.
-        pytesseract.pytesseract.tesseract_cmd = DEFAULT_TESSERACT_CMD
-        return pytesseract.image_to_string(img, lang="rus")
+def _get_reader():
+    global _READER
+    if _READER is None:
+        _READER = easyocr.Reader(['ru', 'en'], gpu=False)
+    return _READER
+
+
+def _line_key(detection):
+    bbox, text, confidence = detection
+    ys = [point[1] for point in bbox]
+    xs = [point[0] for point in bbox]
+    return sum(ys) / len(ys), min(xs), max(ys) - min(ys)
+
+
+def _group_into_lines(detections):
+    """Reassemble EasyOCR's per-phrase detections into visual lines.
+
+    ``readtext`` returns one entry per detected text region, not per visual
+    line — a single table row like "Общая площадь м2 67 413" can come back
+    as two or three separate detections. Grouping by vertical position (and
+    then ordering left-to-right within a group) reconstructs the same
+    "one string per line" shape that the rest of the extraction pipeline
+    (built for plain paragraph text) already expects.
+    """
+    items = sorted(
+        ((*_line_key(det), det[1]) for det in detections),
+        key=lambda item: item[0],
+    )
+
+    lines = []
+    current = []
+    current_y = None
+    for y_center, x_left, height, text in items:
+        if current and abs(y_center - current_y) > max(height, 1) * 0.6:
+            lines.append(current)
+            current = []
+        current.append((x_left, text))
+        current_y = y_center
+    if current:
+        lines.append(current)
+
+    return [
+        ' '.join(text for _, text in sorted(line, key=lambda item: item[0]))
+        for line in lines
+    ]
 
 
 def recognize_text(images: list) -> list:
     """Best-effort OCR over each image's raw bytes.
 
-    Never raises: an image that can't be opened (bad format, corrupt data)
-    or a missing/misconfigured Tesseract installation both just contribute
-    an empty string for that image, so a caller never needs its own
-    try/except around this.
+    Never raises: an image that can't be decoded, or a reader that fails to
+    initialise (e.g. no network for the one-time model download), both just
+    contribute an empty string for that image, so a caller never needs its
+    own try/except around this.
     """
     texts = []
     for data in images:
         try:
-            img = Image.open(io.BytesIO(data))
-            texts.append(_ocr_image(img))
+            detections = _get_reader().readtext(data)
+            texts.append('\n'.join(_group_into_lines(detections)))
         except Exception:
-            texts.append("")
+            texts.append('')
     return texts
 ```
 
@@ -376,9 +428,10 @@ def recognize_text(images: list) -> list:
 pytest tests/test_ocr.py -v
 ```
 
-Ожидается: все тесты `PASSED` (если Tesseract установлен из Task 1 —
-`test_recognize_text_reads_clear_text` реально распознаёт текст, а не
-пропускается).
+Ожидается: все тесты `PASSED` (если EasyOCR смог инициализироваться из
+Task 1 — `test_recognize_text_reads_clear_text` реально распознаёт текст, а
+не пропускается; первый прогон может быть заметно медленнее из-за загрузки
+модели в память).
 
 - [ ] **Step 5: Commit**
 
@@ -1117,13 +1170,12 @@ git commit -m "feat: show and clear the OCR-filled badge on the project page"
 
     pip install -r requirements-dev.txt
 
-Для резервного распознавания полей с картинок дополнительно нужен
-Tesseract OCR с русским языковым пакетом:
-
-    choco install tesseract -y
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/rus.traineddata" -OutFile "C:\Program Files\Tesseract-OCR\tessdata\rus.traineddata"
-
-Без этого шага приложение продолжает работать как обычно — резервное
+Эта команда уже ставит всё нужное для резервного распознавания полей с
+картинок (`easyocr`) — отдельных программ или прав администратора не
+требуется. При первом использовании (первая загрузка проекта, где что-то
+не нашлось в обычном тексте) один раз скачиваются файлы модели
+распознавания — на это нужен интернет разово, дальше не требуется. Если
+скачать не удалось — приложение продолжает работать как обычно, резервное
 распознавание просто ничего не находит, поля с картинок остаются пустыми.
 
 ## Запуск
@@ -1138,13 +1190,14 @@ Tesseract OCR с русским языковым пакетом:
 
 Тесты, использующие реальные примеры документов (папка `tests/fixtures/`),
 пропускаются, если файлы туда не скопированы. Тест на реальное
-распознавание текста (`tests/test_ocr.py`) пропускается, если Tesseract не
-установлен. Чтобы прогнать всё:
+распознавание текста (`tests/test_ocr.py`) пропускается, если EasyOCR не
+смог инициализироваться (например, нет сети для первой загрузки модели).
+Чтобы прогнать всё:
 
 1. Скопируйте `250204 ДГП_Пр_Мира.docx` → `tests/fixtures/dgp_mira.docx`
 2. Скопируйте `Прил. 1. Техническое задание Проспект Мира.docx` →
    `tests/fixtures/tz_mira.docx`
-3. Установите Tesseract OCR (см. "Установка")
+3. Убедитесь, что зависимости установлены (см. "Установка")
 4. Запустите `pytest -v`
 
 ## Ручная сквозная проверка
@@ -1154,12 +1207,12 @@ Tesseract OCR с русским языковым пакетом:
 3. Введите название "Проспект Мира", загрузите те же 2 файла из шага выше
 4. После создания должна открыться страница проекта: Генподрядчик = "ООО «АНТТЕК»"
    заполнен автоматически (зелёный значок)
-5. Если Tesseract установлен — три поля площади (подземная/надземная/общая)
+5. Если распознавание сработало — три поля площади (подземная/надземная/общая)
    должны заполниться значениями, распознанными с картинки на листе 5 ТЗ
    (67 413 / 13 297 / 54 116 м², порядок полей может отличаться), с синим
-   значком "С картинки — проверьте". Если Tesseract не установлен или
-   распознавание ошиблось — поля остаются пустыми, это ожидаемо, впишите
-   значения вручную.
+   значком "С картинки — проверьте". Если распознавание не смогло
+   инициализироваться или ошиблось — поля остаются пустыми, это ожидаемо,
+   впишите значения вручную.
 6. Год подписания и класс здания — пустые, подсвечены жёлтым, доступны для
    ручного ввода
 7. Впишите значения в пустые поля, нажмите "Сохранить" — после перезагрузки
