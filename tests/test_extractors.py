@@ -299,3 +299,30 @@ def test_find_area_value_in_text_disambiguates_total_from_subareas():
 
 def test_find_area_value_in_text_not_found():
     assert extractors._find_area_value_in_text(["Ничего релевантного"], ('обща', 'площад')) is None
+
+
+def test_extract_total_area_rejects_split_caption_with_disqualifying_second_cell():
+    # Regression: when a label is split across cells, must_not_contain must check
+    # the entire label window, not just the narrow window that satisfied must_contain.
+    # "Общая площадь" alone satisfies must_contain, but "надземной части" in the
+    # adjacent cell should trigger must_not_contain disqualification.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["1", "Общая площадь", "надземной части", "м2", "54 116"]]],
+    )
+    assert extractors.extract_total_area(tz) is None
+
+
+def test_find_area_value_in_text_rejects_lookahead_with_disqualifying_word():
+    # Regression: when looking ahead to the next line for a number, we must also
+    # check the next line's content for must_not_contain words. Otherwise, a
+    # disqualifying word on the lookahead line could slip past.
+    lines = [
+        "Общая площадь",
+        "надземной части м2 54 116",
+    ]
+    value = extractors._find_area_value_in_text(
+        lines, ('обща', 'площад'),
+        must_not_contain=('подземн', 'надземн', 'наземн'),
+    )
+    assert value is None

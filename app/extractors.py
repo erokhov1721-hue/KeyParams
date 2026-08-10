@@ -137,8 +137,17 @@ def _label_end_index(row, must_contain, must_not_contain=()):
     previous implementation did) matched rows that merely happen to mention
     the tokens in unrelated columns, e.g. a "количество подземных этажей" row
     that also has a "Площадь застройки" column further right.
+
+    Critically, must_not_contain is checked against the widest non-numeric
+    window at the start position, not just the narrow window that satisfied
+    must_contain. This ensures that when a label is split across cells,
+    a disqualifying word in the second cell is caught. E.g. "Общая площадь"
+    (satisfies must_contain) in one cell and "надземной части" (must_not_contain)
+    in the adjacent cell correctly rejects the row.
     """
     for start in range(len(row)):
+        # Find the first window that satisfies must_contain
+        matched_end = None
         for length in range(1, MAX_LABEL_CELLS + 1):
             window = row[start:start + length]
             if len(window) < length:
@@ -146,8 +155,26 @@ def _label_end_index(row, must_contain, must_not_contain=()):
             if any(_numeric_cell_value(cell) is not None for cell in window):
                 break
             joined = ' '.join(str(cell or '') for cell in window).lower()
-            if _label_matches(joined, must_contain, must_not_contain):
-                return start + length - 1
+            if all(_token_matches(token, joined) for token in must_contain):
+                matched_end = start + length - 1
+                break
+
+        if matched_end is None:
+            continue
+
+        # Check must_not_contain against the widest non-numeric window at this start position
+        for length in range(1, MAX_LABEL_CELLS + 1):
+            window = row[start:start + length]
+            if len(window) < length:
+                break
+            if any(_numeric_cell_value(cell) is not None for cell in window):
+                break
+            widest_window = window
+
+        widest_joined = ' '.join(str(cell or '') for cell in widest_window).lower()
+        if not any(token in widest_joined for token in must_not_contain):
+            return matched_end
+
     return None
 
 
@@ -190,6 +217,11 @@ def _find_area_value_in_text(lines, must_contain, must_not_contain=()):
         if value is not None:
             return value
         if i + 1 < len(lines):
+            next_line = lines[i + 1].lower()
+            # When looking ahead, also check that the next line doesn't contain
+            # disqualifying words. The next line is part of the label context.
+            if any(token in next_line for token in must_not_contain):
+                continue
             value = _last_number_in_line(lines[i + 1])
             if value is not None:
                 return value
