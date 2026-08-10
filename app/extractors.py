@@ -14,10 +14,15 @@ BUILDING_CLASS_KEYWORD_RE = re.compile(
     r'бизнес|премиум|комфорт|эконом|элит', re.IGNORECASE
 )
 WHITESPACE_RE = re.compile(r'\s+')
-# A cell holding a value: a number, optionally with a trailing unit of measure.
+# A cell holding a value: a number, optionally followed by a unit of measure.
+# Group 1 captures *only* the numeric portion. The unit has to be discarded
+# rather than handed to parse_number, because units contain digits of their own
+# ("м2") and parse_number strips non-digits, which would glue the unit's digit
+# onto the value ("50 000 м2" -> 500002). The lazy quantifier is what lets the
+# unit alternation claim its own text instead of the number swallowing it.
 NUMERIC_CELL_RE = re.compile(
-    r'^[-+−]?\d[\d\s .,]*'
-    r'(?:\s*(?:м2|м²|кв\.?\s*м\.?|га|шт\.?|эт\.?|этаж(?:а|ей)?)\.?)?$',
+    r'^([-+−]?\d[\d\s .,]*?)'
+    r'\s*(?:м2|м²|кв\.?\s*м\.?|га|шт\.?|эт\.?|этаж(?:а|ей)?)?\.?$',
     re.IGNORECASE,
 )
 # Longest label the area extractors accept, in adjacent table cells.
@@ -100,9 +105,13 @@ def _numeric_cell_value(cell):
     text = str(cell or '').strip()
     if not text:
         return None
-    if not NUMERIC_CELL_RE.match(text):
+    match = NUMERIC_CELL_RE.match(text)
+    if not match:
         return None
-    return parse_number(text)
+    # Only the captured numeric portion is parsed; any trailing unit text is
+    # discarded. Passing the whole cell here would let parse_number's
+    # non-digit stripping append the unit's own digit to the value.
+    return parse_number(match.group(1))
 
 
 def _label_end_index(row, must_contain):

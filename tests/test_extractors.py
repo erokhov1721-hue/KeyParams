@@ -1,3 +1,5 @@
+import pytest
+
 from app import extractors
 from app.document_reader import DocxContent
 
@@ -166,6 +168,52 @@ def test_extract_area_skips_unit_cell_as_value():
         tables=[[["1", "Площадь надземной части", "м2", "2 000"]]],
     )
     assert extractors.extract_aboveground_area(tz) == 2000.0
+
+
+@pytest.mark.parametrize("cell, expected", [
+    ("50 000 м2", 50000.0),
+    ("1 000 м2", 1000.0),
+    ("12,5 м2", 12.5),
+    ("1 000 кв.м", 1000.0),
+    ("5 га", 5.0),
+    ("1 000 м²", 1000.0),
+    ("2 этажа", 2.0),
+    ("5 шт.", 5.0),
+    # No unit at all — unchanged behaviour.
+    ("1 000", 1000.0),
+    ("12 400,5", 12400.5),
+    # Not values: a bare unit, a dash, and text (including text that starts
+    # with a digit but carries an unrecognised unit).
+    ("м2", None),
+    ("-", None),
+    ("Общая площадь", None),
+    ("2 корпуса", None),
+])
+def test_numeric_cell_value_ignores_trailing_unit(cell, expected):
+    """Only the numeric part of a cell is parsed; the unit is discarded.
+
+    parse_number strips non-digit characters, so handing it the whole cell
+    would append the unit's own digit to the value: "50 000 м2" parsed as a
+    whole yields 500002, and "12,5 м2" yields 12.52.
+    """
+    assert extractors._numeric_cell_value(cell) == expected
+
+
+def test_extract_area_value_cell_contains_number_and_unit():
+    """A value cell holding "50 000 м2" must read as 50000, not 500002."""
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["1", "Общая площадь", "50 000 м2"]]],
+    )
+    assert extractors.extract_total_area(tz) == 50000.0
+
+
+def test_extract_area_value_cell_with_unit_and_decimal():
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["1", "Площадь подземной части", "12,5 м2"]]],
+    )
+    assert extractors.extract_underground_area(tz) == 12.5
 
 
 def test_extract_area_label_split_across_two_cells():
