@@ -115,3 +115,28 @@ def test_update_project_saves_manual_field(tmp_path):
     saved = passport.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["building_class"] == "Бизнес"
     assert saved["aboveground_area_sqm"] == 2000.0
+
+
+def test_path_traversal_blocked(tmp_path):
+    """Verify that traversal slugs like .. are blocked."""
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.get("/projects/..")
+    assert resp.status_code == 404
+
+
+def test_no_orphan_on_corrupted_docx(tmp_path):
+    """Verify that a failed project creation doesn't leave an orphaned directory."""
+    app = create_app(tmp_path)
+    client = app.test_client()
+    project_name = "Проверка"
+
+    client.post("/projects", data={
+        "project_name": project_name,
+        "dgp_file": (io.BytesIO(b"this has a .docx name but is not a real zip"), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    from app import storage
+    slugs = storage.list_project_slugs(tmp_path)
+    assert len(slugs) == 0, "Expected no projects after failed upload"

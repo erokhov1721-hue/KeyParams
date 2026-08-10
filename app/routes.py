@@ -1,3 +1,5 @@
+import shutil
+
 from flask import Blueprint, abort, current_app, make_response, redirect, render_template, request, url_for
 
 from . import extractors, passport as passport_module, storage
@@ -48,6 +50,7 @@ def create_project():
     try:
         data = passport_module.build_passport(project_name, dgp_path, tz_path)
     except DocxReadError as e:
+        shutil.rmtree(storage.project_dir(root, slug))
         return render_template("new_project.html", error=f"Не удалось прочитать файл: {e}"), 400
 
     passport_module.save_passport(data, storage.passport_path(root, slug))
@@ -59,6 +62,8 @@ def create_project():
 @bp.route("/projects/<slug>", methods=["GET"])
 def project_page(slug):
     root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
     path = storage.passport_path(root, slug)
     if not path.exists():
         abort(404)
@@ -71,6 +76,8 @@ def project_page(slug):
 @bp.route("/projects/<slug>", methods=["POST"])
 def update_project(slug):
     root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
     path = storage.passport_path(root, slug)
     if not path.exists():
         abort(404)
