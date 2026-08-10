@@ -1,4 +1,4 @@
-from app import passport
+from app import ocr, passport
 from tests.helpers import document_xml, make_docx
 
 
@@ -52,3 +52,81 @@ def test_save_passport_writes_readable_utf8(tmp_path):
     passport.save_passport(data, path)
     text = path.read_text(encoding="utf-8")
     assert "Проспект Мира" in text
+
+
+def test_build_passport_ocr_fallback_fills_area_from_image(tmp_path, monkeypatch):
+    # OCR сам по себе не тестируется здесь (см. tests/test_ocr.py и ручную
+    # проверку на реальном файле) — только то, что passport.py правильно
+    # применяет резерв и помечает поле как заполненное через OCR.
+    monkeypatch.setattr(
+        ocr, "recognize_text",
+        lambda images: ["Общая площадь м2 67 413"] * len(images),
+    )
+    dgp_xml = document_xml(paragraphs=[
+        "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,"
+    ])
+    tz_xml = document_xml()
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(
+        tmp_path, tz_xml, "tz.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["total_area_sqm"] == 67413.0
+    assert result["ocr_fields"] == ["total_area_sqm"]
+    # Поля, которых распознанный текст не касается, остаются пустыми:
+    assert result["underground_area_sqm"] is None
+    assert result["aboveground_area_sqm"] is None
+
+
+def test_build_passport_skips_ocr_when_nothing_missing(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ocr, "recognize_text",
+        lambda images: calls.append(images) or [""] * len(images),
+    )
+    # Every one of the 6 fields is resolvable from ordinary text/tables, so
+    # the OCR fallback's "if not missing: return []" guard should fire
+    # before recognize_text is ever called — even though the DGP has an
+    # attached image, proving the fallback is lazy, not eager.
+    dgp_xml = document_xml(paragraphs=[
+        "г. Москва",
+        "«04» февраля 2025 г.",
+        "Жилой комплекс бизнес-класса.",
+        "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,",
+    ])
+    tz_xml = document_xml(tables=[[
+        ["1", "Площадь подземной части", "м2", "1 000"],
+        ["2", "Площадь надземной части", "м2", "2 000"],
+        ["3", "Общая площадь", "м2", "3 000"],
+    ]])
+    dgp_path = make_docx(
+        tmp_path, dgp_xml, "dgp.docx",
+        extra_files={"word/media/image1.png": b"unused-because-nothing-is-missing"},
+    )
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["ocr_fields"] == []
+    assert calls == []
+
+
+def test_build_passport_ocr_failure_leaves_field_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(ocr, "recognize_text", lambda images: [""] * len(images))
+    dgp_xml = document_xml()
+    tz_xml = document_xml()
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(
+        tmp_path, tz_xml, "tz.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["total_area_sqm"] is None
+    assert result["ocr_fields"] == []
