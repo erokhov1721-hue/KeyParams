@@ -53,18 +53,29 @@ def extract_signing_year(dgp):
     return None
 
 
+def _first_valid_class_match(para):
+    for regex in (BUILDING_CLASS_RE, BUILDING_CLASS_REVERSED_RE):
+        for m in regex.finditer(para):
+            # If the matched span itself (which includes the "класс" +
+            # gap + keyword text) names two or more class keywords, e.g.
+            # "классы КОМФОРТ и БИЗНЕС", the gap swallowed an unrelated
+            # keyword and this is an enumeration of options rather than a
+            # genuine assignment — reject just this match and keep looking,
+            # rather than discarding the whole paragraph (which could
+            # contain a real assignment plus an unrelated second mention
+            # elsewhere, e.g. "...бизнес-класса, ... премиум-класса...").
+            if len(BUILDING_CLASS_KEYWORD_RE.findall(m.group(0))) > 1:
+                continue
+            return m.group(1).capitalize()
+    return None
+
+
 def extract_building_class(dgp, tz):
     for doc in (dgp, tz):
         for para in doc.paragraphs:
-            # A paragraph naming two or more class keywords (e.g. "классы
-            # КОМФОРТ и БИЗНЕС") is enumerating options, not assigning a
-            # class to the building — skip it rather than matching whichever
-            # keyword happens to fall within the regex gap.
-            if len(BUILDING_CLASS_KEYWORD_RE.findall(para)) > 1:
-                continue
-            m = BUILDING_CLASS_RE.search(para) or BUILDING_CLASS_REVERSED_RE.search(para)
-            if m:
-                return m.group(1).capitalize()
+            result = _first_valid_class_match(para)
+            if result:
+                return result
     return None
 
 

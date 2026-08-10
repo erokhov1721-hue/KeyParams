@@ -79,6 +79,23 @@ def test_extract_building_class_ignores_enumeration():
     assert extractors.extract_building_class(dgp, tz) is None
 
 
+def test_extract_building_class_found_despite_unrelated_second_mention():
+    # A genuine assignment ("бизнес-класса") sharing a paragraph with an
+    # unrelated second class keyword ("премиум-класса", describing the
+    # business center on the ground floor, not the residential complex)
+    # must still be extracted correctly rather than being discarded as
+    # if the whole paragraph were an enumeration.
+    dgp = DocxContent(
+        paragraphs=[
+            "Жилой комплекс бизнес-класса, расположенный рядом с "
+            "бизнес-центром премиум-класса на первом этаже."
+        ],
+        tables=[],
+    )
+    tz = DocxContent(paragraphs=[], tables=[])
+    assert extractors.extract_building_class(dgp, tz) == "Бизнес"
+
+
 # --- area extractors (synthetic) ---
 
 def test_extract_underground_area_found():
