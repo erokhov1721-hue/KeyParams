@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="{{ url_for('main.new_project_form') }}">Создать проект</a></p>
+<ul>
+{% for slug in slugs %}
+  <li><a href="{{ url_for('main.project_page', slug=slug) }}">{{ slug }}</a></li>
+{% endfor %}
+</ul>
+{% endblock %}

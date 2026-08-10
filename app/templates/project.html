@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ passport.project_name }}</h2>
+<form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
+{% for field in fields %}
+  {% if field != "project_name" %}
+  <p>
+    <label>{{ field }}:
+      <input type="text" name="{{ field }}"
+             value="{{ passport[field] if passport[field] is not none else '' }}"
+             {% if passport[field] is none %}style="background:#fff3cd"{% endif %}>
+    </label>
+  </p>
+  {% endif %}
+{% endfor %}
+<button type="submit">Сохранить</button>
+</form>
+{% endblock %}
