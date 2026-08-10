@@ -68,16 +68,18 @@ def document_xml(paragraphs=(), tables=()):
     return document_xml_from_body(body)
 
 
-def build_docx_bytes(doc_xml):
+def build_docx_bytes(doc_xml, extra_files=None):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", RELS)
         z.writestr("word/document.xml", doc_xml)
+        for name, data in (extra_files or {}).items():
+            z.writestr(name, data)
     return buf.getvalue()
 
 
-def make_docx(tmp_path, doc_xml, filename="test.docx"):
+def make_docx(tmp_path, doc_xml, filename="test.docx", extra_files=None):
     path = tmp_path / filename
-    path.write_bytes(build_docx_bytes(doc_xml))
+    path.write_bytes(build_docx_bytes(doc_xml, extra_files=extra_files))
     return path

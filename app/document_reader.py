@@ -1,5 +1,5 @@
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -17,12 +17,14 @@ TR = _qn('tr')
 TC = _qn('tc')
 T = _qn('t')
 ALTERNATE_CONTENT = MC_NS + 'AlternateContent'
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif')
 
 
 @dataclass
 class DocxContent:
     paragraphs: list
     tables: list
+    images: list = field(default_factory=list)
 
 
 class DocxReadError(Exception):
@@ -124,6 +126,11 @@ def read_docx(path) -> DocxContent:
         with zipfile.ZipFile(path) as z:
             with z.open('word/document.xml') as f:
                 tree = ElementTree.parse(f)
+            images = [
+                z.read(name)
+                for name in z.namelist()
+                if name.startswith('word/media/') and name.lower().endswith(IMAGE_EXTENSIONS)
+            ]
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as e:
         raise DocxReadError(f"Cannot read {path}: {e}") from e
 
@@ -135,4 +142,4 @@ def read_docx(path) -> DocxContent:
     tables = []
     _walk(body, paragraphs, tables)
 
-    return DocxContent(paragraphs=paragraphs, tables=tables)
+    return DocxContent(paragraphs=paragraphs, tables=tables, images=images)

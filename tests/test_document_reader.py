@@ -103,3 +103,28 @@ def test_paragraph_in_table_cell_is_not_duplicated(tmp_path):
     content = read_docx(path)
     assert content.paragraphs == ["Заголовок"]
     assert content.tables == [[["ячейка"]]]
+
+
+def test_read_embedded_image(tmp_path):
+    xml = document_xml(paragraphs=["Текст"])
+    png_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+    path = make_docx(tmp_path, xml, extra_files={"word/media/image1.png": png_bytes})
+    content = read_docx(path)
+    assert content.images == [png_bytes]
+
+
+def test_read_no_images_is_empty_list(tmp_path):
+    xml = document_xml(paragraphs=["Текст"])
+    path = make_docx(tmp_path, xml)
+    content = read_docx(path)
+    assert content.images == []
+
+
+def test_read_ignores_non_image_media(tmp_path):
+    xml = document_xml(paragraphs=["Текст"])
+    path = make_docx(
+        tmp_path, xml,
+        extra_files={"word/media/chart1.emf": b"not-supported-format"},
+    )
+    content = read_docx(path)
+    assert content.images == []
