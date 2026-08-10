@@ -68,6 +68,17 @@ def test_extract_building_class_not_found():
     assert extractors.extract_building_class(dgp, tz) is None
 
 
+def test_extract_building_class_ignores_enumeration():
+    dgp = DocxContent(paragraphs=[], tables=[])
+    tz = DocxContent(
+        paragraphs=[
+            "Стандарт умного жилого комплекса классы КОМФОРТ и БИЗНЕС, версия 5.0."
+        ],
+        tables=[],
+    )
+    assert extractors.extract_building_class(dgp, tz) is None
+
+
 # --- area extractors (synthetic) ---
 
 def test_extract_underground_area_found():

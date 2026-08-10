@@ -10,6 +10,9 @@ BUILDING_CLASS_RE = re.compile(
 BUILDING_CLASS_REVERSED_RE = re.compile(
     r'(бизнес|премиум|комфорт|эконом|элит)[а-яё\s-]{0,10}класс', re.IGNORECASE
 )
+BUILDING_CLASS_KEYWORD_RE = re.compile(
+    r'бизнес|премиум|комфорт|эконом|элит', re.IGNORECASE
+)
 WHITESPACE_RE = re.compile(r'\s+')
 
 
@@ -53,6 +56,12 @@ def extract_signing_year(dgp):
 def extract_building_class(dgp, tz):
     for doc in (dgp, tz):
         for para in doc.paragraphs:
+            # A paragraph naming two or more class keywords (e.g. "классы
+            # КОМФОРТ и БИЗНЕС") is enumerating options, not assigning a
+            # class to the building — skip it rather than matching whichever
+            # keyword happens to fall within the regex gap.
+            if len(BUILDING_CLASS_KEYWORD_RE.findall(para)) > 1:
+                continue
             m = BUILDING_CLASS_RE.search(para) or BUILDING_CLASS_REVERSED_RE.search(para)
             if m:
                 return m.group(1).capitalize()
