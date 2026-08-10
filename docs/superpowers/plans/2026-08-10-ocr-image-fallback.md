@@ -59,10 +59,18 @@
 
 `requirements.txt`:
 ```
+pip-system-certs>=0
 Flask>=3.0,<4.0
 easyocr>=1.7,<2.0
 Pillow>=10.0,<13.0
 ```
+
+`pip-system-certs` патчит `ssl`/`urllib3`, чтобы Python доверял тем же
+корневым сертификатам, что и сама Windows — на компьютере, где
+разрабатывалась эта функция, без него `easyocr` не мог скачать модель
+(корпоративный прокси подставляет свой сертификат, который Windows
+доверяет, а обычный Python — нет: `ssl.SSLCertVerificationError`). Без
+прав администратора, обычный `pip`-пакет.
 
 ```bash
 pip install -r requirements-dev.txt
@@ -82,6 +90,12 @@ python -c "import easyocr; easyocr.Reader(['ru', 'en'], gpu=False); print('ok')"
 загрузка в память) печатает `ok`. Предупреждения от `torch`/`easyocr` в
 духе "Using CPU. Note: This module is much faster with a GPU." — это
 нормально, не ошибка.
+
+Если команда падает с `ssl.SSLCertVerificationError` — см. `pip-system-certs`
+выше, он уже должен быть установлен на этом шаге; если падает с
+`UnicodeEncodeError` на прогресс-баре загрузки (случается в консоли
+Windows с кодировкой cp1251) — повторить с `PYTHONIOENCODING=utf-8` перед
+командой, это не влияет на сам результат, только на вывод прогресса.
 
 Если команда падает из-за отсутствия сети (модель не может скачаться) —
 это ожидаемая деградация: сама библиотека установлена и импортируется, но
