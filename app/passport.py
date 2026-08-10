@@ -45,7 +45,7 @@ def _apply_ocr_fallback(data, dgp, tz):
         return []
 
     needs_dgp_ocr = any(f in TEXT_FIELDS for f in missing)
-    needs_tz_ocr = any(f in TEXT_FIELDS or f in AREA_FIELDS for f in missing)
+    needs_tz_ocr = any(f == "building_class" or f in AREA_FIELDS for f in missing)
 
     dgp_lines = _ocr_lines(dgp.images) if needs_dgp_ocr else []
     tz_lines = _ocr_lines(tz.images) if needs_tz_ocr else []

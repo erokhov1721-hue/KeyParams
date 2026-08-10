@@ -130,3 +130,57 @@ def test_build_passport_ocr_failure_leaves_field_none(tmp_path, monkeypatch):
 
     assert result["total_area_sqm"] is None
     assert result["ocr_fields"] == []
+
+
+def test_build_passport_ocr_skips_tz_when_only_dgp_field_missing(tmp_path, monkeypatch):
+    # Only a DGP-only field (general_contractor) is missing;
+    # building_class and all area fields are resolved normally.
+    # The OCR fallback should OCR dgp.images but NOT tz.images, proving
+    # needs_tz_ocr correctly scopes to TZ-sourced fields only.
+    dgp_calls = []
+    tz_calls = []
+
+    def mock_recognize(images):
+        # Record which file's images were OCR'd based on marker in bytes
+        if images and len(images) > 0:
+            if b"dgp-image" in images[0]:
+                dgp_calls.append(images)
+            elif b"tz-image" in images[0]:
+                tz_calls.append(images)
+        return [""] * len(images)
+
+    monkeypatch.setattr(ocr, "recognize_text", mock_recognize)
+
+    # DGP: has year_signed and building_class clues, but NOT general_contractor
+    dgp_xml = document_xml(paragraphs=[
+        "г. Москва",
+        "«04» февраля 2025 г.",
+        "Жилой комплекс бизнес-класса.",
+    ])
+    # TZ: has all area values
+    tz_xml = document_xml(tables=[[
+        ["1", "Площадь подземной части", "м2", "1 000"],
+        ["2", "Площадь надземной части", "м2", "2 000"],
+        ["3", "Общая площадь", "м2", "3 000"],
+    ]])
+    dgp_path = make_docx(
+        tmp_path, dgp_xml, "dgp.docx",
+        extra_files={"word/media/image1.png": b"dgp-image-bytes"},
+    )
+    tz_path = make_docx(
+        tmp_path, tz_xml, "tz.docx",
+        extra_files={"word/media/image1.png": b"tz-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    # All TZ fields and building_class found normally, general_contractor missing
+    assert result["underground_area_sqm"] == 1000.0
+    assert result["aboveground_area_sqm"] == 2000.0
+    assert result["total_area_sqm"] == 3000.0
+    assert result["building_class"] is not None  # Found from DGP/TZ
+    assert result["year_signed"] is not None  # Found from DGP
+    assert result["general_contractor"] is None
+    assert result["ocr_fields"] == []
+    # Verify TZ images were NOT OCR'd (only DGP field is missing)
+    assert tz_calls == [], "TZ images should not be OCR'd when only DGP fields are missing"
