@@ -210,3 +210,74 @@ def test_no_orphan_on_corrupted_docx(tmp_path):
     from app import storage
     slugs = storage.list_project_slugs(tmp_path)
     assert len(slugs) == 0, "Expected no projects after failed upload"
+
+
+def test_project_page_flags_ocr_filled_field(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "ОКР проект")
+    passport_module.save_passport({
+        "project_name": "ОКР проект",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": ["total_area_sqm"],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+    assert resp.status_code == 200
+    assert "С картинки".encode("utf-8") in resp.data
+
+
+def test_update_project_clears_ocr_flag_when_value_changed(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "ОКР правка")
+    path = storage.passport_path(tmp_path, slug)
+    passport_module.save_passport({
+        "project_name": "ОКР правка",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": ["total_area_sqm"],
+    }, path)
+
+    client.post(f"/projects/{slug}", data={"total_area_sqm": "70000"})
+
+    saved = passport_module.load_passport(path)
+    assert saved["total_area_sqm"] == 70000.0
+    assert saved["ocr_fields"] == []
+
+
+def test_update_project_keeps_ocr_flag_when_value_unchanged(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "ОКР без правки")
+    path = storage.passport_path(tmp_path, slug)
+    passport_module.save_passport({
+        "project_name": "ОКР без правки",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": ["total_area_sqm"],
+    }, path)
+
+    client.post(f"/projects/{slug}", data={"total_area_sqm": "67413"})
+
+    saved = passport_module.load_passport(path)
+    assert saved["ocr_fields"] == ["total_area_sqm"]

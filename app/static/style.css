@@ -6,6 +6,8 @@
   --green-050: #f1f8f4;
   --amber-600: #a86a14;
   --amber-100: #fff3dc;
+  --blue-600: #2f5fae;
+  --blue-100: #e7edfb;
   --red-600: #b42318;
   --red-100: #fdecea;
   --ink-900: #1a1f1d;
@@ -363,6 +365,16 @@ h1 {
 .badge-warning {
   background: var(--amber-100);
   color: var(--amber-600);
+}
+
+.badge-ocr {
+  background: var(--blue-100);
+  color: var(--blue-600);
+}
+
+.field-row.is-ocr input[type="text"] {
+  border-color: #b9c9ef;
+  background: var(--blue-100);
 }
 
 @media (max-width: 620px) {

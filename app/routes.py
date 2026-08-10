@@ -88,6 +88,7 @@ def project_page(slug):
         passport=data,
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
+        ocr_fields=data.get("ocr_fields", []),
     )
 
 
@@ -100,15 +101,21 @@ def update_project(slug):
     if not path.exists():
         abort(404)
     data = passport_module.load_passport(path)
+    ocr_fields = list(data.get("ocr_fields", []))
     for field in passport_module.PASSPORT_FIELDS:
         if field == "project_name":
             continue
+        old_value = data.get(field)
         raw_value = request.form.get(field, "").strip()
         if not raw_value:
-            data[field] = None
+            new_value = None
         elif field in AREA_FIELDS:
-            data[field] = extractors.parse_number(raw_value)
+            new_value = extractors.parse_number(raw_value)
         else:
-            data[field] = raw_value
+            new_value = raw_value
+        data[field] = new_value
+        if new_value != old_value and field in ocr_fields:
+            ocr_fields.remove(field)
+    data["ocr_fields"] = ocr_fields
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))

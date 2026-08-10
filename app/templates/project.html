@@ -5,8 +5,8 @@
     <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
     <h1>{{ passport.project_name }}</h1>
     <p class="page-sub">
-      Поля с зелёной пометкой заполнены автоматически из документов,
-      с жёлтой — нужно заполнить вручную.
+      Зелёный значок — заполнено автоматически из текста документа. Синий —
+      распознано с картинки, стоит проверить. Жёлтый — заполните вручную.
     </p>
   </div>
 </div>
@@ -16,11 +16,14 @@
     {% for field in fields %}
       {% if field != "project_name" %}
       {% set value = passport[field] %}
-      <div class="field-row {{ 'is-empty' if value is none else 'is-filled' }}">
+      {% set is_ocr = field in ocr_fields %}
+      <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else 'is-filled') }}">
         <div class="field-label-col">
           <span class="field-label">{{ field_labels.get(field, field) }}</span>
           {% if value is none %}
             <span class="badge badge-warning">Заполните вручную</span>
+          {% elif is_ocr %}
+            <span class="badge badge-ocr">С картинки — проверьте</span>
           {% else %}
             <span class="badge badge-success">Заполнено автоматически</span>
           {% endif %}
