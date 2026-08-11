@@ -54,7 +54,10 @@ def _chart_drawing(rows, width):
     return drawing
 
 
-def build_compare_pdf(passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict) -> bytes:
+def build_compare_pdf(
+    passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
+    numeric_fields=(), format_number=str,
+) -> bytes:
     _ensure_fonts()
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -86,7 +89,12 @@ def build_compare_pdf(passports: dict, slugs: list, fields: list, field_labels: 
         row = [field_labels.get(field, field)]
         for slug in slugs:
             value = passports[slug].get(field)
-            row.append(str(value) if value is not None else "—")
+            if value is None:
+                row.append("—")
+            elif field in numeric_fields:
+                row.append(format_number(value))
+            else:
+                row.append(str(value))
         table_data.append(row)
 
     table = Table(table_data, repeatRows=1)

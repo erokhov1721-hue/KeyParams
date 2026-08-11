@@ -34,7 +34,8 @@
           {% endif %}
         </select>
         {% else %}
-        <input type="text" name="{{ field }}" value="{{ value if value is not none else '' }}" placeholder="Введите значение">
+        {% set display = format_number(value) if field in numeric_fields else value %}
+        <input type="text" name="{{ field }}" value="{{ display if display is not none else '' }}" placeholder="Введите значение">
         {% endif %}
       </div>
       {% if field == "contract_price_rub" %}
@@ -44,7 +45,7 @@
           <span class="field-hint">Считается автоматически: цена работ ÷ общая площадь</span>
         </div>
         <input type="text" id="computed-price-per-sqm"
-               value="{{ '%.2f'|format(price_per_sqm) if price_per_sqm is not none else '' }}"
+               value="{{ format_number(price_per_sqm) if price_per_sqm is not none else '' }}"
                placeholder="—" readonly>
       </div>
       {% endif %}
@@ -74,11 +75,22 @@
     var output = document.getElementById('computed-price-per-sqm');
     if (!priceInput || !areaInput || !output) return;
 
+    function parseValue(raw) {
+      return parseFloat(raw.replace(/\s/g, '').replace(',', '.'));
+    }
+
+    function formatValue(num) {
+      var fixed = Number.isInteger(num) ? num.toFixed(0) : num.toFixed(2);
+      var parts = fixed.split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+      return parts.join('.');
+    }
+
     function recompute() {
-      var price = parseFloat(priceInput.value.replace(',', '.'));
-      var area = parseFloat(areaInput.value.replace(',', '.'));
+      var price = parseValue(priceInput.value);
+      var area = parseValue(areaInput.value);
       output.value = (isFinite(price) && isFinite(area) && area > 0)
-        ? (price / area).toFixed(2)
+        ? formatValue(price / area)
         : '';
     }
     priceInput.addEventListener('input', recompute);

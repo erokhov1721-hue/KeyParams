@@ -10,6 +10,32 @@ def test_passport_fields_order():
     ]
 
 
+# --- format_number ---
+
+def test_format_number_none_returns_none():
+    assert passport.format_number(None) is None
+
+
+def test_format_number_whole_number_has_no_decimals():
+    assert passport.format_number(67413.0) == "67 413"
+
+
+def test_format_number_groups_thousands():
+    assert passport.format_number(10067050887.0) == "10 067 050 887"
+
+
+def test_format_number_keeps_two_decimals_when_not_whole():
+    assert passport.format_number(10067050887.72) == "10 067 050 887.72"
+
+
+def test_format_number_small_value_no_grouping_needed():
+    assert passport.format_number(500.0) == "500"
+
+
+def test_format_number_leaves_non_numeric_string_untouched():
+    assert passport.format_number("Бизнес") == "Бизнес"
+
+
 def test_price_per_sqm_computed_from_price_and_total_area():
     data = {"contract_price_rub": 10067050887.72, "total_area_sqm": 67413.0}
     assert passport.price_per_sqm(data) == 10067050887.72 / 67413.0

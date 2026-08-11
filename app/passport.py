@@ -135,6 +135,19 @@ def price_per_sqm(data: dict):
     return price / area
 
 
+def format_number(value):
+    """Space-group a number's thousands for readability (10067050887.72 ->
+    "10 067 050 887.72"), dropping ".00" for whole numbers. Passes through
+    unchanged if ``value`` isn't a number, so it's safe to call on any
+    passport field without checking the field's type first."""
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)):
+        return value
+    formatted = f"{value:,.0f}" if float(value).is_integer() else f"{value:,.2f}"
+    return formatted.replace(',', ' ')
+
+
 def _format_money(value):
     formatted = f"{value:,.2f}"
     integer_part, _, decimal_part = formatted.partition('.')

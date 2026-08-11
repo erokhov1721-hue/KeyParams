@@ -260,8 +260,8 @@ def test_compare_projects_shows_selected_projects_side_by_side(tmp_path):
     body = resp.data.decode("utf-8")
     assert "ПроектА" in body
     assert "ПроектБ" in body
-    assert "1000" in body
-    assert "2000" in body
+    assert "1 000" in body
+    assert "2 000" in body
 
 
 def test_compare_projects_ignores_unknown_slug(tmp_path):
@@ -373,6 +373,26 @@ def test_project_page_flags_ocr_filled_field(tmp_path):
     assert "С картинки".encode("utf-8") in resp.data
 
 
+def test_project_page_shows_numeric_field_with_thousands_spaces(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект с суммой")
+    passport_module.save_passport({
+        "project_name": "Проект с суммой", "year_signed": None, "building_class": None,
+        "general_contractor": None, "contract_price_rub": 10067050887.72,
+        "underground_area_sqm": None, "aboveground_area_sqm": None,
+        "total_area_sqm": None, "ocr_fields": [],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert 'value="10 067 050 887.72"' in body
+
+
 def test_project_page_building_class_is_a_dropdown_with_fixed_options(tmp_path):
     from app import storage, passport as passport_module
 
@@ -438,7 +458,7 @@ def test_project_page_shows_computed_price_per_sqm(tmp_path):
     assert resp.status_code == 200
     body = resp.data.decode("utf-8")
     assert "Цена за м²" in body
-    expected = f"{10067050887.72 / 67413.0:.2f}"
+    expected = passport_module.format_number(10067050887.72 / 67413.0)
     assert expected in body
 
 

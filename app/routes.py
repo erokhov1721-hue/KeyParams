@@ -47,6 +47,8 @@ def compare_projects():
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
         charts=passport_module.build_comparison_charts(passports, slugs),
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
     )
 
 
@@ -65,6 +67,8 @@ def compare_projects_pdf():
         passports, slugs,
         passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
         passport_module.build_comparison_charts(passports, slugs),
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
     )
     return Response(
         pdf_bytes,
@@ -143,6 +147,8 @@ def project_page(slug):
         ocr_fields=data.get("ocr_fields", []),
         price_per_sqm=passport_module.price_per_sqm(data),
         building_class_options=passport_module.BUILDING_CLASS_OPTIONS,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
     )
 
 

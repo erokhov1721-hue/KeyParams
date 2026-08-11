@@ -54,7 +54,8 @@
           <td class="compare-field-label">{{ field_labels.get(field, field) }}</td>
           {% for slug in slugs %}
             {% set value = passports[slug][field] %}
-            <td>{{ value if value is not none else '—' }}</td>
+            {% set display = format_number(value) if field in numeric_fields else value %}
+            <td>{{ display if display is not none else '—' }}</td>
           {% endfor %}
         </tr>
         {% endif %}
