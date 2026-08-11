@@ -54,6 +54,7 @@ def compare_projects():
         charts=passport_module.build_comparison_charts(passports, slugs),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
     )
 
 
@@ -74,6 +75,7 @@ def compare_projects_pdf():
         passport_module.build_comparison_charts(passports, slugs),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
     )
     return Response(
         pdf_bytes,

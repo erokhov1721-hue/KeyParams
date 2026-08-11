@@ -323,6 +323,35 @@ def test_compare_projects_shows_selected_projects_side_by_side(tmp_path):
     assert "2 000" in body
 
 
+def test_compare_projects_table_shows_price_per_sqm_row(tmp_path):
+    from app import passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=10067050887.72, total_area_sqm=67413.0,
+    )
+
+    resp = client.get(f"/compare?slug={slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Цена за м²" in body
+    expected = passport_module.format_number(10067050887.72 / 67413.0)
+    assert expected in body
+
+
+def test_compare_projects_table_shows_dash_for_price_per_sqm_when_area_missing(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА", contract_price_rub=100.0)
+
+    resp = client.get(f"/compare?slug={slug}")
+
+    assert resp.status_code == 200
+    assert "Цена за м²" in resp.data.decode("utf-8")
+
+
 def test_compare_projects_ignores_unknown_slug(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

@@ -58,6 +58,15 @@
             <td>{{ display if display is not none else '—' }}</td>
           {% endfor %}
         </tr>
+        {% if field == "contract_price_rub" %}
+        <tr>
+          <td class="compare-field-label">Цена за м², руб.</td>
+          {% for slug in slugs %}
+            {% set psqm = price_per_sqm(passports[slug]) %}
+            <td>{{ format_number(psqm) if psqm is not none else '—' }}</td>
+          {% endfor %}
+        </tr>
+        {% endif %}
         {% endif %}
       {% endfor %}
     </tbody>

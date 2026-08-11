@@ -56,7 +56,7 @@ def _chart_drawing(rows, width):
 
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
-    numeric_fields=(), format_number=str,
+    numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
 ) -> bytes:
     _ensure_fonts()
     buffer = BytesIO()
@@ -96,6 +96,13 @@ def build_compare_pdf(
             else:
                 row.append(str(value))
         table_data.append(row)
+
+        if field == "contract_price_rub":
+            psqm_row = ["Цена за м², руб."]
+            for slug in slugs:
+                psqm = price_per_sqm(passports[slug])
+                psqm_row.append(format_number(psqm) if psqm is not None else "—")
+            table_data.append(psqm_row)
 
     table = Table(table_data, repeatRows=1)
     table.setStyle(TableStyle([
