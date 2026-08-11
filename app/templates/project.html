@@ -5,8 +5,7 @@
     <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
     <h1>{{ passport.project_name }}</h1>
     <p class="page-sub">
-      Зелёный значок — заполнено автоматически из текста документа. Синий —
-      распознано с картинки, стоит проверить. Жёлтый — заполните вручную.
+      Синий — распознано с картинки, стоит проверить. Жёлтый — заполните вручную.
     </p>
   </div>
 </div>
@@ -20,12 +19,8 @@
       <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else 'is-filled') }}">
         <div class="field-label-col">
           <span class="field-label">{{ field_labels.get(field, field) }}</span>
-          {% if value is none %}
-            <span class="badge badge-warning">Заполните вручную</span>
-          {% elif is_ocr %}
+          {% if is_ocr %}
             <span class="badge badge-ocr">С картинки — проверьте</span>
-          {% else %}
-            <span class="badge badge-success">Заполнено автоматически</span>
           {% endif %}
         </div>
         <input type="text" name="{{ field }}" value="{{ value if value is not none else '' }}" placeholder="Введите значение">
@@ -37,4 +32,11 @@
     <button type="submit" class="btn btn-primary">Сохранить изменения</button>
   </div>
 </form>
+<script>
+  document.querySelectorAll('.field-row input[type="text"]').forEach(function (input) {
+    input.addEventListener('input', function () {
+      input.closest('.field-row').classList.toggle('is-empty', input.value.trim() === '');
+    });
+  });
+</script>
 {% endblock %}
