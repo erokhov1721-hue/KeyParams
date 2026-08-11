@@ -54,10 +54,36 @@ def test_save_passport_writes_readable_utf8(tmp_path):
     assert "Проспект Мира" in text
 
 
+def test_build_passport_ocr_disabled_by_default(tmp_path, monkeypatch):
+    # OCR is opt-in (OCR_FALLBACK_ENABLED=1) because EasyOCR is CPU-only and
+    # slow in this environment. With the env var unset, recognize_text must
+    # never be called, even when fields are missing and images are present.
+    monkeypatch.delenv(passport.OCR_FALLBACK_ENV_VAR, raising=False)
+    calls = []
+    monkeypatch.setattr(
+        ocr, "recognize_text",
+        lambda images: calls.append(images) or [""] * len(images),
+    )
+    dgp_xml = document_xml()
+    tz_xml = document_xml()
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(
+        tmp_path, tz_xml, "tz.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert calls == []
+    assert result["ocr_fields"] == []
+    assert result["total_area_sqm"] is None
+
+
 def test_build_passport_ocr_fallback_fills_area_from_image(tmp_path, monkeypatch):
     # OCR сам по себе не тестируется здесь (см. tests/test_ocr.py и ручную
     # проверку на реальном файле) — только то, что passport.py правильно
     # применяет резерв и помечает поле как заполненное через OCR.
+    monkeypatch.setenv(passport.OCR_FALLBACK_ENV_VAR, "1")
     monkeypatch.setattr(
         ocr, "recognize_text",
         lambda images: ["Общая площадь м2 67 413"] * len(images),
@@ -86,6 +112,7 @@ def test_build_passport_ocr_fallback_disambiguates_footprint_from_underground(tm
     # OCR text contains both the building-footprint row ("Площадь застройки
     # подземной части") and the real target row ("Общая площадь подземного
     # паркинга"). The fallback must pick the latter, not the first match.
+    monkeypatch.setenv(passport.OCR_FALLBACK_ENV_VAR, "1")
     monkeypatch.setattr(
         ocr, "recognize_text",
         lambda images: [
@@ -142,6 +169,7 @@ def test_build_passport_skips_ocr_when_nothing_missing(tmp_path, monkeypatch):
 
 
 def test_build_passport_ocr_failure_leaves_field_none(tmp_path, monkeypatch):
+    monkeypatch.setenv(passport.OCR_FALLBACK_ENV_VAR, "1")
     monkeypatch.setattr(ocr, "recognize_text", lambda images: [""] * len(images))
     dgp_xml = document_xml()
     tz_xml = document_xml()
@@ -162,6 +190,7 @@ def test_build_passport_ocr_skips_tz_when_only_dgp_field_missing(tmp_path, monke
     # building_class and all area fields are resolved normally.
     # The OCR fallback should OCR dgp.images but NOT tz.images, proving
     # needs_tz_ocr correctly scopes to TZ-sourced fields only.
+    monkeypatch.setenv(passport.OCR_FALLBACK_ENV_VAR, "1")
     dgp_calls = []
     tz_calls = []
 

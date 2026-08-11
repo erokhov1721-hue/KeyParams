@@ -1,8 +1,14 @@
 import json
+import os
 from pathlib import Path
 
 from . import extractors, ocr
 from .document_reader import DocxContent, read_docx
+
+# OCR fallback (EasyOCR) is CPU-only in this environment and can take
+# several minutes per project, so it's opt-in: set OCR_FALLBACK_ENABLED=1
+# in the environment before starting the app to turn it back on.
+OCR_FALLBACK_ENV_VAR = "OCR_FALLBACK_ENABLED"
 
 PASSPORT_FIELDS = [
     "project_name", "year_signed", "building_class",
@@ -45,6 +51,9 @@ def _ocr_lines(images):
 
 
 def _apply_ocr_fallback(data, dgp, tz):
+    if os.environ.get(OCR_FALLBACK_ENV_VAR) != "1":
+        return []
+
     missing = [f for f in PASSPORT_FIELDS if f != "project_name" and data[f] is None]
     if not missing:
         return []
