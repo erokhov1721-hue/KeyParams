@@ -30,6 +30,94 @@ def test_price_per_sqm_none_when_area_zero():
     assert passport.price_per_sqm(data) is None
 
 
+# --- build_comparison_charts ---
+
+def _passport(name, price=None, year=None, building_class=None, area=None):
+    return {
+        "project_name": name, "year_signed": year, "building_class": building_class,
+        "general_contractor": None, "contract_price_rub": price,
+        "underground_area_sqm": None, "aboveground_area_sqm": None,
+        "total_area_sqm": area, "ocr_fields": [],
+    }
+
+
+def test_charts_price_by_year_sorted_ascending_by_year():
+    passports = {
+        "b": _passport("Проект Б", price=200.0, year="2023"),
+        "a": _passport("Проект А", price=100.0, year="2025"),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    labels = [row["label"] for row in charts["price_by_year"]]
+    assert labels == ["Проект Б (2023)", "Проект А (2025)"]
+
+
+def test_charts_price_by_year_skips_project_without_year():
+    passports = {
+        "a": _passport("Проект А", price=100.0, year=None),
+        "b": _passport("Проект Б", price=200.0, year="2023"),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    assert [row["label"] for row in charts["price_by_year"]] == ["Проект Б (2023)"]
+
+
+def test_charts_price_by_class_skips_project_without_class():
+    passports = {
+        "a": _passport("Проект А", price=100.0, building_class=None),
+        "b": _passport("Проект Б", price=200.0, building_class="Бизнес"),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    assert [row["label"] for row in charts["price_by_class"]] == ["Проект Б (Бизнес)"]
+
+
+def test_charts_price_sorted_ascending_by_value():
+    passports = {
+        "a": _passport("Проект А", price=300.0),
+        "b": _passport("Проект Б", price=100.0),
+        "c": _passport("Проект В", price=200.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b", "c"])
+    assert [row["label"] for row in charts["price"]] == ["Проект Б", "Проект В", "Проект А"]
+
+
+def test_charts_price_skips_project_without_price():
+    passports = {
+        "a": _passport("Проект А", price=None),
+        "b": _passport("Проект Б", price=200.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    assert [row["label"] for row in charts["price"]] == ["Проект Б"]
+
+
+def test_charts_price_per_sqm_sorted_ascending():
+    passports = {
+        "a": _passport("Проект А", price=300.0, area=1.0),
+        "b": _passport("Проект Б", price=100.0, area=1.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    assert [row["label"] for row in charts["price_per_sqm"]] == ["Проект Б", "Проект А"]
+
+
+def test_charts_price_computes_bar_width_relative_to_max():
+    passports = {
+        "a": _passport("Проект А", price=100.0),
+        "b": _passport("Проект Б", price=50.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    rows = {row["label"]: row for row in charts["price"]}
+    assert rows["Проект Б"]["width_pct"] == 50.0
+    assert rows["Проект А"]["width_pct"] == 100.0
+    assert rows["Проект А"]["display"] == "100.00"
+
+
+def test_charts_price_per_sqm_skips_when_not_computable():
+    passports = {
+        "a": _passport("Проект А", price=300.0, area=None),
+        "b": _passport("Проект Б", price=100.0, area=1.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b"])
+    assert [row["label"] for row in charts["price_per_sqm"]] == ["Проект Б"]
+
+
 def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
     dgp_xml = document_xml(paragraphs=[
         "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "

@@ -133,6 +133,75 @@ def price_per_sqm(data: dict):
     return price / area
 
 
+def _format_money(value):
+    formatted = f"{value:,.2f}"
+    integer_part, _, decimal_part = formatted.partition('.')
+    return integer_part.replace(',', ' ') + '.' + decimal_part
+
+
+def _finalize_chart(rows):
+    if rows:
+        max_value = max(row["value"] for row in rows) or 1
+        for row in rows:
+            row["width_pct"] = round(row["value"] / max_value * 100, 1)
+            row["display"] = _format_money(row["value"])
+    return rows
+
+
+def _chart_rows(passports, slugs, extra_field=None):
+    rows = []
+    for slug in slugs:
+        data = passports[slug]
+        price = data.get("contract_price_rub")
+        if price is None:
+            continue
+        if extra_field is not None:
+            extra = data.get(extra_field)
+            if extra is None:
+                continue
+            label = f"{data.get('project_name') or slug} ({extra})"
+        else:
+            extra = None
+            label = data.get("project_name") or slug
+        rows.append({"slug": slug, "label": label, "value": price, "sort_key": extra})
+    return rows
+
+
+def build_comparison_charts(passports: dict, slugs: list) -> dict:
+    """Bar-chart-ready rows for the compare page, one series per chart.
+
+    Each row is independent magnitude data (price, or price per m²) for one
+    project — projects missing the value(s) a given chart needs are skipped
+    rather than shown as zero, since zero would misstate an unknown value.
+    """
+    price_by_year = _chart_rows(passports, slugs, extra_field="year_signed")
+    price_by_year.sort(key=lambda row: row["sort_key"])
+
+    price_by_class = _chart_rows(passports, slugs, extra_field="building_class")
+    price_by_class.sort(key=lambda row: row["sort_key"])
+
+    price = _chart_rows(passports, slugs)
+    price.sort(key=lambda row: row["value"])
+
+    price_per_sqm_rows = []
+    for slug in slugs:
+        data = passports[slug]
+        value = price_per_sqm(data)
+        if value is None:
+            continue
+        price_per_sqm_rows.append({
+            "slug": slug, "label": data.get("project_name") or slug, "value": value,
+        })
+    price_per_sqm_rows.sort(key=lambda row: row["value"])
+
+    return {
+        "price_by_year": _finalize_chart(price_by_year),
+        "price_by_class": _finalize_chart(price_by_class),
+        "price": _finalize_chart(price),
+        "price_per_sqm": _finalize_chart(price_per_sqm_rows),
+    }
+
+
 def load_passport(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     # A passport saved before a field existed (e.g. contract_price_rub)

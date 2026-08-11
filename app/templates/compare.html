@@ -7,6 +7,35 @@
   </div>
 </div>
 
+{% set chart_defs = [
+  ("price_by_year", "Цена работ по году подписания договора"),
+  ("price_by_class", "Цена работ по классу жилья"),
+  ("price", "Цена работ по проектам"),
+  ("price_per_sqm", "Цена за м² по проектам"),
+] %}
+<div class="charts-grid">
+  {% for key, title in chart_defs %}
+  <div class="card chart-card">
+    <h2 class="chart-title">{{ title }}</h2>
+    {% if charts[key] %}
+    <div class="bar-chart">
+      {% for row in charts[key] %}
+      <div class="bar-row">
+        <div class="bar-label">{{ row.label }}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: {{ row.width_pct }}%"></div>
+        </div>
+        <div class="bar-value">{{ row.display }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="chart-empty">Недостаточно данных для этого графика.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
 <div class="card compare-card">
   <table class="compare-table">
     <thead>

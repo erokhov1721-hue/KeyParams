@@ -40,6 +40,7 @@ def compare_projects():
         passports=passports,
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
+        charts=passport_module.build_comparison_charts(passports, slugs),
     )
 
 

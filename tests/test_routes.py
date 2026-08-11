@@ -277,6 +277,42 @@ def test_compare_projects_ignores_unknown_slug(tmp_path):
     assert "does-not-exist" not in body
 
 
+def test_compare_projects_shows_price_charts(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=100.0, year_signed="2024",
+        building_class="Бизнес", total_area_sqm=1.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", contract_price_rub=200.0, year_signed="2023",
+        building_class="Комфорт", total_area_sqm=1.0,
+    )
+
+    resp = client.get(f"/compare?slug={slug1}&slug={slug2}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Цена работ по году подписания" in body
+    assert "Цена работ по классу жилья" in body
+    assert "Цена работ по проектам" in body
+    assert "Цена за м² по проектам" in body
+    assert "ПроектА (2024)" in body
+    assert "ПроектБ (Комфорт)" in body
+
+
+def test_compare_projects_shows_empty_chart_message_without_data(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.get(f"/compare?slug={slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Недостаточно данных" in body
+
+
 def test_compare_projects_redirects_to_index_when_none_selected(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

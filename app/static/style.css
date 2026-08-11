@@ -495,3 +495,83 @@ h1 {
     flex: none;
   }
 }
+
+/* Comparison charts */
+
+.charts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.chart-card {
+  padding: 24px 28px;
+}
+
+.chart-title {
+  margin: 0 0 18px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.chart-empty {
+  margin: 0;
+  color: var(--ink-500);
+  font-size: 14px;
+}
+
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-label {
+  flex: 0 0 190px;
+  font-size: 13px;
+  color: var(--ink-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  flex: 1;
+  height: 20px;
+  background: var(--bg);
+  border-radius: 0 4px 4px 0;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--green-700);
+  border-radius: 0 4px 4px 0;
+}
+
+.bar-value {
+  flex: 0 0 auto;
+  min-width: 100px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-900);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 620px) {
+  .bar-label {
+    flex-basis: 110px;
+  }
+  .bar-value {
+    min-width: 80px;
+  }
+}
