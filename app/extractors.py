@@ -1,7 +1,7 @@
 import re
 
 GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\s*«[^»]+»')
-PREAMBLE_CITY_RE = re.compile(r'^г\.?\s*Москва\s*$')
+PREAMBLE_CITY_RE = re.compile(r'^г\.?\s*Москва\s*$', re.IGNORECASE)
 FULL_DATE_RE = re.compile(r'\b\d{2}\.\d{2}\.(20\d{2})\b')
 QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', re.IGNORECASE)
 BUILDING_CLASS_RE = re.compile(
@@ -198,7 +198,7 @@ def _find_area_value(tables, must_contain, must_not_contain=()):
     return None
 
 
-LINE_NUMBER_RE = re.compile(r'(?<!\w)[-+]?\d[\d\s]*(?:[.,]\d+)?')
+LINE_NUMBER_RE = re.compile(r'(?<!\w)[-+]?\d[\d\s]*(?:[.,]\d+)?(?!\w)')
 
 
 def _last_number_in_line(line):

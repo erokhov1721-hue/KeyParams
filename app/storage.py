@@ -3,14 +3,22 @@ from pathlib import Path
 
 INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 WHITESPACE_RE = re.compile(r'\s+')
+# Windows silently drops trailing dots/spaces from directory names, and
+# rejects these device names outright regardless of extension.
+RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{prefix}{i}" for prefix in ("COM", "LPT") for i in range(1, 10)
+}
 
 
 def slugify(name: str) -> str:
     name = name.strip()
     name = INVALID_CHARS_RE.sub('', name)
     name = WHITESPACE_RE.sub('_', name.strip())
+    name = name.rstrip('. ')
     if not name:
         raise ValueError("project name is empty after cleanup")
+    if name.upper() in RESERVED_NAMES:
+        raise ValueError(f"{name} is a reserved Windows device name")
     return name
 
 

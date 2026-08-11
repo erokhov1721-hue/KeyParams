@@ -15,6 +15,17 @@ def test_slugify_empty_raises():
         storage.slugify("   ")
 
 
+def test_slugify_strips_trailing_dot():
+    # Windows silently drops a trailing dot from a directory name, so keeping
+    # it in the slug would make the stored slug diverge from the real folder.
+    assert storage.slugify("ЖК Мира 2025 г.") == "ЖК_Мира_2025_г"
+
+
+def test_slugify_rejects_reserved_device_name():
+    with pytest.raises(ValueError):
+        storage.slugify("COM1")
+
+
 def test_unique_slug_returns_base_when_free(tmp_path):
     assert storage.unique_slug(tmp_path, "mira") == "mira"
 

@@ -8,7 +8,6 @@ from .document_reader import DocxReadError
 bp = Blueprint("main", __name__)
 
 ALLOWED_EXTENSION = ".docx"
-AREA_FIELDS = {"underground_area_sqm", "aboveground_area_sqm", "total_area_sqm"}
 
 
 def _projects_root():
@@ -109,7 +108,7 @@ def update_project(slug):
         raw_value = request.form.get(field, "").strip()
         if not raw_value:
             new_value = None
-        elif field in AREA_FIELDS:
+        elif field in passport_module.AREA_FIELDS:
             new_value = extractors.parse_number(raw_value)
         else:
             new_value = raw_value

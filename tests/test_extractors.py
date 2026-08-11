@@ -56,6 +56,15 @@ def test_extract_signing_year_not_found():
     assert extractors.extract_signing_year(dgp) is None
 
 
+def test_extract_signing_year_found_uppercase_city():
+    # Contract letterheads sometimes render the preamble in all caps.
+    dgp = DocxContent(
+        paragraphs=["г. МОСКВА", "«04» февраля 2025 г."],
+        tables=[],
+    )
+    assert extractors.extract_signing_year(dgp) == "2025"
+
+
 # --- extract_building_class (synthetic) ---
 
 def test_extract_building_class_found():
@@ -319,6 +328,17 @@ def test_find_area_value_in_text_disambiguates_footprint_from_underground():
         must_not_contain=('застройки',),
     )
     assert value == 13297.0
+
+
+def test_find_area_value_in_text_ignores_trailing_alnum_token():
+    # OCR text like "..., корпус 5А" must not have its trailing "5" picked
+    # over the real value earlier on the same line.
+    lines = ["Общая площадь м2 67 413, корпус 5А"]
+    value = extractors._find_area_value_in_text(
+        lines, ('обща', 'площад'),
+        must_not_contain=('подземн', 'надземн', 'наземн'),
+    )
+    assert value == 67413.0
 
 
 def test_find_area_value_in_text_same_line():
