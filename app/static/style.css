@@ -471,12 +471,6 @@ h1 {
   background: var(--blue-100);
 }
 
-.field-row-computed {
-  background: var(--bg);
-  margin: 0 -28px;
-  padding: 20px 28px;
-}
-
 .field-hint {
   display: block;
   font-size: 12px;
@@ -484,12 +478,10 @@ h1 {
   margin-top: 2px;
 }
 
-.computed-value {
-  flex: 1;
-  padding: 11px 14px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink-900);
+.field-row.is-computed input[type="text"] {
+  background: var(--bg);
+  color: var(--ink-500);
+  cursor: default;
 }
 
 @media (max-width: 620px) {
