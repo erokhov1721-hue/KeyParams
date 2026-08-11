@@ -111,6 +111,7 @@ def project_page(slug):
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
         ocr_fields=data.get("ocr_fields", []),
+        price_per_sqm=passport_module.price_per_sqm(data),
     )
 
 

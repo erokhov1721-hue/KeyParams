@@ -25,6 +25,15 @@
         </div>
         <input type="text" name="{{ field }}" value="{{ value if value is not none else '' }}" placeholder="Введите значение">
       </div>
+      {% if field == "contract_price_rub" %}
+      <div class="field-row field-row-computed">
+        <div class="field-label-col">
+          <span class="field-label">Цена за м², руб.</span>
+          <span class="field-hint">Считается автоматически: цена работ ÷ общая площадь</span>
+        </div>
+        <div class="computed-value">{{ '%.2f'|format(price_per_sqm) if price_per_sqm is not none else '—' }}</div>
+      </div>
+      {% endif %}
       {% endif %}
     {% endfor %}
   </div>

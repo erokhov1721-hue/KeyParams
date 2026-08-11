@@ -10,6 +10,26 @@ def test_passport_fields_order():
     ]
 
 
+def test_price_per_sqm_computed_from_price_and_total_area():
+    data = {"contract_price_rub": 10067050887.72, "total_area_sqm": 67413.0}
+    assert passport.price_per_sqm(data) == 10067050887.72 / 67413.0
+
+
+def test_price_per_sqm_none_when_price_missing():
+    data = {"contract_price_rub": None, "total_area_sqm": 67413.0}
+    assert passport.price_per_sqm(data) is None
+
+
+def test_price_per_sqm_none_when_area_missing():
+    data = {"contract_price_rub": 10067050887.72, "total_area_sqm": None}
+    assert passport.price_per_sqm(data) is None
+
+
+def test_price_per_sqm_none_when_area_zero():
+    data = {"contract_price_rub": 10067050887.72, "total_area_sqm": 0}
+    assert passport.price_per_sqm(data) is None
+
+
 def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
     dgp_xml = document_xml(paragraphs=[
         "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "

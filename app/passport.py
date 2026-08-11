@@ -125,6 +125,14 @@ def save_passport(passport_data: dict, path: Path) -> None:
     )
 
 
+def price_per_sqm(data: dict):
+    price = data.get("contract_price_rub")
+    area = data.get("total_area_sqm")
+    if price is None or not area:
+        return None
+    return price / area
+
+
 def load_passport(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     # A passport saved before a field existed (e.g. contract_price_rub)

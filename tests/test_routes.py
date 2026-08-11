@@ -309,6 +309,58 @@ def test_project_page_flags_ocr_filled_field(tmp_path):
     assert "С картинки".encode("utf-8") in resp.data
 
 
+def test_project_page_shows_computed_price_per_sqm(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект с ценой")
+    passport_module.save_passport({
+        "project_name": "Проект с ценой",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "contract_price_rub": 10067050887.72,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": [],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Цена за м²" in body
+    expected = f"{10067050887.72 / 67413.0:.2f}"
+    assert expected in body
+
+
+def test_project_page_shows_dash_for_price_per_sqm_when_area_missing(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект без площади")
+    passport_module.save_passport({
+        "project_name": "Проект без площади",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "contract_price_rub": 10067050887.72,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": None,
+        "ocr_fields": [],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Цена за м²" in body
+
+
 def test_update_project_clears_ocr_flag_when_value_changed(tmp_path):
     from app import storage, passport as passport_module
 
