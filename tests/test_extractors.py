@@ -93,6 +93,17 @@ def test_extract_building_class_found():
     assert extractors.extract_building_class(dgp, tz) == "Бизнес"
 
 
+def test_extract_building_class_found_in_table_cell():
+    # Real ТЗ documents describe apartment finishing specs in a table, with
+    # the class named as a quoted assignment: 'класса «Бизнес»'.
+    dgp = DocxContent(paragraphs=[], tables=[])
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[["Помещения квартир – коммерческое жилье класса «Бизнес»."]]],
+    )
+    assert extractors.extract_building_class(dgp, tz) == "Бизнес"
+
+
 def test_extract_building_class_not_found():
     dgp = DocxContent(paragraphs=["Класс энергоэффективности лифта не ниже B."], tables=[])
     tz = DocxContent(paragraphs=[], tables=[])
@@ -265,8 +276,10 @@ def test_real_signing_year_found_on_title_page(real_dgp):
     assert extractors.extract_signing_year(real_dgp) == "2025"
 
 
-def test_real_building_class_not_present(real_dgp, real_tz):
-    assert extractors.extract_building_class(real_dgp, real_tz) is None
+def test_real_building_class_found_in_tz_table(real_dgp, real_tz):
+    # The class isn't in any top-level paragraph — it's named inside a table
+    # cell describing apartment finishing: 'класса «Бизнес»'.
+    assert extractors.extract_building_class(real_dgp, real_tz) == "Бизнес"
 
 
 def test_real_underground_area_not_present(real_tz):

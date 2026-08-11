@@ -9,10 +9,10 @@ QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', 
 # contract's title page, used as a fallback when there's no dated preamble.
 STANDALONE_YEAR_RE = re.compile(r'^(20\d{2})\s*(?:год|г\.?)\s*$', re.IGNORECASE)
 BUILDING_CLASS_RE = re.compile(
-    r'класс[а-яё\s-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
+    r'класс[а-яё\s«»"\'-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
 )
 BUILDING_CLASS_REVERSED_RE = re.compile(
-    r'(бизнес|премиум|комфорт|эконом|элит)[а-яё\s-]{0,10}класс', re.IGNORECASE
+    r'(бизнес|премиум|комфорт|эконом|элит)[а-яё\s«»"\'-]{0,10}класс', re.IGNORECASE
 )
 BUILDING_CLASS_KEYWORD_RE = re.compile(
     r'бизнес|премиум|комфорт|эконом|элит', re.IGNORECASE
@@ -101,6 +101,12 @@ def extract_building_class(dgp, tz):
             result = _first_valid_class_match(para)
             if result:
                 return result
+        for table in doc.tables:
+            for row in table:
+                for cell in row:
+                    result = _first_valid_class_match(cell)
+                    if result:
+                        return result
     return None
 
 
