@@ -4,6 +4,10 @@ GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\
 PREAMBLE_CITY_RE = re.compile(r'^г\.?\s*Москва\s*$', re.IGNORECASE)
 FULL_DATE_RE = re.compile(r'\b\d{2}\.\d{2}\.(20\d{2})\b')
 QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', re.IGNORECASE)
+# A cover-page line that is just the year on its own, e.g. "2025 год" or
+# "2025 г." — a common convention below the parties' names on a Russian
+# contract's title page, used as a fallback when there's no dated preamble.
+STANDALONE_YEAR_RE = re.compile(r'^(20\d{2})\s*(?:год|г\.?)\s*$', re.IGNORECASE)
 BUILDING_CLASS_RE = re.compile(
     r'класс[а-яё\s-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
 )
@@ -67,6 +71,10 @@ def extract_signing_year(dgp):
                 if m:
                     return m.group(1)
             break
+    for para in dgp.paragraphs:
+        m = STANDALONE_YEAR_RE.match(para.strip())
+        if m:
+            return m.group(1)
     return None
 
 

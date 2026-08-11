@@ -56,6 +56,26 @@ def test_extract_signing_year_not_found():
     assert extractors.extract_signing_year(dgp) is None
 
 
+def test_extract_signing_year_found_standalone_on_title_page():
+    # No dated preamble at all — just a cover-page line with the year alone,
+    # a common convention on Russian contract title pages.
+    dgp = DocxContent(
+        paragraphs=["ДОГОВОР ГЕНЕРАЛЬНОГО ПОДРЯДА", "", "2025 год"],
+        tables=[],
+    )
+    assert extractors.extract_signing_year(dgp) == "2025"
+
+
+def test_extract_signing_year_prefers_dated_preamble_over_standalone_line():
+    # When both are present, the actual signing date (from the preamble)
+    # is more precise than the cover-page year and should win.
+    dgp = DocxContent(
+        paragraphs=["2024 год", "г. Москва", "«04» февраля 2025 г."],
+        tables=[],
+    )
+    assert extractors.extract_signing_year(dgp) == "2025"
+
+
 def test_extract_signing_year_found_uppercase_city():
     # Contract letterheads sometimes render the preamble in all caps.
     dgp = DocxContent(
@@ -239,8 +259,10 @@ def test_real_general_contractor(real_dgp):
     assert extractors.extract_general_contractor(real_dgp) == "ООО «АНТТЕК»"
 
 
-def test_real_signing_year_not_present(real_dgp):
-    assert extractors.extract_signing_year(real_dgp) is None
+def test_real_signing_year_found_on_title_page(real_dgp):
+    # The real DGP has no dated preamble, but its cover page ends with a
+    # standalone "2025 год" line, which is where the year actually comes from.
+    assert extractors.extract_signing_year(real_dgp) == "2025"
 
 
 def test_real_building_class_not_present(real_dgp, real_tz):
