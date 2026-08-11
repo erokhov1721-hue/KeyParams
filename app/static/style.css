@@ -583,3 +583,54 @@ h1 {
     min-width: 80px;
   }
 }
+
+/* Print / "Save as PDF" */
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block;
+    margin-bottom: 24px;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .container {
+    max-width: none;
+    padding: 0;
+  }
+
+  .card {
+    box-shadow: none;
+    border: 1px solid var(--border);
+    break-inside: avoid;
+  }
+
+  .compare-card {
+    overflow-x: visible;
+  }
+
+  .compare-table {
+    font-size: 12px;
+  }
+
+  .compare-table th,
+  .compare-table td {
+    white-space: normal;
+  }
+
+  .bar-fill,
+  .bar-track {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
