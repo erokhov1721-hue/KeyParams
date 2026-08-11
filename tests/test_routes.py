@@ -345,6 +345,48 @@ def test_project_page_flags_ocr_filled_field(tmp_path):
     assert "С картинки".encode("utf-8") in resp.data
 
 
+def test_project_page_building_class_is_a_dropdown_with_fixed_options(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект без класса")
+    passport_module.save_passport({
+        "project_name": "Проект без класса", "year_signed": None, "building_class": None,
+        "general_contractor": None, "contract_price_rub": None,
+        "underground_area_sqm": None, "aboveground_area_sqm": None,
+        "total_area_sqm": None, "ocr_fields": [],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert '<select name="building_class">' in body
+    for option in passport_module.BUILDING_CLASS_OPTIONS:
+        assert f">{option}<" in body
+
+
+def test_project_page_building_class_dropdown_preselects_current_value(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект с классом")
+    passport_module.save_passport({
+        "project_name": "Проект с классом", "year_signed": None, "building_class": "Бизнес",
+        "general_contractor": None, "contract_price_rub": None,
+        "underground_area_sqm": None, "aboveground_area_sqm": None,
+        "total_area_sqm": None, "ocr_fields": [],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert '<option value="Бизнес" selected>Бизнес</option>' in body
+
+
 def test_project_page_shows_computed_price_per_sqm(tmp_path):
     from app import storage, passport as passport_module
 

@@ -418,7 +418,8 @@ h1 {
   margin-bottom: 6px;
 }
 
-.field-row input[type="text"] {
+.field-row input[type="text"],
+.field-row select {
   flex: 1;
   padding: 11px 14px;
   border: 1px solid var(--border);
@@ -428,13 +429,19 @@ h1 {
   background: var(--white);
 }
 
-.field-row input[type="text"]:focus {
+.field-row select {
+  cursor: pointer;
+}
+
+.field-row input[type="text"]:focus,
+.field-row select:focus {
   outline: none;
   border-color: var(--green-700);
   box-shadow: 0 0 0 3px var(--green-100);
 }
 
-.field-row.is-empty input[type="text"] {
+.field-row.is-empty input[type="text"],
+.field-row.is-empty select {
   border-color: #f0ce8f;
   background: var(--amber-100);
 }
@@ -466,7 +473,8 @@ h1 {
   color: var(--blue-600);
 }
 
-.field-row.is-ocr input[type="text"] {
+.field-row.is-ocr input[type="text"],
+.field-row.is-ocr select {
   border-color: #b9c9ef;
   background: var(--blue-100);
 }

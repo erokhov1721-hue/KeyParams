@@ -31,6 +31,8 @@ TEXT_FIELDS = ("year_signed", "building_class", "general_contractor", "contract_
 AREA_FIELDS = ("underground_area_sqm", "aboveground_area_sqm", "total_area_sqm")
 NUMERIC_FIELDS = AREA_FIELDS + ("contract_price_rub",)
 
+BUILDING_CLASS_OPTIONS = ["Эконом", "Комфорт", "Бизнес", "Бизнес - Премиум", "Премиум", "Элит"]
+
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
     "aboveground_area_sqm": (

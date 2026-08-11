@@ -23,7 +23,19 @@
             <span class="badge badge-ocr">С картинки — проверьте</span>
           {% endif %}
         </div>
+        {% if field == "building_class" %}
+        <select name="{{ field }}">
+          <option value="" {{ 'selected' if value is none else '' }}>Введите значение</option>
+          {% for option in building_class_options %}
+          <option value="{{ option }}" {{ 'selected' if value == option else '' }}>{{ option }}</option>
+          {% endfor %}
+          {% if value is not none and value not in building_class_options %}
+          <option value="{{ value }}" selected>{{ value }}</option>
+          {% endif %}
+        </select>
+        {% else %}
         <input type="text" name="{{ field }}" value="{{ value if value is not none else '' }}" placeholder="Введите значение">
+        {% endif %}
       </div>
       {% if field == "contract_price_rub" %}
       <div class="field-row is-computed">
@@ -47,6 +59,12 @@
   document.querySelectorAll('.field-row input[type="text"]:not([readonly])').forEach(function (input) {
     input.addEventListener('input', function () {
       input.closest('.field-row').classList.toggle('is-empty', input.value.trim() === '');
+    });
+  });
+
+  document.querySelectorAll('.field-row select').forEach(function (select) {
+    select.addEventListener('change', function () {
+      select.closest('.field-row').classList.toggle('is-empty', select.value.trim() === '');
     });
   });
 
