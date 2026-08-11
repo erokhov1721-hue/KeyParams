@@ -42,7 +42,6 @@
       <div class="field-row is-computed">
         <div class="field-label-col">
           <span class="field-label">Цена за м², руб.</span>
-          <span class="field-hint">Считается автоматически: цена работ ÷ общая площадь</span>
         </div>
         <input type="text" id="computed-price-per-sqm"
                value="{{ format_number(price_per_sqm) if price_per_sqm is not none else '' }}"
