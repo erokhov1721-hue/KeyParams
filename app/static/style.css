@@ -205,8 +205,43 @@ h1 {
   min-width: 0;
 }
 
+.project-link[hidden] {
+  display: none;
+}
+
 .project-link:hover {
   background: var(--green-050);
+}
+
+.rename-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 18px;
+}
+
+.rename-form[hidden] {
+  display: none;
+}
+
+.rename-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-900);
+  background: var(--white);
+}
+
+.rename-form input[type="text"]:focus {
+  outline: none;
+  border-color: var(--green-700);
+  box-shadow: 0 0 0 3px var(--green-100);
 }
 
 .delete-form {
@@ -214,7 +249,10 @@ h1 {
   margin-right: 10px;
 }
 
-.btn-delete {
+.btn-delete,
+.btn-edit,
+.btn-rename-save,
+.btn-rename-cancel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -225,9 +263,21 @@ h1 {
   border-radius: var(--radius-sm);
   color: var(--ink-500);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .btn-delete:hover {
+  background: var(--red-100);
+  color: var(--red-600);
+}
+
+.btn-edit:hover,
+.btn-rename-save:hover {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.btn-rename-cancel:hover {
   background: var(--red-100);
   color: var(--red-600);
 }

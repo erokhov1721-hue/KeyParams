@@ -25,8 +25,13 @@ def _selected_compare_slugs(root):
 
 @bp.route("/")
 def index():
-    slugs = storage.list_project_slugs(_projects_root())
-    return render_template("index.html", slugs=slugs)
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    project_names = {
+        slug: passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
+        for slug in slugs
+    }
+    return render_template("index.html", slugs=slugs, project_names=project_names)
 
 
 @bp.route("/compare", methods=["GET"])
@@ -158,6 +163,21 @@ def delete_project(slug):
     if slug not in storage.list_project_slugs(root):
         abort(404)
     storage.delete_project(root, slug)
+    return redirect(url_for("main.index"))
+
+
+@bp.route("/projects/<slug>/rename", methods=["POST"])
+def rename_project(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    new_name = request.form.get("project_name", "").strip()
+    if not new_name:
+        abort(400)
+    path = storage.passport_path(root, slug)
+    data = passport_module.load_passport(path)
+    data["project_name"] = new_name
+    passport_module.save_passport(data, path)
     return redirect(url_for("main.index"))
 
 

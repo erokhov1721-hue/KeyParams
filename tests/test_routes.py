@@ -234,6 +234,65 @@ def test_delete_project_unknown_slug_404s(tmp_path):
     assert resp.status_code == 404
 
 
+def test_rename_project_updates_name_and_redirects_to_index(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Старое имя")
+    passport_module.save_passport(
+        {"project_name": "Старое имя"}, storage.passport_path(tmp_path, slug),
+    )
+
+    resp = client.post(f"/projects/{slug}/rename", data={"project_name": "Новое имя"}, follow_redirects=True)
+
+    assert resp.status_code == 200
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["project_name"] == "Новое имя"
+
+
+def test_rename_project_rejects_empty_name(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Старое имя")
+    passport_module.save_passport(
+        {"project_name": "Старое имя"}, storage.passport_path(tmp_path, slug),
+    )
+
+    resp = client.post(f"/projects/{slug}/rename", data={"project_name": "   "})
+
+    assert resp.status_code == 400
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["project_name"] == "Старое имя"
+
+
+def test_rename_project_unknown_slug_404s(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects/does-not-exist/rename", data={"project_name": "Новое имя"})
+    assert resp.status_code == 404
+
+
+def test_index_page_shows_project_name_instead_of_slug(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проспект Мира")
+    passport_module.save_passport(
+        {"project_name": "Проспект Мира — очень длинное имя"},
+        storage.passport_path(tmp_path, slug),
+    )
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "Проспект Мира — очень длинное имя" in body
+
+
 def _make_project_with_passport(root, name, **fields):
     from app import storage, passport as passport_module
 
