@@ -1,8 +1,10 @@
 import shutil
 
-from flask import Blueprint, abort, current_app, redirect, render_template, request, url_for
+from flask import (
+    Blueprint, Response, abort, current_app, redirect, render_template, request, url_for,
+)
 
-from . import extractors, passport as passport_module, storage
+from . import extractors, passport as passport_module, pdf_export, storage
 from .document_reader import DocxReadError
 
 bp = Blueprint("main", __name__)
@@ -14,6 +16,13 @@ def _projects_root():
     return current_app.config["PROJECTS_ROOT"]
 
 
+def _selected_compare_slugs(root):
+    valid_slugs = set(storage.list_project_slugs(root))
+    return list(dict.fromkeys(
+        s for s in request.args.getlist("slug") if s in valid_slugs
+    ))
+
+
 @bp.route("/")
 def index():
     slugs = storage.list_project_slugs(_projects_root())
@@ -23,10 +32,7 @@ def index():
 @bp.route("/compare", methods=["GET"])
 def compare_projects():
     root = _projects_root()
-    valid_slugs = set(storage.list_project_slugs(root))
-    slugs = list(dict.fromkeys(
-        s for s in request.args.getlist("slug") if s in valid_slugs
-    ))
+    slugs = _selected_compare_slugs(root)
     if not slugs:
         return redirect(url_for("main.index"))
 
@@ -41,6 +47,29 @@ def compare_projects():
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
         charts=passport_module.build_comparison_charts(passports, slugs),
+    )
+
+
+@bp.route("/compare/pdf", methods=["GET"])
+def compare_projects_pdf():
+    root = _projects_root()
+    slugs = _selected_compare_slugs(root)
+    if not slugs:
+        return redirect(url_for("main.index"))
+
+    passports = {
+        slug: passport_module.load_passport(storage.passport_path(root, slug))
+        for slug in slugs
+    }
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, slugs,
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
+        passport_module.build_comparison_charts(passports, slugs),
+    )
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=sravnenie_proektov.pdf"},
     )
 
 

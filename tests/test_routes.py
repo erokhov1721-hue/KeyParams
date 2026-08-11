@@ -313,6 +313,34 @@ def test_compare_projects_shows_empty_chart_message_without_data(tmp_path):
     assert "Недостаточно данных" in body
 
 
+def test_compare_projects_pdf_returns_pdf_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=100.0, year_signed="2024", total_area_sqm=1.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", contract_price_rub=200.0, year_signed="2023", total_area_sqm=1.0,
+    )
+
+    resp = client.get(f"/compare/pdf?slug={slug1}&slug={slug2}")
+
+    assert resp.status_code == 200
+    assert resp.content_type == "application/pdf"
+    assert "attachment" in resp.headers["Content-Disposition"]
+    assert resp.data[:4] == b"%PDF"
+
+
+def test_compare_projects_pdf_redirects_to_index_when_none_selected(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/compare/pdf", follow_redirects=True)
+
+    assert resp.status_code == 200
+    assert resp.request.path == "/"
+
+
 def test_compare_projects_redirects_to_index_when_none_selected(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

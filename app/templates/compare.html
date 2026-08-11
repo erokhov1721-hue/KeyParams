@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head no-print">
+<div class="page-head">
   <div>
     <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
     <h1>Сравнение проектов</h1>
   </div>
-  <button type="button" class="btn btn-secondary" onclick="window.print()">Сохранить в PDF</button>
+  <a class="btn btn-secondary" href="{{ url_for('main.compare_projects_pdf', slug=slugs) }}" download>Сохранить в PDF</a>
 </div>
-<h1 class="print-only">Сравнение проектов</h1>
 
 {% set chart_defs = [
   ("price_by_year", "Цена работ по году подписания договора"),
