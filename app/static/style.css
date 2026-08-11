@@ -158,18 +158,47 @@ h1 {
 .project-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 16px 18px;
-  border-radius: var(--radius-md);
-}
-
-.project-row:hover {
-  background: var(--green-050);
 }
 
 .project-row + .project-row {
   border-top: 1px solid var(--border);
+}
+
+.project-link {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
   border-radius: var(--radius-md);
+  flex: 1;
+  min-width: 0;
+}
+
+.project-link:hover {
+  background: var(--green-050);
+}
+
+.delete-form {
+  flex-shrink: 0;
+  margin-right: 10px;
+}
+
+.btn-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-500);
+  cursor: pointer;
+}
+
+.btn-delete:hover {
+  background: var(--red-100);
+  color: var(--red-600);
 }
 
 .project-icon {

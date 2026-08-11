@@ -11,19 +11,29 @@
 {% if slugs %}
 <div class="card list-card">
   {% for slug in slugs %}
-  <a class="project-row" href="{{ url_for('main.project_page', slug=slug) }}">
-    <span class="project-icon">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
-      </svg>
-    </span>
-    <span class="project-name">{{ slug }}</span>
-    <span class="project-arrow">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 6l6 6-6 6"/>
-      </svg>
-    </span>
-  </a>
+  <div class="project-row">
+    <a class="project-link" href="{{ url_for('main.project_page', slug=slug) }}">
+      <span class="project-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+        </svg>
+      </span>
+      <span class="project-name">{{ slug }}</span>
+      <span class="project-arrow">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 6l6 6-6 6"/>
+        </svg>
+      </span>
+    </a>
+    <form class="delete-form" method="post" action="{{ url_for('main.delete_project', slug=slug) }}"
+          onsubmit="return confirm('Удалить проект «{{ slug }}»? Это действие нельзя отменить.');">
+      <button type="submit" class="btn-delete" title="Удалить проект" aria-label="Удалить проект">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m2 0-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7h14Z"/>
+        </svg>
+      </button>
+    </form>
+  </div>
   {% endfor %}
 </div>
 {% else %}

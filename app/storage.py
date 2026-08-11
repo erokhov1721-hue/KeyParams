@@ -1,4 +1,5 @@
 import re
+import shutil
 from pathlib import Path
 
 INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
@@ -48,6 +49,10 @@ def create_project(root: Path, project_name: str) -> str:
     slug = unique_slug(root, slugify(project_name))
     raw_dir(root, slug).mkdir(parents=True)
     return slug
+
+
+def delete_project(root: Path, slug: str) -> None:
+    shutil.rmtree(project_dir(root, slug), ignore_errors=True)
 
 
 def list_project_slugs(root: Path) -> list:

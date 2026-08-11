@@ -69,6 +69,17 @@ def test_list_project_slugs_skips_dir_without_passport(tmp_path):
     assert storage.list_project_slugs(tmp_path) == ["Good"]
 
 
+def test_delete_project_removes_directory(tmp_path):
+    slug = storage.create_project(tmp_path, "Мира")
+    _finish_project(tmp_path, slug)
+    storage.delete_project(tmp_path, slug)
+    assert not (tmp_path / slug).exists()
+
+
+def test_delete_project_missing_slug_is_a_noop(tmp_path):
+    storage.delete_project(tmp_path, "does-not-exist")
+
+
 def test_raw_dir_and_passport_path(tmp_path):
     assert storage.raw_dir(tmp_path, "mira") == tmp_path / "mira" / "raw"
     assert storage.passport_path(tmp_path, "mira") == tmp_path / "mira" / "passport.json"

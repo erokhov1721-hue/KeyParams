@@ -212,6 +212,28 @@ def test_no_orphan_on_corrupted_docx(tmp_path):
     assert len(slugs) == 0, "Expected no projects after failed upload"
 
 
+def test_delete_project_removes_it_and_redirects_to_index(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Тест")
+    storage.passport_path(tmp_path, slug).write_text("{}", encoding="utf-8")
+
+    resp = client.post(f"/projects/{slug}/delete", follow_redirects=True)
+
+    assert resp.status_code == 200
+    assert slug not in storage.list_project_slugs(tmp_path)
+    assert not (tmp_path / slug).exists()
+
+
+def test_delete_project_unknown_slug_404s(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects/does-not-exist/delete")
+    assert resp.status_code == 404
+
+
 def test_project_page_flags_ocr_filled_field(tmp_path):
     from app import storage, passport as passport_module
 

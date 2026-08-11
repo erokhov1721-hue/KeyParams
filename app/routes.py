@@ -91,6 +91,15 @@ def project_page(slug):
     )
 
 
+@bp.route("/projects/<slug>/delete", methods=["POST"])
+def delete_project(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    storage.delete_project(root, slug)
+    return redirect(url_for("main.index"))
+
+
 @bp.route("/projects/<slug>", methods=["POST"])
 def update_project(slug):
     root = _projects_root()
