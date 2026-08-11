@@ -12,7 +12,7 @@ OCR_FALLBACK_ENV_VAR = "OCR_FALLBACK_ENABLED"
 
 PASSPORT_FIELDS = [
     "project_name", "year_signed", "building_class",
-    "general_contractor", "underground_area_sqm",
+    "general_contractor", "contract_price_rub", "underground_area_sqm",
     "aboveground_area_sqm", "total_area_sqm",
 ]
 
@@ -21,13 +21,15 @@ FIELD_LABELS = {
     "year_signed": "Год подписания договора",
     "building_class": "Класс здания",
     "general_contractor": "Генподрядчик",
+    "contract_price_rub": "Цена работ, руб.",
     "underground_area_sqm": "Площадь подземной части, м²",
     "aboveground_area_sqm": "Площадь надземной части, м²",
     "total_area_sqm": "Общая площадь комплекса, м²",
 }
 
-TEXT_FIELDS = ("year_signed", "building_class", "general_contractor")
+TEXT_FIELDS = ("year_signed", "building_class", "general_contractor", "contract_price_rub")
 AREA_FIELDS = ("underground_area_sqm", "aboveground_area_sqm", "total_area_sqm")
+NUMERIC_FIELDS = AREA_FIELDS + ("contract_price_rub",)
 
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
@@ -73,6 +75,11 @@ def _apply_ocr_fallback(data, dgp, tz):
         if value is not None:
             data["general_contractor"] = value
             filled.append("general_contractor")
+    if data["contract_price_rub"] is None:
+        value = extractors.extract_contract_price(ocr_dgp)
+        if value is not None:
+            data["contract_price_rub"] = value
+            filled.append("contract_price_rub")
     if data["year_signed"] is None:
         value = extractors.extract_signing_year(ocr_dgp)
         if value is not None:
@@ -102,6 +109,7 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
         "year_signed": extractors.extract_signing_year(dgp),
         "building_class": extractors.extract_building_class(dgp, tz),
         "general_contractor": extractors.extract_general_contractor(dgp),
+        "contract_price_rub": extractors.extract_contract_price(dgp),
         "underground_area_sqm": extractors.extract_underground_area(tz),
         "aboveground_area_sqm": extractors.extract_aboveground_area(tz),
         "total_area_sqm": extractors.extract_total_area(tz),
@@ -118,4 +126,10 @@ def save_passport(passport_data: dict, path: Path) -> None:
 
 
 def load_passport(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # A passport saved before a field existed (e.g. contract_price_rub)
+    # won't have that key — backfill it as unset rather than making every
+    # caller (templates included) handle a missing key.
+    for field in PASSPORT_FIELDS:
+        data.setdefault(field, None)
+    return data

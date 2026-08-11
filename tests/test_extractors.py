@@ -41,6 +41,26 @@ def test_extract_general_contractor_not_found():
     assert extractors.extract_general_contractor(dgp) is None
 
 
+# --- extract_contract_price (synthetic) ---
+
+def test_extract_contract_price_found():
+    dgp = DocxContent(
+        paragraphs=[
+            "Цена Работ, выполняемых Генподрядчиком по настоящему Договору "
+            "(Цена Договора), составляет сумму 10 067 050 887,72 руб. "
+            "(Десять миллиардов шестьдесят семь миллионов пятьдесят тысяч "
+            "восемьсот восемьдесят семь рублей 72 копейки), в том числе НДС."
+        ],
+        tables=[],
+    )
+    assert extractors.extract_contract_price(dgp) == 10067050887.72
+
+
+def test_extract_contract_price_not_found():
+    dgp = DocxContent(paragraphs=["Ничего релевантного здесь нет."], tables=[])
+    assert extractors.extract_contract_price(dgp) is None
+
+
 # --- extract_signing_year (synthetic) ---
 
 def test_extract_signing_year_found():
@@ -268,6 +288,10 @@ def test_extract_area_label_split_across_two_cells():
 
 def test_real_general_contractor(real_dgp):
     assert extractors.extract_general_contractor(real_dgp) == "ООО «АНТТЕК»"
+
+
+def test_real_contract_price(real_dgp):
+    assert extractors.extract_contract_price(real_dgp) == 10067050887.72
 
 
 def test_real_signing_year_found_on_title_page(real_dgp):

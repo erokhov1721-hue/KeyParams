@@ -140,7 +140,7 @@ def update_project(slug):
         raw_value = request.form.get(field, "").strip()
         if not raw_value:
             new_value = None
-        elif field in passport_module.AREA_FIELDS:
+        elif field in passport_module.NUMERIC_FIELDS:
             new_value = extractors.parse_number(raw_value)
         else:
             new_value = raw_value

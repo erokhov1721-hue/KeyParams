@@ -8,6 +8,11 @@ QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', 
 # "2025 г." — a common convention below the parties' names on a Russian
 # contract's title page, used as a fallback when there's no dated preamble.
 STANDALONE_YEAR_RE = re.compile(r'^(20\d{2})\s*(?:год|г\.?)\s*$', re.IGNORECASE)
+PRICE_RE = re.compile(
+    r'Цена\s+(?:Работ|Договора)\b.{0,150}?составляет\s+(?:сумму\s+)?'
+    r'([\d\s\xa0]+[.,]\d{2})\s*руб',
+    re.IGNORECASE,
+)
 BUILDING_CLASS_RE = re.compile(
     r'класс[а-яё\s«»"\'-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
 )
@@ -60,6 +65,14 @@ def extract_general_contractor(dgp):
             match = GENERAL_CONTRACTOR_ORG_RE.search(para)
             if match:
                 return match.group(0)
+    return None
+
+
+def extract_contract_price(dgp):
+    for para in dgp.paragraphs:
+        m = PRICE_RE.search(para)
+        if m:
+            return parse_number(m.group(1))
     return None
 
 

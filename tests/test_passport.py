@@ -5,7 +5,7 @@ from tests.helpers import document_xml, make_docx
 def test_passport_fields_order():
     assert passport.PASSPORT_FIELDS == [
         "project_name", "year_signed", "building_class",
-        "general_contractor", "underground_area_sqm",
+        "general_contractor", "contract_price_rub", "underground_area_sqm",
         "aboveground_area_sqm", "total_area_sqm",
     ]
 
@@ -36,6 +36,7 @@ def test_save_and_load_passport_roundtrip(tmp_path):
         "year_signed": None,
         "building_class": None,
         "general_contractor": "ООО «АНТТЕК»",
+        "contract_price_rub": None,
         "underground_area_sqm": None,
         "aboveground_area_sqm": None,
         "total_area_sqm": None,
@@ -44,6 +45,16 @@ def test_save_and_load_passport_roundtrip(tmp_path):
     passport.save_passport(data, path)
     loaded = passport.load_passport(path)
     assert loaded == data
+
+
+def test_load_passport_backfills_missing_field_from_older_save(tmp_path):
+    # A passport saved before contract_price_rub existed lacks the key —
+    # load_passport must backfill it as None rather than raise/omit it, so
+    # templates that iterate PASSPORT_FIELDS don't hit a missing key.
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "Старый проект"}, path)
+    loaded = passport.load_passport(path)
+    assert loaded["contract_price_rub"] is None
 
 
 def test_save_passport_writes_readable_utf8(tmp_path):
