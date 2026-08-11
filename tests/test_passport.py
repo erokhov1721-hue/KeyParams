@@ -82,6 +82,31 @@ def test_build_passport_ocr_fallback_fills_area_from_image(tmp_path, monkeypatch
     assert result["aboveground_area_sqm"] is None
 
 
+def test_build_passport_ocr_fallback_disambiguates_footprint_from_underground(tmp_path, monkeypatch):
+    # OCR text contains both the building-footprint row ("Площадь застройки
+    # подземной части") and the real target row ("Общая площадь подземного
+    # паркинга"). The fallback must pick the latter, not the first match.
+    monkeypatch.setattr(
+        ocr, "recognize_text",
+        lambda images: [
+            "Площадь застройки подземной части м2 4 611\n"
+            "Общая площадь подземного паркинга м2 13 297"
+        ] * len(images),
+    )
+    dgp_xml = document_xml()
+    tz_xml = document_xml()
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(
+        tmp_path, tz_xml, "tz.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["underground_area_sqm"] == 13297.0
+    assert result["ocr_fields"] == ["underground_area_sqm"]
+
+
 def test_build_passport_skips_ocr_when_nothing_missing(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(

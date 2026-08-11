@@ -24,8 +24,8 @@ TEXT_FIELDS = ("year_signed", "building_class", "general_contractor")
 AREA_FIELDS = ("underground_area_sqm", "aboveground_area_sqm", "total_area_sqm")
 
 AREA_TOKENS = {
-    "underground_area_sqm": (('площад', 'подземн'), ()),
-    "aboveground_area_sqm": (('площад', ('надземн', 'наземн')), ()),
+    "underground_area_sqm": (('площад', 'подземн'), ('застройки',)),
+    "aboveground_area_sqm": (('площад', ('надземн', 'наземн')), ('застройки',)),
     "total_area_sqm": (('обща', 'площад'), ('подземн', 'надземн', 'наземн')),
 }
 

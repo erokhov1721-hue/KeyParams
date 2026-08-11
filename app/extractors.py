@@ -229,11 +229,13 @@ def _find_area_value_in_text(lines, must_contain, must_not_contain=()):
 
 
 def extract_underground_area(tz):
-    return _find_area_value(tz.tables, ('площад', 'подземн'))
+    return _find_area_value(tz.tables, ('площад', 'подземн'), must_not_contain=('застройки',))
 
 
 def extract_aboveground_area(tz):
-    return _find_area_value(tz.tables, ('площад', ('надземн', 'наземн')))
+    return _find_area_value(
+        tz.tables, ('площад', ('надземн', 'наземн')), must_not_contain=('застройки',),
+    )
 
 
 def extract_total_area(tz):

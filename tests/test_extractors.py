@@ -270,6 +270,44 @@ def test_extract_total_area_ignores_subarea_rows():
     assert extractors.extract_total_area(tz) == 67413.0
 
 
+def test_extract_underground_area_ignores_footprint_row():
+    # "Площадь застройки подземной части" (building-footprint area) is a
+    # distinct, named metric from the total underground-part area — it must
+    # not be picked over the real "Площадь подземной части" / "Общая площадь
+    # подземного паркинга" row that follows it.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["1", "Площадь застройки подземной части", "м2", "4 611"],
+            ["2", "Общая площадь подземного паркинга", "м2", "13 297"],
+        ]],
+    )
+    assert extractors.extract_underground_area(tz) == 13297.0
+
+
+def test_extract_aboveground_area_ignores_footprint_row():
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["1", "Площадь застройки наземной части", "м2", "3 587"],
+            ["2", "Общая наземная площадь", "м2", "54 116"],
+        ]],
+    )
+    assert extractors.extract_aboveground_area(tz) == 54116.0
+
+
+def test_find_area_value_in_text_disambiguates_footprint_from_underground():
+    lines = [
+        "Площадь застройки подземной части м2 4 611",
+        "Общая площадь подземного паркинга м2 13 297",
+    ]
+    value = extractors._find_area_value_in_text(
+        lines, ('площад', 'подземн'),
+        must_not_contain=('застройки',),
+    )
+    assert value == 13297.0
+
+
 def test_find_area_value_in_text_same_line():
     lines = ["Общая площадь м2 67 413"]
     value = extractors._find_area_value_in_text(
