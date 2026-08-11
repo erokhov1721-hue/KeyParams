@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
+    <h1>Сравнение проектов</h1>
+  </div>
+</div>
+
+<div class="card compare-card">
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th></th>
+        {% for slug in slugs %}
+        <th>{{ passports[slug].project_name or slug }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for field in fields %}
+        {% if field != "project_name" %}
+        <tr>
+          <td class="compare-field-label">{{ field_labels.get(field, field) }}</td>
+          {% for slug in slugs %}
+            {% set value = passports[slug][field] %}
+            <td>{{ value if value is not none else '—' }}</td>
+          {% endfor %}
+        </tr>
+        {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,17 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
+<form id="compare-form" method="get" action="{{ url_for('main.compare_projects') }}"></form>
 <div class="page-head">
   <div>
     <h1>Проекты</h1>
     <p class="page-sub">Паспорта объектов, собранные из договоров и технических заданий</p>
   </div>
-  <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+  <div class="page-head-actions">
+    {% if slugs %}
+    <button type="submit" form="compare-form" class="btn btn-secondary">Сравнить проекты</button>
+    {% endif %}
+    <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+  </div>
 </div>
 
 {% if slugs %}
 <div class="card list-card">
   {% for slug in slugs %}
   <div class="project-row">
+    <label class="project-checkbox">
+      <input type="checkbox" name="slug" value="{{ slug }}" form="compare-form">
+    </label>
     <a class="project-link" href="{{ url_for('main.project_page', slug=slug) }}">
       <span class="project-icon">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -138,6 +138,23 @@ h1 {
   background: var(--green-600);
 }
 
+.btn-secondary {
+  background: var(--white);
+  color: var(--green-700);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--green-050);
+}
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .btn-block {
   width: 100%;
 }
@@ -162,6 +179,20 @@ h1 {
 
 .project-row + .project-row {
   border-top: 1px solid var(--border);
+}
+
+.project-checkbox {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px 0 14px;
+  cursor: pointer;
+}
+
+.project-checkbox input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--green-700);
+  cursor: pointer;
 }
 
 .project-link {
@@ -225,6 +256,40 @@ h1 {
 .empty-state {
   padding: 48px 32px;
   text-align: center;
+}
+
+/* Compare page */
+
+.compare-card {
+  overflow-x: auto;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.compare-table th,
+.compare-table td {
+  padding: 14px 18px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.compare-table thead th {
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.compare-table tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.compare-field-label {
+  font-weight: 600;
+  color: var(--ink-500);
 }
 
 .empty-title {

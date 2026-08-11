@@ -234,6 +234,59 @@ def test_delete_project_unknown_slug_404s(tmp_path):
     assert resp.status_code == 404
 
 
+def _make_project_with_passport(root, name, **fields):
+    from app import storage, passport as passport_module
+
+    slug = storage.create_project(root, name)
+    data = {
+        "project_name": name, "year_signed": None, "building_class": None,
+        "general_contractor": None, "underground_area_sqm": None,
+        "aboveground_area_sqm": None, "total_area_sqm": None, "ocr_fields": [],
+    }
+    data.update(fields)
+    passport_module.save_passport(data, storage.passport_path(root, slug))
+    return slug
+
+
+def test_compare_projects_shows_selected_projects_side_by_side(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(tmp_path, "ПроектА", total_area_sqm=1000.0)
+    slug2 = _make_project_with_passport(tmp_path, "ПроектБ", total_area_sqm=2000.0)
+
+    resp = client.get(f"/compare?slug={slug1}&slug={slug2}")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "ПроектА" in body
+    assert "ПроектБ" in body
+    assert "1000" in body
+    assert "2000" in body
+
+
+def test_compare_projects_ignores_unknown_slug(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.get(f"/compare?slug={slug}&slug=does-not-exist")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "ПроектА" in body
+    assert "does-not-exist" not in body
+
+
+def test_compare_projects_redirects_to_index_when_none_selected(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/compare", follow_redirects=True)
+
+    assert resp.status_code == 200
+    assert resp.request.path == "/"
+
+
 def test_project_page_flags_ocr_filled_field(tmp_path):
     from app import storage, passport as passport_module
 

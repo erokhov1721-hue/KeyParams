@@ -20,6 +20,29 @@ def index():
     return render_template("index.html", slugs=slugs)
 
 
+@bp.route("/compare", methods=["GET"])
+def compare_projects():
+    root = _projects_root()
+    valid_slugs = set(storage.list_project_slugs(root))
+    slugs = list(dict.fromkeys(
+        s for s in request.args.getlist("slug") if s in valid_slugs
+    ))
+    if not slugs:
+        return redirect(url_for("main.index"))
+
+    passports = {
+        slug: passport_module.load_passport(storage.passport_path(root, slug))
+        for slug in slugs
+    }
+    return render_template(
+        "compare.html",
+        slugs=slugs,
+        passports=passports,
+        fields=passport_module.PASSPORT_FIELDS,
+        field_labels=passport_module.FIELD_LABELS,
+    )
+
+
 @bp.route("/projects/new", methods=["GET"])
 def new_project_form():
     return render_template("new_project.html", error=None)
