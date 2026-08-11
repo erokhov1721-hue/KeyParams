@@ -270,6 +270,19 @@ def test_extract_total_area_ignores_subarea_rows():
     assert extractors.extract_total_area(tz) == 67413.0
 
 
+def test_extract_total_area_ignores_footprint_row():
+    # "Общая площадь застройки" (total building-footprint area) matches the
+    # same tokens as the real complex total but is a distinct metric.
+    tz = DocxContent(
+        paragraphs=[],
+        tables=[[
+            ["1", "Общая площадь застройки", "м2", "12 000"],
+            ["2", "Общая площадь", "м2", "67 413"],
+        ]],
+    )
+    assert extractors.extract_total_area(tz) == 67413.0
+
+
 def test_extract_underground_area_ignores_footprint_row():
     # "Площадь застройки подземной части" (building-footprint area) is a
     # distinct, named metric from the total underground-part area — it must

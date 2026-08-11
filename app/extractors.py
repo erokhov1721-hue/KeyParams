@@ -27,6 +27,10 @@ NUMERIC_CELL_RE = re.compile(
 )
 # Longest label the area extractors accept, in adjacent table cells.
 MAX_LABEL_CELLS = 2
+# "Площадь застройки" (building-footprint area) is a distinct, named
+# real-estate metric that shares tokens with underground/aboveground/total
+# area labels but must never be picked in their place.
+FOOTPRINT_EXCLUSION = ('застройки',)
 
 
 def parse_number(text):
@@ -229,17 +233,19 @@ def _find_area_value_in_text(lines, must_contain, must_not_contain=()):
 
 
 def extract_underground_area(tz):
-    return _find_area_value(tz.tables, ('площад', 'подземн'), must_not_contain=('застройки',))
+    return _find_area_value(
+        tz.tables, ('площад', 'подземн'), must_not_contain=FOOTPRINT_EXCLUSION,
+    )
 
 
 def extract_aboveground_area(tz):
     return _find_area_value(
-        tz.tables, ('площад', ('надземн', 'наземн')), must_not_contain=('застройки',),
+        tz.tables, ('площад', ('надземн', 'наземн')), must_not_contain=FOOTPRINT_EXCLUSION,
     )
 
 
 def extract_total_area(tz):
     return _find_area_value(
         tz.tables, ('обща', 'площад'),
-        must_not_contain=('подземн', 'надземн', 'наземн'),
+        must_not_contain=('подземн', 'надземн', 'наземн') + FOOTPRINT_EXCLUSION,
     )
