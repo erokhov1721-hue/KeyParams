@@ -1,6 +1,6 @@
 import pytest
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Border, Color, Font, PatternFill, Side
 
 from app import estimate
 
@@ -127,3 +127,43 @@ def test_read_estimate_raises_on_corrupted_file(tmp_path):
 
     with pytest.raises(estimate.EstimateReadError):
         estimate.read_estimate(path)
+
+
+def test_read_estimate_indexed_color_fill(tmp_path):
+    """Test that indexed color fills (from standard palette) are resolved to #RRGGBB."""
+    wb = Workbook()
+    ws = wb.active
+    cell = ws["A1"]
+    cell.value = "Indexed"
+    # Indexed color 10 is a standard red in Excel's palette
+    cell.fill = PatternFill(fill_type="solid", fgColor=Color(index=10))
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    rendered = sheets[0]["rows"][0][0]
+
+    assert rendered["value"] == "Indexed"
+    # Should resolve to an actual color, not None
+    assert rendered["bg"] is not None
+    assert isinstance(rendered["bg"], str)
+    assert rendered["bg"].startswith("#")
+
+
+def test_read_estimate_theme_color_fill(tmp_path):
+    """Test that theme color fills are resolved to #RRGGBB."""
+    wb = Workbook()
+    ws = wb.active
+    cell = ws["A1"]
+    cell.value = "Theme"
+    # Theme color 0 is typically a dark color (accent)
+    cell.fill = PatternFill(fill_type="solid", fgColor=Color(theme=0, tint=0))
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    rendered = sheets[0]["rows"][0][0]
+
+    assert rendered["value"] == "Theme"
+    # Should resolve to an actual color, not None
+    assert rendered["bg"] is not None
+    assert isinstance(rendered["bg"], str)
+    assert rendered["bg"].startswith("#")

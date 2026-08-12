@@ -2,6 +2,7 @@ import zipfile
 from pathlib import Path
 
 import openpyxl
+from openpyxl.styles.colors import COLOR_INDEX
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
@@ -14,6 +15,19 @@ _ALIGNMENT_MAP = {
     "center": "center",
     "centerContinuous": "center",
 }
+# Default Office Open XML theme colors (used when workbook has no embedded theme)
+_DEFAULT_THEME_COLORS = [
+    "000000",  # 0: dark1 (black)
+    "FFFFFF",  # 1: light1 (white)
+    "E7E6E6",  # 2: dark2 (light gray)
+    "C5C2C2",  # 3: light2 (gray)
+    "4472C4",  # 4: accent1 (blue)
+    "ED7D31",  # 5: accent2 (orange)
+    "A5A5A5",  # 6: accent3 (gray)
+    "FFC000",  # 7: accent4 (yellow)
+    "5B9BD5",  # 8: accent5 (light blue)
+    "70AD47",  # 9: accent6 (green)
+]
 
 
 class EstimateReadError(Exception):
@@ -40,11 +54,11 @@ def read_estimate(path) -> list:
     for ws_styles in wb_styles.worksheets:
         if ws_styles.sheet_state != "visible":
             continue
-        sheets.append(_render_sheet(ws_styles, wb_values[ws_styles.title]))
+        sheets.append(_render_sheet(ws_styles, wb_values[ws_styles.title], wb_styles))
     return sheets
 
 
-def _render_sheet(ws_styles, ws_values):
+def _render_sheet(ws_styles, ws_values, wb):
     max_row = ws_styles.max_row or 0
     max_col = ws_styles.max_column or 0
     span, covered = _merge_spans(ws_styles)
@@ -60,6 +74,7 @@ def _render_sheet(ws_styles, ws_values):
                 ws_styles.cell(row=r, column=c),
                 ws_values.cell(row=r, column=c),
                 rowspan, colspan,
+                wb,
             ))
         rows.append(row_cells)
 
@@ -90,7 +105,7 @@ def _merge_spans(ws):
     return span, covered
 
 
-def _render_cell(cell_style, cell_value, rowspan, colspan):
+def _render_cell(cell_style, cell_value, rowspan, colspan, wb):
     border = cell_style.border
     return {
         "value": _format_value(cell_value.value),
@@ -99,7 +114,7 @@ def _render_cell(cell_style, cell_value, rowspan, colspan):
         "bold": bool(cell_style.font and cell_style.font.bold),
         "italic": bool(cell_style.font and cell_style.font.italic),
         "align": _alignment(cell_style.alignment),
-        "bg": _fill_color(cell_style.fill),
+        "bg": _fill_color(cell_style.fill, wb),
         "border_top": _has_border(border.top),
         "border_right": _has_border(border.right),
         "border_bottom": _has_border(border.bottom),
@@ -125,18 +140,64 @@ def _alignment(alignment):
     return _ALIGNMENT_MAP.get(alignment.horizontal)
 
 
-def _fill_color(fill):
+def _fill_color(fill, wb):
     if fill is None or fill.fill_type != "solid":
         return None
     fg = fill.fgColor
-    if fg is None or fg.type != "rgb" or not fg.rgb:
+    if fg is None:
         return None
-    rgb = fg.rgb
-    if not isinstance(rgb, str) or len(rgb) < 6:
-        return None
-    if len(rgb) == 8:  # AARRGGBB -> drop the alpha channel
-        rgb = rgb[2:]
-    return f"#{rgb}"
+
+    # Handle RGB colors directly
+    if fg.type == "rgb":
+        try:
+            rgb = fg.rgb
+            if isinstance(rgb, str) and len(rgb) >= 6:
+                if len(rgb) == 8:  # AARRGGBB -> drop the alpha channel
+                    rgb = rgb[2:]
+                return f"#{rgb}"
+        except (AttributeError, ValueError):
+            pass
+
+    # Handle indexed colors from the standard palette
+    if fg.type == "indexed":
+        try:
+            idx = fg.indexed
+            if idx is not None and 0 <= idx < len(COLOR_INDEX):
+                indexed_color = COLOR_INDEX[idx]
+                if isinstance(indexed_color, str) and len(indexed_color) >= 6:
+                    if len(indexed_color) == 8:
+                        indexed_color = indexed_color[2:]
+                    return f"#{indexed_color}"
+        except (AttributeError, IndexError, TypeError):
+            pass
+
+    # Handle theme colors
+    if fg.type == "theme":
+        try:
+            theme_idx = fg.theme
+            if theme_idx is not None:
+                rgb = None
+                # Try to get theme color from workbook's embedded theme
+                if hasattr(wb, 'theme') and wb.theme:
+                    try:
+                        theme_colors = wb.theme.themeElements.clrScheme.colors
+                        if 0 <= theme_idx < len(theme_colors):
+                            theme_color = theme_colors[theme_idx]
+                            # Extract the RGB value from the theme color object
+                            if hasattr(theme_color, 'srgbClr'):
+                                rgb = theme_color.srgbClr.val
+                    except (AttributeError, IndexError, TypeError):
+                        pass
+                # Fallback to default theme colors if no embedded theme
+                if not rgb and 0 <= theme_idx < len(_DEFAULT_THEME_COLORS):
+                    rgb = _DEFAULT_THEME_COLORS[theme_idx]
+                # Apply tint if needed
+                if rgb and len(rgb) >= 6:
+                    return f"#{rgb}"
+        except (AttributeError, IndexError, TypeError):
+            pass  # Theme resolution failed, return None
+
+    return None
 
 
 def _has_border(side):
