@@ -171,28 +171,17 @@ def _fill_color(fill, wb):
         except (AttributeError, IndexError, TypeError):
             pass
 
-    # Handle theme colors
+    # Handle theme colors using the standard Office default theme colors.
+    # Note: This uses an approximation (standard Office theme palette) rather than
+    # attempting to parse the workbook's embedded theme XML. This is a known
+    # limitation that provides reasonable color approximations for most estimates
+    # while keeping the code simple and avoiding brittle XML parsing.
     if fg.type == "theme":
         try:
             theme_idx = fg.theme
-            if theme_idx is not None:
-                rgb = None
-                # Try to get theme color from workbook's embedded theme
-                if hasattr(wb, 'theme') and wb.theme:
-                    try:
-                        theme_colors = wb.theme.themeElements.clrScheme.colors
-                        if 0 <= theme_idx < len(theme_colors):
-                            theme_color = theme_colors[theme_idx]
-                            # Extract the RGB value from the theme color object
-                            if hasattr(theme_color, 'srgbClr'):
-                                rgb = theme_color.srgbClr.val
-                    except (AttributeError, IndexError, TypeError):
-                        pass
-                # Fallback to default theme colors if no embedded theme
-                if not rgb and 0 <= theme_idx < len(_DEFAULT_THEME_COLORS):
-                    rgb = _DEFAULT_THEME_COLORS[theme_idx]
-                # Apply tint if needed
-                if rgb and len(rgb) >= 6:
+            if theme_idx is not None and 0 <= theme_idx < len(_DEFAULT_THEME_COLORS):
+                rgb = _DEFAULT_THEME_COLORS[theme_idx]
+                if len(rgb) >= 6:
                     return f"#{rgb}"
         except (AttributeError, IndexError, TypeError):
             pass  # Theme resolution failed, return None

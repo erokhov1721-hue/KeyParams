@@ -150,12 +150,14 @@ def test_read_estimate_indexed_color_fill(tmp_path):
 
 
 def test_read_estimate_theme_color_fill(tmp_path):
-    """Test that theme color fills are resolved to #RRGGBB."""
+    """Test that theme color fills are resolved to #RRGGBB using the default
+    Office theme palette. (Note: uses standard palette approximation, not
+    workbook's actual embedded theme.)"""
     wb = Workbook()
     ws = wb.active
     cell = ws["A1"]
     cell.value = "Theme"
-    # Theme color 0 is typically a dark color (accent)
+    # Theme color 0 from the standard Office default palette
     cell.fill = PatternFill(fill_type="solid", fgColor=Color(theme=0, tint=0))
     path = _save(tmp_path, wb)
 
@@ -163,7 +165,8 @@ def test_read_estimate_theme_color_fill(tmp_path):
     rendered = sheets[0]["rows"][0][0]
 
     assert rendered["value"] == "Theme"
-    # Should resolve to an actual color, not None
+    # Should resolve to the default palette color for theme index 0
     assert rendered["bg"] is not None
     assert isinstance(rendered["bg"], str)
-    assert rendered["bg"].startswith("#")
+    # Theme color 0 from default Office palette is #000000 (dark1/black)
+    assert rendered["bg"] == "#000000"
