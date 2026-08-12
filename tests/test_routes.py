@@ -685,6 +685,82 @@ def test_create_project_rejects_non_xlsx_estimate(tmp_path):
     assert storage.list_project_slugs(tmp_path) == []
 
 
+def test_new_project_form_has_optional_estimate_field(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/projects/new")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert 'name="smeta_file"' in body
+    assert 'accept=".xlsx"' in body
+
+
+def test_project_page_shows_estimate_link_when_file_present(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    client.post("/projects", data={
+        "project_name": "Есть смета",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(_smeta_bytes()), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+
+    page = client.get("/projects/Есть_смета")
+
+    assert page.status_code == 200
+    # Flask's url_for percent-encodes non-ASCII path segments (correct,
+    # RFC 3986-compliant behavior), so the href in the rendered HTML is
+    # not the literal Cyrillic slug — build the expected href the same
+    # way the template does.
+    with app.test_request_context():
+        from flask import url_for
+        expected_href = f'href="{url_for("main.estimate_page", slug="Есть_смета")}"'
+    assert expected_href.encode("utf-8") in page.data
+
+
+def test_project_page_hides_estimate_link_when_no_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    client.post("/projects", data={
+        "project_name": "Нет сметы",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    page = client.get("/projects/Нет_сметы")
+
+    assert page.status_code == 200
+    assert b"/smeta" not in page.data
+
+
+def test_estimate_page_renders_multiple_sheets_as_tabs(tmp_path):
+    wb = Workbook()
+    wb.active.title = "Смета"
+    wb.active["A1"] = "Итого"
+    wb.create_sheet("Материалы")["A1"] = "Цемент"
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    client.post("/projects", data={
+        "project_name": "Многолистовая",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(buf.getvalue()), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+
+    page = client.get("/projects/Многолистовая/smeta")
+
+    assert page.status_code == 200
+    body = page.data.decode("utf-8")
+    assert "Итого" in body
+    assert "Цемент" in body
+    assert "Материалы" in body
+
+
 def test_create_project_rejects_corrupted_estimate(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

@@ -45,6 +45,18 @@
       <input class="file-input" type="file" id="tz_file" name="tz_file" accept=".docx">
     </div>
 
+    <div class="field">
+      <label for="smeta_file">Смета (необязательно), .xlsx</label>
+      <label class="file-drop" for="smeta_file">
+        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+      </label>
+      <input class="file-input" type="file" id="smeta_file" name="smeta_file" accept=".xlsx">
+    </div>
+
     <button type="submit" class="btn btn-primary btn-block">Создать проект</button>
   </form>
 </div>

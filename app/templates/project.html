@@ -8,6 +8,11 @@
       Синий — распознано с картинки, стоит проверить. Жёлтый — заполните вручную.
     </p>
   </div>
+  {% if has_estimate %}
+  <div class="page-head-actions">
+    <a class="btn btn-secondary" href="{{ url_for('main.estimate_page', slug=slug) }}">Смета</a>
+  </div>
+  {% endif %}
 </div>
 
 <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
