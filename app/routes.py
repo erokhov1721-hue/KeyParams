@@ -4,12 +4,13 @@ from flask import (
     Blueprint, Response, abort, current_app, redirect, render_template, request, url_for,
 )
 
-from . import extractors, passport as passport_module, pdf_export, storage
+from . import estimate, extractors, passport as passport_module, pdf_export, storage
 from .document_reader import DocxReadError
 
 bp = Blueprint("main", __name__)
 
 ALLOWED_EXTENSION = ".docx"
+ALLOWED_ESTIMATE_EXTENSION = ".xlsx"
 
 
 def _projects_root():
@@ -95,6 +96,7 @@ def create_project():
     project_name = request.form.get("project_name", "").strip()
     dgp_file = request.files.get("dgp_file")
     tz_file = request.files.get("tz_file")
+    smeta_file = request.files.get("smeta_file")
 
     if not project_name:
         return render_template("new_project.html", error="Введите название проекта"), 400
@@ -102,6 +104,9 @@ def create_project():
         return render_template("new_project.html", error="Загрузите файл Договора в формате .docx"), 400
     if not tz_file or not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
         return render_template("new_project.html", error="Загрузите файл ТЗ в формате .docx"), 400
+    has_smeta = bool(smeta_file and smeta_file.filename)
+    if has_smeta and not smeta_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return render_template("new_project.html", error="Смета должна быть в формате .xlsx"), 400
 
     try:
         slug = storage.create_project(root, project_name)
@@ -118,6 +123,19 @@ def create_project():
     tz_path = raw / "tz.docx"
     dgp_file.save(dgp_path)
     tz_file.save(tz_path)
+
+    if has_smeta:
+        smeta_path = storage.estimate_path(root, slug)
+        smeta_file.save(smeta_path)
+        try:
+            estimate.read_estimate(smeta_path)
+        except estimate.EstimateReadError as e:
+            current_app.logger.warning("Не удалось разобрать смету: %s", e)
+            shutil.rmtree(storage.project_dir(root, slug), ignore_errors=True)
+            return render_template(
+                "new_project.html",
+                error="Не удалось прочитать смету — убедитесь, что это корректный файл .xlsx",
+            ), 400
 
     try:
         data = passport_module.build_passport(project_name, dgp_path, tz_path)
@@ -156,7 +174,21 @@ def project_page(slug):
         building_class_options=passport_module.BUILDING_CLASS_OPTIONS,
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
+        has_estimate=storage.estimate_path(root, slug).exists(),
     )
+
+
+@bp.route("/projects/<slug>/smeta", methods=["GET"])
+def estimate_page(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    path = storage.estimate_path(root, slug)
+    if not path.exists():
+        abort(404)
+    sheets = estimate.read_estimate(path)
+    project_name = passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
+    return render_template("estimate.html", slug=slug, project_name=project_name, sheets=sheets)
 
 
 @bp.route("/projects/<slug>/delete", methods=["POST"])

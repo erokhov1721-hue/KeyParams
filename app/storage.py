@@ -44,6 +44,10 @@ def passport_path(root: Path, slug: str) -> Path:
     return project_dir(root, slug) / "passport.json"
 
 
+def estimate_path(root: Path, slug: str) -> Path:
+    return raw_dir(root, slug) / "smeta.xlsx"
+
+
 def create_project(root: Path, project_name: str) -> str:
     root.mkdir(parents=True, exist_ok=True)
     slug = unique_slug(root, slugify(project_name))

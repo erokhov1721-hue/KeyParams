@@ -1,5 +1,7 @@
 import io
 
+from openpyxl import Workbook
+
 from app import create_app
 from tests.helpers import build_docx_bytes, document_xml
 
@@ -13,6 +15,15 @@ def _dgp_bytes():
 
 def _tz_bytes():
     return build_docx_bytes(document_xml(tables=[[["1", "Площадь подземной части", "м2", "1 000"]]]))
+
+
+def _smeta_bytes():
+    wb = Workbook()
+    wb.active.append(["Раздел", "Сумма"])
+    wb.active.append(["Фундамент", 1000])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def test_index_page_loads_when_empty(tmp_path):
@@ -622,3 +633,68 @@ def test_update_project_keeps_ocr_flag_when_value_unchanged(tmp_path):
 
     saved = passport_module.load_passport(path)
     assert saved["ocr_fields"] == ["total_area_sqm"]
+
+
+def test_create_project_with_estimate_saves_and_serves_it(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Со сметой",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(_smeta_bytes()), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 302
+    slug = "Со_сметой"
+
+    from app import storage
+    assert storage.estimate_path(tmp_path, slug).exists()
+
+    page = client.get(f"/projects/{slug}/smeta")
+    assert page.status_code == 200
+    assert "Фундамент".encode("utf-8") in page.data
+
+
+def test_create_project_without_estimate_smeta_route_404s(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без сметы",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 302
+    slug = "Без_сметы"
+
+    page = client.get(f"/projects/{slug}/smeta")
+    assert page.status_code == 404
+
+
+def test_create_project_rejects_non_xlsx_estimate(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Плохая смета",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(b"not excel"), "smeta.txt"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 400
+
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_rejects_corrupted_estimate(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Битая смета",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(b"this is not a real xlsx file"), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 400
+
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
