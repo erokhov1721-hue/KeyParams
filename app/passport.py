@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from . import extractors, ocr
+from . import ai_extractor, extractors, ocr
 from .document_reader import DocxContent, read_docx
 
 # OCR fallback (EasyOCR) is CPU-only in this environment and can take
@@ -55,12 +55,13 @@ def _ocr_lines(images):
 
 
 def _apply_ocr_fallback(data, dgp, tz):
+    empty_ocr = DocxContent(paragraphs=[], tables=[])
     if os.environ.get(OCR_FALLBACK_ENV_VAR) != "1":
-        return []
+        return [], empty_ocr, empty_ocr
 
     missing = [f for f in PASSPORT_FIELDS if f != "project_name" and data[f] is None]
     if not missing:
-        return []
+        return [], empty_ocr, empty_ocr
 
     needs_dgp_ocr = any(f in TEXT_FIELDS for f in missing)
     needs_tz_ocr = any(f == "building_class" or f in AREA_FIELDS for f in missing)
@@ -100,7 +101,7 @@ def _apply_ocr_fallback(data, dgp, tz):
         if value is not None:
             data[field] = value
             filled.append(field)
-    return filled
+    return filled, ocr_dgp, ocr_tz
 
 
 def build_passport(project_name: str, dgp_path, tz_path) -> dict:
@@ -116,8 +117,25 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
         "aboveground_area_sqm": extractors.extract_aboveground_area(tz),
         "total_area_sqm": extractors.extract_total_area(tz),
     }
-    data["ocr_fields"] = _apply_ocr_fallback(data, dgp, tz)
+    data["ocr_fields"], ocr_dgp, ocr_tz = _apply_ocr_fallback(data, dgp, tz)
+    data["ai_fields"] = _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz)
     return data
+
+
+def _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz):
+    missing = [f for f in PASSPORT_FIELDS if f != "project_name" and data[f] is None]
+    if not missing:
+        return []
+
+    context_text = ai_extractor.build_context_text(dgp, tz)
+    ocr_text = "\n".join(ocr_dgp.paragraphs + ocr_tz.paragraphs)
+    if ocr_text:
+        context_text = context_text + "\n" + ocr_text
+
+    found = ai_extractor.extract_missing_fields(missing, context_text)
+    for field, value in found.items():
+        data[field] = value
+    return list(found.keys())
 
 
 def save_passport(passport_data: dict, path: Path) -> None:

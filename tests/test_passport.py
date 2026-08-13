@@ -1,4 +1,4 @@
-from app import ocr, passport
+from app import ai_extractor, ocr, passport
 from tests.helpers import document_xml, make_docx
 
 
@@ -311,6 +311,96 @@ def test_build_passport_skips_ocr_when_nothing_missing(tmp_path, monkeypatch):
 
     assert result["ocr_fields"] == []
     assert calls == []
+
+
+def test_build_passport_ai_fallback_fills_missing_field(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ai_extractor, "extract_missing_fields",
+        lambda missing_fields, context_text: {"general_contractor": "ООО «Тест»"},
+    )
+    dgp_xml = document_xml()  # no general_contractor phrase anywhere
+    tz_xml = document_xml(tables=[[["Общая площадь", "67413", "м2"]]])
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["general_contractor"] == "ООО «Тест»"
+    assert result["ai_fields"] == ["general_contractor"]
+
+
+def test_build_passport_ai_fallback_skipped_when_nothing_missing(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ai_extractor, "extract_missing_fields",
+        lambda missing_fields, context_text: calls.append(missing_fields) or {},
+    )
+    dgp_xml = document_xml(paragraphs=[
+        "г. Москва",
+        "«04» февраля 2025 г.",
+        "Жилой комплекс бизнес-класса.",
+        "Цена Работ по настоящему Договору составляет 10 067 050 887,72 руб., включая НДС.",
+        "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,",
+    ])
+    tz_xml = document_xml(tables=[[
+        ["1", "Площадь подземной части", "м2", "1 000"],
+        ["2", "Площадь надземной части", "м2", "2 000"],
+        ["3", "Общая площадь", "м2", "3 000"],
+    ]])
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["ai_fields"] == []
+    assert calls == []
+
+
+def test_build_passport_ai_fallback_failure_leaves_fields_none(tmp_path, monkeypatch):
+    # Mirrors how the OCR fallback degrades on failure: extract_missing_fields
+    # is contracted to never raise, returning {} on any internal error, so
+    # build_passport just sees "nothing found" and keeps going.
+    monkeypatch.setattr(
+        ai_extractor, "extract_missing_fields",
+        lambda missing_fields, context_text: {},
+    )
+    dgp_xml = document_xml()
+    tz_xml = document_xml()
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["ai_fields"] == []
+    assert result["total_area_sqm"] is None
+
+
+def test_build_passport_ai_context_includes_ocr_text_when_ocr_ran(tmp_path, monkeypatch):
+    monkeypatch.setenv(passport.OCR_FALLBACK_ENV_VAR, "1")
+    monkeypatch.setattr(
+        ocr, "recognize_text",
+        lambda images: ["Генподрядчик ООО «Из Картинки»"] * len(images),
+    )
+    captured = {}
+
+    def fake_extract(missing_fields, context_text):
+        captured["context_text"] = context_text
+        return {}
+
+    monkeypatch.setattr(ai_extractor, "extract_missing_fields", fake_extract)
+
+    dgp_xml = document_xml()
+    tz_xml = document_xml()
+    dgp_path = make_docx(
+        tmp_path, dgp_xml, "dgp.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert "Из Картинки" in captured["context_text"]
 
 
 def test_build_passport_ocr_failure_leaves_field_none(tmp_path, monkeypatch):
