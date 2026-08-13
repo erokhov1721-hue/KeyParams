@@ -109,3 +109,12 @@ def test_extract_missing_fields_malformed_json_returns_empty_dict(monkeypatch):
     result = ai_extractor.extract_missing_fields(["general_contractor"], "текст")
 
     assert result == {}
+
+
+def test_extract_missing_fields_non_dict_json_returns_empty_dict(monkeypatch):
+    fake_client = _FakeClient(json.dumps([1, 2, 3]))
+    monkeypatch.setattr(ai_extractor, "_get_client", lambda: fake_client)
+
+    result = ai_extractor.extract_missing_fields(["general_contractor"], "текст")
+
+    assert result == {}

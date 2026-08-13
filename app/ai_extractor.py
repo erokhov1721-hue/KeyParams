@@ -1,9 +1,12 @@
 import json
+import logging
 
 import anthropic
 
 from . import extractors
 from .anonymize import anonymize_text, deanonymize_value
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-5"
 
@@ -30,7 +33,9 @@ def build_context_text(dgp, tz) -> str:
 def _schema(missing_fields):
     return {
         "type": "object",
-        "properties": {field: {"type": ["string", "null"]} for field in missing_fields},
+        "properties": {
+            field: {"anyOf": [{"type": "string"}, {"type": "null"}]} for field in missing_fields
+        },
         "required": missing_fields,
         "additionalProperties": False,
     }
@@ -52,8 +57,8 @@ def extract_missing_fields(missing_fields: list, context_text: str) -> dict:
         response = _get_client().messages.create(
             model=MODEL,
             max_tokens=2048,
-            thinking={"type": "disabled"},
             output_config={
+                "effort": "low",
                 "format": {"type": "json_schema", "schema": _schema(missing_fields)},
             },
             messages=[{
@@ -69,6 +74,10 @@ def extract_missing_fields(missing_fields: list, context_text: str) -> dict:
         raw_text = next(block.text for block in response.content if block.type == "text")
         raw = json.loads(raw_text)
     except Exception:
+        logger.exception("AI extractor fallback failed")
+        return {}
+
+    if not isinstance(raw, dict):
         return {}
 
     # Deferred import: passport.py imports this module to wire in the
