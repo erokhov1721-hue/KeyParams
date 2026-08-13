@@ -5,7 +5,9 @@
     <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
     <h1>{{ passport.project_name }}</h1>
     <p class="page-sub">
-      Синий — распознано с картинки, стоит проверить. Жёлтый — заполните вручную.
+      Синий — распознано с картинки, стоит проверить.
+      Фиолетовый — найдено через AI, стоит проверить.
+      Жёлтый — заполните вручную.
     </p>
   </div>
   {% if has_estimate %}
@@ -21,11 +23,14 @@
       {% if field != "project_name" %}
       {% set value = passport[field] %}
       {% set is_ocr = field in ocr_fields %}
-      <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else 'is-filled') }}">
+      {% set is_ai = field in ai_fields %}
+      <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else ('is-ai' if is_ai else 'is-filled')) }}">
         <div class="field-label-col">
           <span class="field-label">{{ field_labels.get(field, field) }}</span>
           {% if is_ocr %}
             <span class="badge badge-ocr">С картинки — проверьте</span>
+          {% elif is_ai %}
+            <span class="badge badge-ai">Найдено через AI — проверьте</span>
           {% endif %}
         </div>
         {% if field == "building_class" %}

@@ -170,6 +170,7 @@ def project_page(slug):
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
         ocr_fields=data.get("ocr_fields", []),
+        ai_fields=data.get("ai_fields", []),
         price_per_sqm=passport_module.price_per_sqm(data),
         building_class_options=passport_module.BUILDING_CLASS_OPTIONS,
         numeric_fields=passport_module.NUMERIC_FIELDS,
@@ -225,6 +226,7 @@ def update_project(slug):
         abort(404)
     data = passport_module.load_passport(path)
     ocr_fields = list(data.get("ocr_fields", []))
+    ai_fields = list(data.get("ai_fields", []))
     for field in passport_module.PASSPORT_FIELDS:
         if field == "project_name":
             continue
@@ -239,6 +241,9 @@ def update_project(slug):
         data[field] = new_value
         if new_value != old_value and field in ocr_fields:
             ocr_fields.remove(field)
+        if new_value != old_value and field in ai_fields:
+            ai_fields.remove(field)
     data["ocr_fields"] = ocr_fields
+    data["ai_fields"] = ai_fields
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))

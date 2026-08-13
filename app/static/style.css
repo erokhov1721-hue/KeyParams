@@ -8,6 +8,8 @@
   --amber-100: #fff3dc;
   --blue-600: #2f5fae;
   --blue-100: #e7edfb;
+  --purple-600: #6d4aab;
+  --purple-100: #ece5f7;
   --red-600: #b42318;
   --red-100: #fdecea;
   --ink-900: #1a1f1d;
@@ -527,6 +529,17 @@ h1 {
 .field-row.is-ocr select {
   border-color: #b9c9ef;
   background: var(--blue-100);
+}
+
+.badge-ai {
+  background: var(--purple-100);
+  color: var(--purple-600);
+}
+
+.field-row.is-ai input[type="text"],
+.field-row.is-ai select {
+  border-color: #cabbe6;
+  background: var(--purple-100);
 }
 
 .field-hint {

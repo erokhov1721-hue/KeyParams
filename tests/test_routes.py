@@ -635,6 +635,81 @@ def test_update_project_keeps_ocr_flag_when_value_unchanged(tmp_path):
     assert saved["ocr_fields"] == ["total_area_sqm"]
 
 
+def test_project_page_shows_ai_badge_for_ai_filled_field(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    from app import storage, passport as passport_module
+
+    slug = storage.create_project(tmp_path, "Проект с AI-полем")
+    passport_module.save_passport({
+        "project_name": "Проект с AI-полем",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": "ООО «Из AI»",
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": None,
+        "ocr_fields": [],
+        "ai_fields": ["general_contractor"],
+    }, storage.passport_path(tmp_path, slug))
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    assert "Найдено через AI".encode("utf-8") in resp.data
+
+
+def test_update_project_clears_ai_flag_when_value_changes(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    from app import storage, passport as passport_module
+
+    slug = storage.create_project(tmp_path, "Проект с AI-полем")
+    path = storage.passport_path(tmp_path, slug)
+    passport_module.save_passport({
+        "project_name": "Проект с AI-полем",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": [],
+        "ai_fields": ["total_area_sqm"],
+    }, path)
+
+    client.post(f"/projects/{slug}", data={"total_area_sqm": "70000"})
+
+    saved = passport_module.load_passport(path)
+    assert saved["total_area_sqm"] == 70000.0
+    assert saved["ai_fields"] == []
+
+
+def test_update_project_keeps_ai_flag_when_value_unchanged(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    from app import storage, passport as passport_module
+
+    slug = storage.create_project(tmp_path, "Проект с AI-полем")
+    path = storage.passport_path(tmp_path, slug)
+    passport_module.save_passport({
+        "project_name": "Проект с AI-полем",
+        "year_signed": None,
+        "building_class": None,
+        "general_contractor": None,
+        "underground_area_sqm": None,
+        "aboveground_area_sqm": None,
+        "total_area_sqm": 67413.0,
+        "ocr_fields": [],
+        "ai_fields": ["total_area_sqm"],
+    }, path)
+
+    client.post(f"/projects/{slug}", data={"total_area_sqm": "67413"})
+
+    saved = passport_module.load_passport(path)
+    assert saved["ai_fields"] == ["total_area_sqm"]
+
+
 def test_create_project_with_estimate_saves_and_serves_it(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
