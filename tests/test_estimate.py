@@ -205,17 +205,17 @@ def test_read_estimate_theme_color_accent_unaffected(tmp_path):
 
 
 def test_render_sheet_truncates_oversized_dimensions(tmp_path, monkeypatch):
-    """A sheet whose reported dimensions exceed the render cap gets clamped,
-    and the returned sheet dict signals truncation."""
+    """A sheet with real *values* extending past the render cap gets
+    clamped, and the returned sheet dict signals truncation."""
     monkeypatch.setattr(estimate, "MAX_RENDERED_ROWS", 5)
     monkeypatch.setattr(estimate, "MAX_RENDERED_COLS", 3)
 
     wb = Workbook()
     ws = wb.active
     ws["A1"] = "x"
-    # A stray formatted cell far outside the "real" data inflates
-    # ws.max_row / ws.max_column, mimicking a real-world estimate file.
-    ws.cell(row=20, column=10).fill = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    # A real value (not just formatting) far outside the cap means genuine
+    # content is being cut off.
+    ws.cell(row=20, column=10).value = "far"
     path = _save(tmp_path, wb)
 
     sheets = estimate.read_estimate(path)
@@ -243,3 +243,69 @@ def test_render_sheet_small_sheet_not_truncated(tmp_path):
     assert len(sheet["rows"]) == 2
     assert [c["value"] for c in sheet["rows"][0]] == ["Раздел", "Кол-во", "Цена"]
     assert [c["value"] for c in sheet["rows"][1]] == ["Земляные работы", "10", "1 500.50"]
+
+
+def test_render_sheet_inflated_dimension_but_modest_content_not_truncated(tmp_path):
+    """The exact real-world scenario this fix targets: a stray far-out cell
+    with only formatting (no value) inflates ws.max_row/ws.max_column, but
+    the real content is a small table. The sheet should render its full real
+    content and NOT report truncation, since nothing real was cut off."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Раздел", "Кол-во", "Цена"])
+    ws.append(["Земляные работы", 10, 1500.5])
+    # Stray formatting-only cell far outside the real table. Before this fix,
+    # ws.max_column would report ~300 and the render loop would materialize
+    # rows x 200 (the old cap) cells needlessly.
+    ws.cell(row=5, column=300).fill = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    sheet = sheets[0]
+
+    assert "truncated" not in sheet or sheet["truncated"] is False
+    assert len(sheet["rows"]) == 2
+    assert len(sheet["col_widths"]) == 3
+    assert [c["value"] for c in sheet["rows"][0]] == ["Раздел", "Кол-во", "Цена"]
+
+
+def test_render_sheet_merge_extends_past_last_valued_cell(tmp_path):
+    """A merged range whose top-left cell has a value but which extends into
+    columns/rows with no values at all must still be fully accounted for in
+    the render boundary."""
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "Заголовок"
+    # Merge extends to column F (6) and row 3, well past any valued cell.
+    ws.merge_cells("A1:F3")
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    sheet = sheets[0]
+
+    assert "truncated" not in sheet or sheet["truncated"] is False
+    assert len(sheet["rows"]) == 3
+    assert len(sheet["col_widths"]) == 6
+    assert sheet["rows"][0][0]["value"] == "Заголовок"
+    assert sheet["rows"][0][0]["rowspan"] == 3
+    assert sheet["rows"][0][0]["colspan"] == 6
+
+
+def test_render_sheet_merge_extent_still_capped(tmp_path, monkeypatch):
+    """A merge extending past the render cap is still clamped, and reported
+    as truncated, even though the merge itself has no genuine cell values
+    beyond its top-left."""
+    monkeypatch.setattr(estimate, "MAX_RENDERED_ROWS", 5)
+    monkeypatch.setattr(estimate, "MAX_RENDERED_COLS", 3)
+
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "Заголовок"
+    ws.merge_cells("A1:J1")  # 10 columns, past the 3-column cap.
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    sheet = sheets[0]
+
+    assert sheet["truncated"] is True
+    assert len(sheet["col_widths"]) == 3

@@ -58,21 +58,78 @@ def read_estimate(path) -> list:
     except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError) as e:
         raise EstimateReadError(f"Cannot read {path}: {e}") from e
 
+    value_bounds = _value_bounds(path)
+
     sheets = []
     for ws_styles in wb_styles.worksheets:
         if ws_styles.sheet_state != "visible":
             continue
-        sheets.append(_render_sheet(ws_styles, wb_values[ws_styles.title], wb_styles))
+        bounds = value_bounds.get(ws_styles.title, (0, 0))
+        sheets.append(_render_sheet(ws_styles, wb_values[ws_styles.title], wb_styles, bounds))
     return sheets
 
 
-def _render_sheet(ws_styles, ws_values, wb):
-    actual_max_row = ws_styles.max_row or 0
-    actual_max_col = ws_styles.max_column or 0
-    max_row = min(actual_max_row, MAX_RENDERED_ROWS)
-    max_col = min(actual_max_col, MAX_RENDERED_COLS)
-    truncated = actual_max_row > max_row or actual_max_col > max_col
+def _value_bounds(path):
+    """Scan every sheet with a read_only (streaming) workbook load and return
+    ``{sheet_title: (max_row, max_col)}`` among cells whose value is not
+    None.
+
+    A sheet's declared dimension (``ws.max_row``/``ws.max_column`` on a
+    normal-mode worksheet) can be wildly inflated by a single stray
+    formatting artifact far outside the real data — e.g. a border applied to
+    column XFD. Fetching cells at that scale via normal-mode
+    ``ws.cell(r, c)`` is prohibitively slow, because each such call
+    materializes a real ``Cell`` object. ``read_only=True`` streams the
+    underlying XML and only visits cells that actually exist, so it finds the
+    true content boundary cheaply regardless of how inflated the declared
+    dimension is.
+
+    IMPORTANT: this must stay read_only. Calling ``iter_rows()`` with no
+    bounds on a *normal*-mode worksheet under the same inflated-dimension
+    condition is catastrophic (it eagerly materializes the full declared
+    rectangle) and can hang for minutes.
+
+    Uses ``data_only=False`` (not True): a formula cell with no cached
+    result (e.g. a workbook openpyxl itself just wrote, never opened in
+    Excel) reads as ``None`` under ``data_only=True`` even though it is
+    genuine content — that would wrongly shrink the boundary and drop real
+    rows/columns. With ``data_only=False`` a formula cell's ``.value`` is
+    its formula text, which is never ``None``, so it still counts.
+    """
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=False)
+    try:
+        bounds = {}
+        for ws in wb.worksheets:
+            max_row = 0
+            max_col = 0
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is not None:
+                        if cell.row > max_row:
+                            max_row = cell.row
+                        if cell.column > max_col:
+                            max_col = cell.column
+            bounds[ws.title] = (max_row, max_col)
+        return bounds
+    finally:
+        wb.close()
+
+
+def _render_sheet(ws_styles, ws_values, wb, value_bounds=(0, 0)):
+    value_max_row, value_max_col = value_bounds
     span, covered = _merge_spans(ws_styles)
+    merge_max_row = 0
+    merge_max_col = 0
+    for (top_row, top_col), (rowspan, colspan) in span.items():
+        merge_max_row = max(merge_max_row, top_row + rowspan - 1)
+        merge_max_col = max(merge_max_col, top_col + colspan - 1)
+
+    content_max_row = max(value_max_row, merge_max_row)
+    content_max_col = max(value_max_col, merge_max_col)
+
+    max_row = min(content_max_row, MAX_RENDERED_ROWS)
+    max_col = min(content_max_col, MAX_RENDERED_COLS)
+    truncated = content_max_row > max_row or content_max_col > max_col
 
     rows = []
     for r in range(1, max_row + 1):
