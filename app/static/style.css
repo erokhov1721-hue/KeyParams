@@ -672,6 +672,12 @@ h1 {
   display: block;
 }
 
+.sheet-truncated-notice {
+  margin: 0 0 10px;
+  color: var(--ink-500);
+  font-size: 13px;
+}
+
 .estimate-table-wrap {
   overflow-x: auto;
   background: var(--white);

@@ -18,6 +18,9 @@
 
 {% for sheet in sheets %}
 <div class="sheet-panel {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">
+  {% if sheet.truncated %}
+  <p class="sheet-truncated-notice">Показаны первые {{ sheet.rows|length }} строк и {{ sheet.col_widths|length }} столбцов — лист слишком большой для полного отображения.</p>
+  {% endif %}
   <div class="estimate-table-wrap">
     <table class="estimate-table">
       <colgroup>

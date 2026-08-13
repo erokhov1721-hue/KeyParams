@@ -15,12 +15,14 @@ _ALIGNMENT_MAP = {
     "center": "center",
     "centerContinuous": "center",
 }
-# Default Office Open XML theme colors (used when workbook has no embedded theme)
+# Default Office Open XML theme colors (used when workbook has no embedded theme).
+# Order per the OOXML spec's <color theme="n"/> indices: lt1, dk1, lt2, dk2,
+# accent1..accent6.
 _DEFAULT_THEME_COLORS = [
-    "000000",  # 0: dark1 (black)
-    "FFFFFF",  # 1: light1 (white)
-    "E7E6E6",  # 2: dark2 (light gray)
-    "C5C2C2",  # 3: light2 (gray)
+    "FFFFFF",  # 0: lt1 (white / "Background 1")
+    "000000",  # 1: dk1 (black / "Text 1")
+    "E7E6E6",  # 2: lt2 (light gray / "Background 2")
+    "44546A",  # 3: dk2 (dark blue-gray / "Text 2")
     "4472C4",  # 4: accent1 (blue)
     "ED7D31",  # 5: accent2 (orange)
     "A5A5A5",  # 6: accent3 (gray)
@@ -28,6 +30,12 @@ _DEFAULT_THEME_COLORS = [
     "5B9BD5",  # 8: accent5 (light blue)
     "70AD47",  # 9: accent6 (green)
 ]
+
+# Hard cap on how much of a sheet gets rendered. Real-world workbooks can
+# report wildly inflated max_row/max_col (e.g. a border applied to an entire
+# unused column) which would otherwise blow up render time and memory.
+MAX_RENDERED_ROWS = 2000
+MAX_RENDERED_COLS = 200
 
 
 class EstimateReadError(Exception):
@@ -59,8 +67,11 @@ def read_estimate(path) -> list:
 
 
 def _render_sheet(ws_styles, ws_values, wb):
-    max_row = ws_styles.max_row or 0
-    max_col = ws_styles.max_column or 0
+    actual_max_row = ws_styles.max_row or 0
+    actual_max_col = ws_styles.max_column or 0
+    max_row = min(actual_max_row, MAX_RENDERED_ROWS)
+    max_col = min(actual_max_col, MAX_RENDERED_COLS)
+    truncated = actual_max_row > max_row or actual_max_col > max_col
     span, covered = _merge_spans(ws_styles)
 
     rows = []
@@ -83,7 +94,10 @@ def _render_sheet(ws_styles, ws_values, wb):
         dim = ws_styles.column_dimensions.get(get_column_letter(c))
         col_widths.append(dim.width if dim and dim.width else DEFAULT_COLUMN_WIDTH)
 
-    return {"name": ws_styles.title, "rows": rows, "col_widths": col_widths}
+    sheet = {"name": ws_styles.title, "rows": rows, "col_widths": col_widths}
+    if truncated:
+        sheet["truncated"] = True
+    return sheet
 
 
 def _merge_spans(ws):

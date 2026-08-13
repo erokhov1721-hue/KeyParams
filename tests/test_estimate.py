@@ -168,5 +168,78 @@ def test_read_estimate_theme_color_fill(tmp_path):
     # Should resolve to the default palette color for theme index 0
     assert rendered["bg"] is not None
     assert isinstance(rendered["bg"], str)
-    # Theme color 0 from default Office palette is #000000 (dark1/black)
+    # Per the OOXML theme order (lt1, dk1, lt2, dk2, accent1..6), theme index
+    # 0 is lt1 ("White, Background 1") -> #FFFFFF.
+    assert rendered["bg"] == "#FFFFFF"
+
+
+def test_read_estimate_theme_color_1_is_black(tmp_path):
+    """Theme index 1 is dk1 ("Black, Text 1") -> #000000."""
+    wb = Workbook()
+    ws = wb.active
+    cell = ws["A1"]
+    cell.value = "Theme"
+    cell.fill = PatternFill(fill_type="solid", fgColor=Color(theme=1, tint=0))
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    rendered = sheets[0]["rows"][0][0]
+
     assert rendered["bg"] == "#000000"
+
+
+def test_read_estimate_theme_color_accent_unaffected(tmp_path):
+    """Accent indices (4..9) are unaffected by the lt1/dk1/lt2/dk2 reorder."""
+    wb = Workbook()
+    ws = wb.active
+    cell = ws["A1"]
+    cell.value = "Theme"
+    # Theme index 4 is accent1 -> #4472C4, unchanged by the fix.
+    cell.fill = PatternFill(fill_type="solid", fgColor=Color(theme=4, tint=0))
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    rendered = sheets[0]["rows"][0][0]
+
+    assert rendered["bg"] == "#4472C4"
+
+
+def test_render_sheet_truncates_oversized_dimensions(tmp_path, monkeypatch):
+    """A sheet whose reported dimensions exceed the render cap gets clamped,
+    and the returned sheet dict signals truncation."""
+    monkeypatch.setattr(estimate, "MAX_RENDERED_ROWS", 5)
+    monkeypatch.setattr(estimate, "MAX_RENDERED_COLS", 3)
+
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "x"
+    # A stray formatted cell far outside the "real" data inflates
+    # ws.max_row / ws.max_column, mimicking a real-world estimate file.
+    ws.cell(row=20, column=10).fill = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    sheet = sheets[0]
+
+    assert sheet["truncated"] is True
+    assert len(sheet["rows"]) == 5
+    assert all(len(row) <= 3 for row in sheet["rows"])
+    assert len(sheet["col_widths"]) == 3
+
+
+def test_render_sheet_small_sheet_not_truncated(tmp_path):
+    """An ordinary small sheet is unaffected by the cap: no truncation flag,
+    and it renders its full content as before."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Раздел", "Кол-во", "Цена"])
+    ws.append(["Земляные работы", 10, 1500.5])
+    path = _save(tmp_path, wb)
+
+    sheets = estimate.read_estimate(path)
+    sheet = sheets[0]
+
+    assert "truncated" not in sheet or sheet["truncated"] is False
+    assert len(sheet["rows"]) == 2
+    assert [c["value"] for c in sheet["rows"][0]] == ["Раздел", "Кол-во", "Цена"]
+    assert [c["value"] for c in sheet["rows"][1]] == ["Земляные работы", "10", "1 500.50"]
