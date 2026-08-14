@@ -1,6 +1,15 @@
 import re
 
 GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\s*«[^»]+»')
+# The title page always states the object's address as "расположенный по
+# адресу: г. <city>, <district boilerplate>, ул. <street>, <plot-number
+# boilerplate> NN[/NN] (кадастровый номер ...)." — only the city and the
+# street name + plot number are wanted, e.g. "г. Москва, ул. Верейская 29/35".
+ADDRESS_ANCHOR_RE = re.compile(r'расположенн\w*\s+по\s+адресу\s*:?', re.IGNORECASE)
+ADDRESS_CITY_RE = re.compile(r'\bг\.?\s*([А-ЯЁ][а-яё]+)')
+ADDRESS_STREET_RE = re.compile(
+    r'\bул\.?\s*([^,()]+?)\s*,\s*[^,()\d]*?(\d+[А-Яа-я]?(?:/\d+)?)', re.IGNORECASE,
+)
 PREAMBLE_CITY_RE = re.compile(r'^г\.?\s*Москва\s*$', re.IGNORECASE)
 FULL_DATE_RE = re.compile(r'\b\d{2}\.\d{2}\.(20\d{2})\b')
 QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', re.IGNORECASE)
@@ -66,6 +75,24 @@ def extract_general_contractor(dgp):
             if match:
                 return match.group(0)
     return None
+
+
+def extract_address(dgp):
+    text = '\n'.join(dgp.paragraphs)
+    anchor = ADDRESS_ANCHOR_RE.search(text)
+    if not anchor:
+        return None
+    window = text[anchor.end():anchor.end() + 400]
+
+    city_match = ADDRESS_CITY_RE.search(window)
+    street_match = ADDRESS_STREET_RE.search(window)
+    if not city_match or not street_match:
+        return None
+
+    city = city_match.group(1)
+    street = street_match.group(1).strip()
+    plot_number = street_match.group(2)
+    return f"г. {city}, ул. {street} {plot_number}"
 
 
 def extract_contract_price(dgp):

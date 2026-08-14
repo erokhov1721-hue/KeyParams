@@ -48,6 +48,33 @@ def estimate_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "smeta.xlsx"
 
 
+def contract_terms_path(root: Path, slug: str) -> Path:
+    return raw_dir(root, slug) / "contract_terms.pdf"
+
+
+COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def cover_path(root: Path, slug: str) -> Path | None:
+    directory = project_dir(root, slug)
+    for ext in COVER_EXTENSIONS:
+        candidate = directory / f"cover{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def save_cover(root: Path, slug: str, file_storage, ext: str) -> Path:
+    directory = project_dir(root, slug)
+    for existing_ext in COVER_EXTENSIONS:
+        existing = directory / f"cover{existing_ext}"
+        if existing.exists():
+            existing.unlink()
+    dest = directory / f"cover{ext}"
+    file_storage.save(dest)
+    return dest
+
+
 def create_project(root: Path, project_name: str) -> str:
     root.mkdir(parents=True, exist_ok=True)
     slug = unique_slug(root, slugify(project_name))

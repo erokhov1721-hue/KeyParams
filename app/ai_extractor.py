@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 
@@ -97,3 +98,79 @@ def extract_missing_fields(missing_fields: list, context_text: str) -> dict:
                 continue
         result[field] = value
     return result
+
+
+CONTRACT_TERMS_IMAGE_FIELDS = ["smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct"]
+
+
+def _contract_terms_schema():
+    return {
+        "type": "object",
+        "properties": {
+            field: {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            for field in CONTRACT_TERMS_IMAGE_FIELDS
+        },
+        "required": CONTRACT_TERMS_IMAGE_FIELDS,
+        "additionalProperties": False,
+    }
+
+
+def extract_contract_terms_from_images(images: list) -> dict:
+    """Ask Claude to read a scanned contract-terms protocol directly as an
+    image and return the fields ``build_contract_terms`` needs.
+
+    Used only when the source PDF has no text layer at all — a genuine scan
+    — where local OCR would take minutes on this CPU-only setup. There's no
+    text-based anonymization equivalent for an image, so the page (with any
+    real company names or signatures on it) goes to the API unredacted, by
+    explicit choice for this document type. Never raises: any failure — no
+    API key, no network, a bad response — just means nothing gets filled,
+    same as ``extract_missing_fields``.
+    """
+    if not images:
+        return {}
+
+    try:
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64", "media_type": "image/png",
+                    "data": base64.b64encode(image).decode("ascii"),
+                },
+            }
+            for image in images
+        ]
+        content.append({
+            "type": "text",
+            "text": (
+                "Это скан протокола окончательных условий по договору. Найди на "
+                "изображении значения полей:\n"
+                "- smr_term: срок выполнения СМР (строительно-монтажных работ)\n"
+                "- advance_payment: условия по авансу, %\n"
+                "- bank_guarantee: включена ли банковская гарантия на возврат "
+                "аванса — ответь строго \"Включено\" или \"Не включено\"\n"
+                "- performance_bond_pct: performance bond, %\n\n"
+                "Если поле не найдено на изображении — верни null, не придумывай значение."
+            ),
+        })
+        response = _get_client().messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            output_config={
+                "effort": "low",
+                "format": {"type": "json_schema", "schema": _contract_terms_schema()},
+            },
+            messages=[{"role": "user", "content": content}],
+        )
+        raw_text = next(block.text for block in response.content if block.type == "text")
+        raw = json.loads(raw_text)
+    except Exception:
+        logger.exception("Contract terms image extractor failed")
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        field: raw.get(field) for field in CONTRACT_TERMS_IMAGE_FIELDS if raw.get(field) is not None
+    }

@@ -1,16 +1,15 @@
 {% extends "base.html" %}
+{% block header_actions %}
+{% if slugs %}
+<button type="submit" form="compare-form" class="btn btn-secondary">Сравнить проекты</button>
+{% endif %}
+{% endblock %}
 {% block content %}
 <form id="compare-form" method="get" action="{{ url_for('main.compare_projects') }}"></form>
 <div class="page-head">
   <div>
     <h1>Проекты</h1>
     <p class="page-sub">Паспорта объектов, собранные из договоров и технических заданий</p>
-  </div>
-  <div class="page-head-actions">
-    {% if slugs %}
-    <button type="submit" form="compare-form" class="btn btn-secondary">Сравнить проекты</button>
-    {% endif %}
-    <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
   </div>
 </div>
 
@@ -46,6 +45,17 @@
           <path d="M18 6 6 18M6 6l12 12"/>
         </svg>
       </button>
+    </form>
+    <form class="cover-upload-form" method="post"
+          action="{{ url_for('main.upload_project_cover', slug=slug) }}" enctype="multipart/form-data">
+      <label class="btn-cover-upload" for="cover-input-{{ loop.index0 }}" title="Загрузить фото объекта" aria-label="Загрузить фото объекта">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/>
+          <circle cx="12" cy="13" r="3.2"/>
+        </svg>
+      </label>
+      <input class="cover-upload-input" type="file" id="cover-input-{{ loop.index0 }}"
+             name="cover_file" accept=".jpg,.jpeg,.png,.webp" hidden>
     </form>
     <button type="button" class="btn-edit" title="Переименовать проект" aria-label="Переименовать проект">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -92,6 +102,12 @@
       var row = btn.closest('.project-row');
       row.querySelector('.rename-form').hidden = true;
       row.querySelector('.project-link').hidden = false;
+    });
+  });
+
+  document.querySelectorAll('.cover-upload-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      if (input.files[0]) input.closest('.cover-upload-form').submit();
     });
   });
 </script>

@@ -1,4 +1,10 @@
 {% extends "base.html" %}
+{% block main_extra_class %}container-project{% endblock %}
+{% block header_actions %}
+{% if has_estimate %}
+<a class="btn btn-secondary" href="{{ url_for('main.estimate_page', slug=slug) }}">Смета</a>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -10,61 +16,193 @@
       Жёлтый — заполните вручную.
     </p>
   </div>
-  {% if has_estimate %}
-  <div class="page-head-actions">
-    <a class="btn btn-secondary" href="{{ url_for('main.estimate_page', slug=slug) }}">Смета</a>
-  </div>
-  {% endif %}
 </div>
 
-<form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
-  <div class="card fields-card">
-    {% for field in fields %}
-      {% if field != "project_name" %}
-      {% set value = passport[field] %}
-      {% set is_ocr = field in ocr_fields %}
-      {% set is_ai = field in ai_fields %}
-      <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else ('is-ai' if is_ai else 'is-filled')) }}">
-        <div class="field-label-col">
-          <span class="field-label">{{ field_labels.get(field, field) }}</span>
-          {% if is_ocr %}
-            <span class="badge badge-ocr">С картинки — проверьте</span>
-          {% elif is_ai %}
-            <span class="badge badge-ai">Найдено через AI — проверьте</span>
+<div class="accordion-backdrop" hidden></div>
+<div class="object-layout">
+  <div class="object-cover-col">
+    <div class="cover-preview cover-preview-square">
+      {% if cover_version %}
+      <img src="{{ url_for('main.project_cover', slug=slug) }}?v={{ cover_version }}" alt="">
+      {% else %}
+      <div class="cover-placeholder">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M3 21V8l6-4 6 4v13"/>
+          <path d="M15 21V11l6-3v13"/>
+          <path d="M9 21v-4h3v4"/>
+        </svg>
+      </div>
+      {% endif %}
+    </div>
+    {% if passport.address %}
+    <p class="cover-address">{{ passport.address }}</p>
+    {% endif %}
+  </div>
+
+  <div class="object-main-col">
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="true">
+        <span>Паспорт объекта</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel">
+        <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
+          <div class="fields-card">
+            {% for field in fields %}
+              {% if field != "project_name" %}
+              {% set value = passport[field] %}
+              {% set is_ocr = field in ocr_fields %}
+              {% set is_ai = field in ai_fields %}
+              <div class="field-row {{ 'is-empty' if value is none else ('is-ocr' if is_ocr else ('is-ai' if is_ai else 'is-filled')) }}">
+                <div class="field-label-col">
+                  <span class="field-label">{{ field_labels.get(field, field) }}</span>
+                  {% if is_ocr %}
+                    <span class="badge badge-ocr">С картинки — проверьте</span>
+                  {% elif is_ai %}
+                    <span class="badge badge-ai">Найдено через AI — проверьте</span>
+                  {% endif %}
+                </div>
+                {% if field == "building_class" %}
+                <select name="{{ field }}">
+                  <option value="" {{ 'selected' if value is none else '' }}>Введите значение</option>
+                  {% for option in building_class_options %}
+                  <option value="{{ option }}" {{ 'selected' if value == option else '' }}>{{ option }}</option>
+                  {% endfor %}
+                  {% if value is not none and value not in building_class_options %}
+                  <option value="{{ value }}" selected>{{ value }}</option>
+                  {% endif %}
+                </select>
+                {% else %}
+                {% set display = format_number(value) if field in numeric_fields else value %}
+                <input type="text" name="{{ field }}" value="{{ display if display is not none else '' }}" placeholder="Введите значение">
+                {% endif %}
+              </div>
+              {% if field == "contract_price_rub" %}
+              <div class="field-row is-computed">
+                <div class="field-label-col">
+                  <span class="field-label">Цена за м², руб.</span>
+                </div>
+                <input type="text" id="computed-price-per-sqm"
+                       value="{{ format_number(price_per_sqm) if price_per_sqm is not none else '' }}"
+                       placeholder="—" readonly>
+              </div>
+              {% endif %}
+              {% endif %}
+            {% endfor %}
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Сохранить изменения</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="accordion" data-accordion data-fullscreen>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Смета</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if has_estimate %}
+          {% if sheets|length > 1 %}
+          <div class="sheet-tabs">
+            {% for sheet in sheets %}
+            <button type="button" class="sheet-tab {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">{{ sheet.name }}</button>
+            {% endfor %}
+          </div>
           {% endif %}
-        </div>
-        {% if field == "building_class" %}
-        <select name="{{ field }}">
-          <option value="" {{ 'selected' if value is none else '' }}>Введите значение</option>
-          {% for option in building_class_options %}
-          <option value="{{ option }}" {{ 'selected' if value == option else '' }}>{{ option }}</option>
+          {% for sheet in sheets %}
+          <div class="sheet-panel {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">
+            {% if sheet.truncated %}
+            <p class="sheet-truncated-notice">Показаны первые {{ sheet.rows|length }} строк и {{ sheet.col_widths|length }} столбцов — лист слишком большой для полного отображения.</p>
+            {% endif %}
+            <div class="estimate-table-wrap">
+              <table class="estimate-table">
+                <colgroup>
+                  {% for width in sheet.col_widths %}
+                  <col style="width: {{ width }}ch">
+                  {% endfor %}
+                </colgroup>
+                <tbody>
+                  {% for row in sheet.rows %}
+                  <tr>
+                    {% for cell in row %}
+                    <td
+                      {% if cell.rowspan > 1 %}rowspan="{{ cell.rowspan }}"{% endif %}
+                      {% if cell.colspan > 1 %}colspan="{{ cell.colspan }}"{% endif %}
+                      class="{{ 'is-bold' if cell.bold else '' }} {{ 'is-italic' if cell.italic else '' }} {{ 'align-' + cell.align if cell.align else '' }} {{ 'border-t' if cell.border_top else '' }} {{ 'border-r' if cell.border_right else '' }} {{ 'border-b' if cell.border_bottom else '' }} {{ 'border-l' if cell.border_left else '' }}"
+                      {% if cell.bg %}style="background-color: {{ cell.bg }}"{% endif %}
+                    >{{ cell.value }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
           {% endfor %}
-          {% if value is not none and value not in building_class_options %}
-          <option value="{{ value }}" selected>{{ value }}</option>
-          {% endif %}
-        </select>
         {% else %}
-        {% set display = format_number(value) if field in numeric_fields else value %}
-        <input type="text" name="{{ field }}" value="{{ display if display is not none else '' }}" placeholder="Введите значение">
+        <p class="accordion-empty">Смета не загружена для этого проекта.</p>
         {% endif %}
       </div>
-      {% if field == "contract_price_rub" %}
-      <div class="field-row is-computed">
-        <div class="field-label-col">
-          <span class="field-label">Цена за м², руб.</span>
-        </div>
-        <input type="text" id="computed-price-per-sqm"
-               value="{{ format_number(price_per_sqm) if price_per_sqm is not none else '' }}"
-               placeholder="—" readonly>
+    </div>
+
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Паспорт договора</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if has_contract_terms %}
+        <form method="post" action="{{ url_for('main.update_contract_terms', slug=slug) }}">
+          <div class="fields-card">
+            {% for field in contract_fields %}
+            {% set value = passport[field] %}
+            {% set is_auto = field in contract_auto_fields %}
+            <div class="field-row {{ 'is-empty' if not value else ('is-pdf' if is_auto else 'is-filled') }}">
+              <div class="field-label-col">
+                <span class="field-label">{{ contract_field_labels.get(field, field) }}</span>
+                {% if is_auto %}
+                  <span class="badge badge-pdf">Найдено в протоколе — проверьте</span>
+                {% endif %}
+              </div>
+              <input type="text" name="{{ field }}" value="{{ value or '' }}" placeholder="Введите значение">
+            </div>
+            {% endfor %}
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Сохранить изменения</button>
+          </div>
+        </form>
+        <form class="contract-upload-form" method="post"
+              action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
+          <label class="contract-replace-link" for="contract-terms-input">Заменить файл протокола (PDF)</label>
+          <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
+        </form>
+        {% else %}
+        <form class="contract-upload-form" method="post"
+              action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
+          <label class="file-drop" for="contract-terms-input">
+            <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+              <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+            </svg>
+            <span class="file-drop-text">Загрузить протокол условий (PDF)</span>
+          </label>
+          <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
+        </form>
+        {% endif %}
       </div>
-      {% endif %}
-      {% endif %}
-    {% endfor %}
+    </div>
   </div>
-  <div class="form-actions">
-    <button type="submit" class="btn btn-primary">Сохранить изменения</button>
-  </div>
-</form>
+</div>
+
 <script>
   document.querySelectorAll('.field-row input[type="text"]:not([readonly])').forEach(function (input) {
     input.addEventListener('input', function () {
@@ -104,6 +242,56 @@
     }
     priceInput.addEventListener('input', recompute);
     areaInput.addEventListener('input', recompute);
+  })();
+
+  document.querySelectorAll('.contract-upload-form .file-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      if (input.files[0]) input.closest('.contract-upload-form').submit();
+    });
+  });
+
+  document.querySelectorAll('.sheet-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var index = tab.dataset.sheetIndex;
+      var group = tab.closest('.accordion-panel');
+      group.querySelectorAll('.sheet-tab').forEach(function (t) {
+        t.classList.toggle('is-active', t === tab);
+      });
+      group.querySelectorAll('.sheet-panel').forEach(function (panel) {
+        panel.classList.toggle('is-active', panel.dataset.sheetIndex === index);
+      });
+    });
+  });
+
+  (function () {
+    var backdrop = document.querySelector('.accordion-backdrop');
+
+    function setFullscreen(accordion, on) {
+      accordion.classList.toggle('is-fullscreen', on);
+      if (backdrop) backdrop.hidden = !on;
+      document.body.classList.toggle('no-scroll', on);
+    }
+
+    document.querySelectorAll('[data-accordion] > .accordion-header').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var accordion = btn.closest('[data-accordion]');
+        var panel = btn.nextElementSibling;
+        var expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', String(!expanded));
+        panel.hidden = expanded;
+
+        if (accordion.hasAttribute('data-fullscreen')) {
+          setFullscreen(accordion, !expanded);
+        }
+      });
+    });
+
+    if (backdrop) {
+      backdrop.addEventListener('click', function () {
+        var openAccordion = document.querySelector('.accordion.is-fullscreen');
+        if (openAccordion) openAccordion.querySelector('.accordion-header').click();
+      });
+    }
   })();
 </script>
 {% endblock %}

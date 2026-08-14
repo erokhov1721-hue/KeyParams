@@ -1,7 +1,9 @@
 import shutil
+from pathlib import Path
 
 from flask import (
-    Blueprint, Response, abort, current_app, redirect, render_template, request, url_for,
+    Blueprint, Response, abort, current_app, redirect, render_template, request, send_file,
+    url_for,
 )
 
 from . import estimate, extractors, passport as passport_module, pdf_export, storage
@@ -11,6 +13,10 @@ bp = Blueprint("main", __name__)
 
 ALLOWED_EXTENSION = ".docx"
 ALLOWED_ESTIMATE_EXTENSION = ".xlsx"
+ALLOWED_COVER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_COVER_SIZE = 5 * 1024 * 1024
+ALLOWED_CONTRACT_TERMS_EXTENSION = ".pdf"
+MAX_CONTRACT_TERMS_SIZE = 15 * 1024 * 1024
 
 
 def _projects_root():
@@ -24,14 +30,34 @@ def _selected_compare_slugs(root):
     ))
 
 
+def _project_names(root, slugs):
+    return {
+        slug: passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
+        for slug in slugs
+    }
+
+
+def _cover_version(root, slug):
+    path = storage.cover_path(root, slug)
+    return int(path.stat().st_mtime) if path else None
+
+
+@bp.app_context_processor
+def inject_sidebar_projects():
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    return {
+        "sidebar_slugs": slugs,
+        "sidebar_names": _project_names(root, slugs),
+        "sidebar_covers": {slug: _cover_version(root, slug) for slug in slugs},
+    }
+
+
 @bp.route("/")
 def index():
     root = _projects_root()
     slugs = storage.list_project_slugs(root)
-    project_names = {
-        slug: passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
-        for slug in slugs
-    }
+    project_names = _project_names(root, slugs)
     return render_template("index.html", slugs=slugs, project_names=project_names)
 
 
@@ -163,6 +189,8 @@ def project_page(slug):
     if not path.exists():
         abort(404)
     data = passport_module.load_passport(path)
+    estimate_file = storage.estimate_path(root, slug)
+    has_estimate = estimate_file.exists()
     return render_template(
         "project.html",
         slug=slug,
@@ -175,8 +203,96 @@ def project_page(slug):
         building_class_options=passport_module.BUILDING_CLASS_OPTIONS,
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
-        has_estimate=storage.estimate_path(root, slug).exists(),
+        has_estimate=has_estimate,
+        sheets=estimate.read_estimate(estimate_file) if has_estimate else [],
+        cover_version=_cover_version(root, slug),
+        has_contract_terms=storage.contract_terms_path(root, slug).exists(),
+        contract_fields=passport_module.CONTRACT_FIELDS,
+        contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
+        contract_auto_fields=data.get("contract_auto_fields", []),
     )
+
+
+@bp.route("/projects/<slug>/cover", methods=["GET"])
+def project_cover(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    path = storage.cover_path(root, slug)
+    if not path:
+        abort(404)
+    return send_file(path)
+
+
+@bp.route("/projects/<slug>/cover", methods=["POST"])
+def upload_project_cover(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    cover_file = request.files.get("cover_file")
+    ext = Path(cover_file.filename).suffix.lower() if cover_file and cover_file.filename else ""
+    if not cover_file or ext not in ALLOWED_COVER_EXTENSIONS:
+        abort(400)
+
+    cover_file.seek(0, 2)
+    size = cover_file.tell()
+    cover_file.seek(0)
+    if size > MAX_COVER_SIZE:
+        abort(400)
+
+    storage.save_cover(root, slug, cover_file, ext)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/contract-terms", methods=["POST"])
+def upload_contract_terms(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    pdf_file = request.files.get("contract_terms_file")
+    if not pdf_file or not pdf_file.filename.lower().endswith(ALLOWED_CONTRACT_TERMS_EXTENSION):
+        abort(400)
+
+    pdf_file.seek(0, 2)
+    size = pdf_file.tell()
+    pdf_file.seek(0)
+    if size > MAX_CONTRACT_TERMS_SIZE:
+        abort(400)
+
+    dest = storage.contract_terms_path(root, slug)
+    pdf_file.save(dest)
+
+    path = storage.passport_path(root, slug)
+    data = passport_module.load_passport(path)
+    extracted, filled = passport_module.build_contract_terms(dest)
+    data.update(extracted)
+    data["contract_auto_fields"] = filled
+    passport_module.save_passport(data, path)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/contract", methods=["POST"])
+def update_contract_terms(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    path = storage.passport_path(root, slug)
+    if not path.exists():
+        abort(404)
+
+    data = passport_module.load_passport(path)
+    auto_fields = list(data.get("contract_auto_fields", []))
+    for field in passport_module.CONTRACT_FIELDS:
+        old_value = data.get(field)
+        new_value = request.form.get(field, "").strip() or None
+        data[field] = new_value
+        if new_value != old_value and field in auto_fields:
+            auto_fields.remove(field)
+    data["contract_auto_fields"] = auto_fields
+    passport_module.save_passport(data, path)
+    return redirect(url_for("main.project_page", slug=slug))
 
 
 @bp.route("/projects/<slug>/smeta", methods=["GET"])

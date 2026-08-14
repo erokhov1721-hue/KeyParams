@@ -7,14 +7,75 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="{{ url_for('main.index') }}">
-      <span class="brand-mark">ПО</span>
-      <span class="brand-text">Паспорта объектов</span>
-    </a>
-  </header>
-  <main class="container {% block main_extra_class %}{% endblock %}">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="sidebar-top" href="{{ url_for('main.index') }}">
+        <span class="brand-mark">ПО</span>
+        <span class="brand-text">Паспорта объектов</span>
+      </a>
+      <nav class="sidebar-nav">
+        <div class="sidebar-section-title">Проекты</div>
+        {% if sidebar_slugs %}
+        <ul class="sidebar-list">
+          {% set active_slug = request.view_args.slug if request.view_args else none %}
+          {% for slug in sidebar_slugs %}
+          <li class="sidebar-item">
+            <a class="sidebar-link {{ 'is-active' if slug == active_slug else '' }}"
+               href="{{ url_for('main.project_page', slug=slug) }}"
+               title="{{ sidebar_names[slug] }}">
+              <span class="sidebar-link-icon">
+                {% if sidebar_covers[slug] %}
+                <img class="sidebar-link-thumb"
+                     src="{{ url_for('main.project_cover', slug=slug) }}?v={{ sidebar_covers[slug] }}" alt="">
+                {% else %}
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+                </svg>
+                {% endif %}
+              </span>
+              <span class="sidebar-link-text">{{ sidebar_names[slug] }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="sidebar-empty">Проектов пока нет</p>
+        {% endif %}
+      </nav>
+      <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 6l-6 6 6 6"/>
+        </svg>
+        <span class="sidebar-toggle-text">Свернуть</span>
+      </button>
+    </aside>
+    <div class="app-main">
+      <header class="topbar">
+        {% if request.endpoint != 'main.new_project_form' %}
+        <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+        {% endif %}
+        <div class="topbar-actions">
+          {% block header_actions %}{% endblock %}
+        </div>
+      </header>
+      <main class="container {% block main_extra_class %}{% endblock %}">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var sidebar = document.getElementById('sidebar');
+      var toggle = document.getElementById('sidebar-toggle');
+      if (!sidebar || !toggle) return;
+      if (localStorage.getItem('sidebar-collapsed') === '1') {
+        sidebar.classList.add('is-collapsed');
+      }
+      toggle.addEventListener('click', function () {
+        var collapsed = sidebar.classList.toggle('is-collapsed');
+        localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+      });
+    })();
+  </script>
 </body>
 </html>

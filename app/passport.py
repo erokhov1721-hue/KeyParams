@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from . import ai_extractor, extractors, ocr
+from . import ai_extractor, contract_extractors, extractors, ocr, pdf_reader
 from .document_reader import DocxContent, read_docx
 
 # OCR fallback (EasyOCR) is CPU-only in this environment and can take
@@ -11,13 +11,14 @@ from .document_reader import DocxContent, read_docx
 OCR_FALLBACK_ENV_VAR = "OCR_FALLBACK_ENABLED"
 
 PASSPORT_FIELDS = [
-    "project_name", "year_signed", "building_class",
+    "project_name", "address", "year_signed", "building_class",
     "general_contractor", "contract_price_rub", "underground_area_sqm",
     "aboveground_area_sqm", "total_area_sqm",
 ]
 
 FIELD_LABELS = {
     "project_name": "Название проекта",
+    "address": "Адрес объекта",
     "year_signed": "Год подписания договора",
     "building_class": "Класс здания",
     "general_contractor": "Генподрядчик",
@@ -27,11 +28,25 @@ FIELD_LABELS = {
     "total_area_sqm": "Общая площадь комплекса, м²",
 }
 
-TEXT_FIELDS = ("year_signed", "building_class", "general_contractor", "contract_price_rub")
+TEXT_FIELDS = (
+    "address", "year_signed", "building_class", "general_contractor", "contract_price_rub",
+)
 AREA_FIELDS = ("underground_area_sqm", "aboveground_area_sqm", "total_area_sqm")
 NUMERIC_FIELDS = AREA_FIELDS + ("contract_price_rub",)
 
 BUILDING_CLASS_OPTIONS = ["Эконом", "Комфорт", "Бизнес", "Бизнес - Премиум", "Премиум", "Элит"]
+
+# The "Паспорт договора" card — filled from a separately uploaded contract
+# terms protocol (often a PDF), independent of the object passport above.
+CONTRACT_FIELDS = ["smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct", "vat"]
+
+CONTRACT_FIELD_LABELS = {
+    "smr_term": "Срок СМР",
+    "advance_payment": "Аванс",
+    "bank_guarantee": "Банковская гарантия",
+    "performance_bond_pct": "Performance bond, %",
+    "vat": "НДС",
+}
 
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
@@ -73,6 +88,11 @@ def _apply_ocr_fallback(data, dgp, tz):
     ocr_tz = DocxContent(paragraphs=tz_lines, tables=[])
 
     filled = []
+    if data["address"] is None:
+        value = extractors.extract_address(ocr_dgp)
+        if value is not None:
+            data["address"] = value
+            filled.append("address")
     if data["general_contractor"] is None:
         value = extractors.extract_general_contractor(ocr_dgp)
         if value is not None:
@@ -109,6 +129,7 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
     tz = read_docx(tz_path)
     data = {
         "project_name": project_name,
+        "address": extractors.extract_address(dgp),
         "year_signed": extractors.extract_signing_year(dgp),
         "building_class": extractors.extract_building_class(dgp, tz),
         "general_contractor": extractors.extract_general_contractor(dgp),
@@ -120,6 +141,34 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
     data["ocr_fields"], ocr_dgp, ocr_tz = _apply_ocr_fallback(data, dgp, tz)
     data["ai_fields"] = _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz)
     return data
+
+
+def build_contract_terms(pdf_path) -> tuple:
+    """Best-effort extraction of the contract-terms protocol's fields.
+
+    Tries the PDF's own text layer first (instant, regex-based). If the page
+    turns out to be a scan with no text at all, asks Claude to read it
+    directly as an image instead of running local OCR — much faster on this
+    CPU-only setup, and doesn't need the OCR_FALLBACK_ENABLED opt-in since
+    it isn't slow. Whatever isn't found stays None, for the "Паспорт
+    договора" card to be filled in by hand.
+    """
+    text = pdf_reader.read_pdf_text(pdf_path)
+    if text.strip():
+        found = {
+            "smr_term": contract_extractors.extract_smr_term(text),
+            "advance_payment": contract_extractors.extract_advance_payment(text),
+            "bank_guarantee": contract_extractors.extract_bank_guarantee(text),
+            "performance_bond_pct": contract_extractors.extract_performance_bond(text),
+        }
+    else:
+        images = pdf_reader.render_pages_to_images(pdf_path)
+        found = ai_extractor.extract_contract_terms_from_images(images)
+
+    data = {field: found.get(field) for field in CONTRACT_FIELDS if field != "vat"}
+    data["vat"] = None
+    filled = [f for f in CONTRACT_FIELDS if data[f] is not None]
+    return data, filled
 
 
 def _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz):
