@@ -849,3 +849,249 @@ def test_create_project_rejects_corrupted_estimate(tmp_path):
 
     from app import storage
     assert storage.list_project_slugs(tmp_path) == []
+
+
+# --- contract-terms upload: the page explains why nothing was filled ---
+
+def _upload_contract_terms(client, slug, follow=True):
+    return client.post(
+        f"/projects/{slug}/contract-terms",
+        data={"contract_terms_file": (io.BytesIO(b"%PDF-fake"), "protocol.pdf")},
+        content_type="multipart/form-data",
+        follow_redirects=follow,
+    )
+
+
+def _stub_scan_returning(monkeypatch, fields, problem):
+    """Make the upload path behave as a scan whose recognition gave this result."""
+    from app import passport as passport_module
+
+    monkeypatch.setattr(passport_module.pdf_reader, "read_pdf_text", lambda path: "")
+    monkeypatch.setattr(
+        passport_module.pdf_reader, "render_pages_to_images", lambda path: [b"png"],
+    )
+    monkeypatch.setattr(
+        passport_module.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: (fields, problem),
+    )
+
+
+def test_contract_terms_upload_explains_missing_api_key(tmp_path, monkeypatch):
+    from app import ai_extractor
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {}, ai_extractor.PROBLEM_NO_KEY)
+
+    resp = _upload_contract_terms(client, slug)
+
+    assert resp.status_code == 200
+    assert "ANTHROPIC_API_KEY" in resp.data.decode("utf-8")
+
+
+def test_contract_terms_upload_explains_empty_balance(tmp_path, monkeypatch):
+    from app import ai_extractor
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {}, ai_extractor.PROBLEM_NO_CREDIT)
+
+    resp = _upload_contract_terms(client, slug)
+
+    # "Plans & Billing" renders escaped, so assert on plain-text wording.
+    assert "нет средств" in resp.data.decode("utf-8")
+
+
+def test_contract_terms_upload_says_nothing_recognized_when_read_but_empty(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {}, None)
+
+    resp = _upload_contract_terms(client, slug)
+
+    assert "распознать не удалось" in resp.data.decode("utf-8")
+
+
+def test_contract_terms_upload_shows_no_warning_when_fields_were_filled(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+
+    resp = _upload_contract_terms(client, slug)
+
+    body = resp.data.decode("utf-8")
+    assert "3%" in body
+    assert "распознать не удалось" not in body
+    assert "ANTHROPIC_API_KEY" not in body
+
+
+def test_contract_terms_upload_saves_vat_from_recognition(tmp_path, monkeypatch):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {"vat": "20%"}, None)
+
+    _upload_contract_terms(client, slug)
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] == "20%"
+    assert "vat" in saved["contract_auto_fields"]
+
+
+# --- contract-terms PDF as part of project creation ---
+
+def _dgp_bytes_signed_in(year):
+    return build_docx_bytes(document_xml(paragraphs=[
+        "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,",
+        f"{year} год",
+    ]))
+
+
+def _create_data(dgp=None, contract_terms=None):
+    data = {
+        "project_name": "ПроектА",
+        "dgp_file": (io.BytesIO(dgp or _dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }
+    if contract_terms is not None:
+        data["contract_terms_file"] = contract_terms
+    return data
+
+
+def test_create_project_accepts_optional_contract_terms_pdf(tmp_path, monkeypatch):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data", follow_redirects=True)
+
+    assert resp.status_code == 200
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert storage.contract_terms_path(tmp_path, slug).exists()
+    assert "3%" in resp.data.decode("utf-8")
+
+
+def test_create_project_works_without_contract_terms(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post(
+        "/projects", data=_create_data(), content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert not storage.contract_terms_path(tmp_path, slug).exists()
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] is None
+
+
+def test_create_project_rejects_contract_terms_that_is_not_pdf(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(b"not a pdf"), "protocol.docx"),
+    ), content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert "PDF" in resp.data.decode("utf-8")
+
+
+def test_create_project_rejects_oversized_contract_terms(tmp_path):
+    from app import routes
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    too_big = b"x" * (routes.MAX_CONTRACT_TERMS_SIZE + 1)
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(too_big), "protocol.pdf"),
+    ), content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+
+
+def test_create_project_sets_vat_from_signing_year_2026(tmp_path, monkeypatch):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+
+    client.post("/projects", data=_create_data(
+        dgp=_dgp_bytes_signed_in(2026),
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data")
+
+    slug = storage.list_project_slugs(tmp_path)[0]
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["year_signed"] == "2026"
+    assert saved["vat"] == "22%"
+
+
+def test_create_project_sets_vat_from_signing_year_2025(tmp_path, monkeypatch):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+
+    client.post("/projects", data=_create_data(
+        dgp=_dgp_bytes_signed_in(2025),
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data")
+
+    slug = storage.list_project_slugs(tmp_path)[0]
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] == "20%"
+
+
+def test_create_project_explains_contract_terms_problem(tmp_path, monkeypatch):
+    from app import ai_extractor
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _stub_scan_returning(monkeypatch, {}, ai_extractor.PROBLEM_NO_KEY)
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data", follow_redirects=True)
+
+    assert "ANTHROPIC_API_KEY" in resp.data.decode("utf-8")
+
+
+def test_contract_terms_upload_sets_vat_from_passport_year(tmp_path, monkeypatch):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА", year_signed="2026")
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+
+    _upload_contract_terms(client, slug)
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] == "22%"
+
+
+def test_new_project_form_offers_a_contract_terms_field(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    body = client.get("/projects/new").data.decode("utf-8")
+
+    assert 'name="contract_terms_file"' in body

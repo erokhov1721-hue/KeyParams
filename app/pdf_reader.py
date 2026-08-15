@@ -1,10 +1,31 @@
 import io
 
 import pdfplumber
+from PIL import Image
+
+# Claude accepts images up to this many pixels on the long edge and
+# downscales anything bigger itself. An A3 protocol page renders well past
+# it, so cap it here instead: resampling once with a good filter keeps the
+# table's small print sharper than letting it be resized twice.
+MAX_IMAGE_LONG_EDGE = 2576
 
 
 class PdfReadError(Exception):
     pass
+
+
+def _cap_long_edge(image):
+    """Shrink to fit MAX_IMAGE_LONG_EDGE, preserving aspect ratio.
+
+    Images already within the limit are returned untouched — upscaling a
+    small page would only invent detail.
+    """
+    long_edge = max(image.size)
+    if long_edge <= MAX_IMAGE_LONG_EDGE:
+        return image
+    scale = MAX_IMAGE_LONG_EDGE / long_edge
+    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    return image.resize(size, Image.LANCZOS)
 
 
 def read_pdf_text(path) -> str:
@@ -29,7 +50,8 @@ def render_pages_to_images(path, resolution=200) -> list:
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
                 buf = io.BytesIO()
-                page.to_image(resolution=resolution).original.save(buf, format='PNG')
+                rendered = page.to_image(resolution=resolution).original
+                _cap_long_edge(rendered).save(buf, format='PNG')
                 images.append(buf.getvalue())
     except Exception as e:
         raise PdfReadError(f"Cannot read {path}: {e}") from e

@@ -100,7 +100,35 @@ def extract_missing_fields(missing_fields: list, context_text: str) -> dict:
     return result
 
 
-CONTRACT_TERMS_IMAGE_FIELDS = ["smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct"]
+CONTRACT_TERMS_IMAGE_FIELDS = [
+    "smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct", "vat",
+]
+
+# Why a contract-terms read came back empty, for the page to say out loud
+# instead of just showing blank fields. The two credential failures are
+# separated because they need different actions from the user: one is
+# "configure a key", the other "put money on the account".
+PROBLEM_NO_KEY = "no_key"
+PROBLEM_NO_CREDIT = "no_credit"
+PROBLEM_API_ERROR = "api_error"
+
+
+def _classify_failure(exc) -> str:
+    """Map a failed request onto one of the problem codes above.
+
+    Matches message text as well as exception type: both failures seen in
+    practice — an unset key and an unfunded account — arrive as generic
+    types (``TypeError`` from header building, ``BadRequestError`` for the
+    balance), so the type alone doesn't identify them.
+    """
+    if isinstance(exc, anthropic.AuthenticationError):
+        return PROBLEM_NO_KEY
+    message = str(exc).lower()
+    if "could not resolve authentication" in message:
+        return PROBLEM_NO_KEY
+    if "credit balance" in message:
+        return PROBLEM_NO_CREDIT
+    return PROBLEM_API_ERROR
 
 
 def _contract_terms_schema():
@@ -115,20 +143,20 @@ def _contract_terms_schema():
     }
 
 
-def extract_contract_terms_from_images(images: list) -> dict:
+def extract_contract_terms_from_images(images: list) -> tuple:
     """Ask Claude to read a scanned contract-terms protocol directly as an
-    image and return the fields ``build_contract_terms`` needs.
+    image and return ``(fields, problem)``.
 
     Used only when the source PDF has no text layer at all — a genuine scan
     — where local OCR would take minutes on this CPU-only setup. There's no
     text-based anonymization equivalent for an image, so the page (with any
     real company names or signatures on it) goes to the API unredacted, by
-    explicit choice for this document type. Never raises: any failure — no
-    API key, no network, a bad response — just means nothing gets filled,
-    same as ``extract_missing_fields``.
+    explicit choice for this document type. Never raises: on any failure
+    ``fields`` is empty and ``problem`` is one of the ``PROBLEM_*`` codes,
+    so the caller can tell the user *why* rather than showing blank fields.
     """
     if not images:
-        return {}
+        return {}, None
 
     try:
         content = [
@@ -150,7 +178,8 @@ def extract_contract_terms_from_images(images: list) -> dict:
                 "- advance_payment: условия по авансу, %\n"
                 "- bank_guarantee: включена ли банковская гарантия на возврат "
                 "аванса — ответь строго \"Включено\" или \"Не включено\"\n"
-                "- performance_bond_pct: performance bond, %\n\n"
+                "- performance_bond_pct: performance bond, %\n"
+                "- vat: НДС — ставка или условие по НДС, как указано в документе\n\n"
                 "Если поле не найдено на изображении — верни null, не придумывай значение."
             ),
         })
@@ -165,12 +194,13 @@ def extract_contract_terms_from_images(images: list) -> dict:
         )
         raw_text = next(block.text for block in response.content if block.type == "text")
         raw = json.loads(raw_text)
-    except Exception:
+    except Exception as exc:
         logger.exception("Contract terms image extractor failed")
-        return {}
+        return {}, _classify_failure(exc)
 
     if not isinstance(raw, dict):
-        return {}
-    return {
+        return {}, PROBLEM_API_ERROR
+    found = {
         field: raw.get(field) for field in CONTRACT_TERMS_IMAGE_FIELDS if raw.get(field) is not None
     }
+    return found, None

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 from . import ai_extractor, contract_extractors, extractors, ocr, pdf_reader
@@ -143,17 +144,75 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
     return data
 
 
-def build_contract_terms(pdf_path) -> tuple:
+CONTRACT_PROBLEM_NOTHING_FOUND = "nothing_found"
+
+# The VAT rate is statutory rather than negotiated, so it's derived from the
+# signing year instead of read off the protocol: 20% through 2025, 22% from
+# 2026 on. A rate misread from a scan can't put a wrong figure in the
+# passport this way.
+VAT_RATE_CHANGE_YEAR = 2026
+VAT_RATE_BEFORE_CHANGE = "20%"
+VAT_RATE_FROM_CHANGE = "22%"
+
+
+def vat_for_year(year_signed):
+    """The VAT rate for a contract signed in ``year_signed``.
+
+    Accepts the year as an int or as the string the passport stores it in.
+    Returns None when no year is known, leaving the field to be filled by
+    hand rather than guessing a rate.
+    """
+    if year_signed is None:
+        return None
+    match = re.search(r"\d{4}", str(year_signed))
+    if not match:
+        return None
+    year = int(match.group())
+    return VAT_RATE_FROM_CHANGE if year >= VAT_RATE_CHANGE_YEAR else VAT_RATE_BEFORE_CHANGE
+
+# What to tell the user when a contract-terms upload fills nothing. Each
+# message names the action that fixes it — an empty card with no
+# explanation is indistinguishable from "the document had no such row".
+CONTRACT_PROBLEM_MESSAGES = {
+    CONTRACT_PROBLEM_NOTHING_FOUND: (
+        "Файл прочитан, но ни одно условие распознать не удалось. "
+        "Впишите значения вручную."
+    ),
+    ai_extractor.PROBLEM_NO_KEY: (
+        "Это скан, а ключ API не настроен — без него распознавание сканов "
+        "не работает. Задайте переменную окружения ANTHROPIC_API_KEY и "
+        "перезапустите программу."
+    ),
+    ai_extractor.PROBLEM_NO_CREDIT: (
+        "Ключ API принят, но на счёте Anthropic нет средств. Пополните "
+        "баланс в разделе Plans & Billing и загрузите файл заново."
+    ),
+    ai_extractor.PROBLEM_API_ERROR: (
+        "Не удалось обратиться к распознаванию: проверьте подключение к сети "
+        "и попробуйте загрузить файл заново."
+    ),
+}
+
+
+def build_contract_terms(pdf_path, year_signed=None) -> tuple:
     """Best-effort extraction of the contract-terms protocol's fields.
 
-    Tries the PDF's own text layer first (instant, regex-based). If the page
-    turns out to be a scan with no text at all, asks Claude to read it
-    directly as an image instead of running local OCR — much faster on this
-    CPU-only setup, and doesn't need the OCR_FALLBACK_ENABLED opt-in since
-    it isn't slow. Whatever isn't found stays None, for the "Паспорт
-    договора" card to be filled in by hand.
+    ``year_signed`` sets the VAT rate by rule (see ``vat_for_year``), which
+    takes precedence over any rate found in the document.
+
+    Returns ``(data, filled, problem)``. Tries the PDF's own text layer
+    first (instant, regex-based). If the page turns out to be a scan with no
+    text at all, asks Claude to read it directly as an image instead of
+    running local OCR — much faster on this CPU-only setup, and doesn't need
+    the OCR_FALLBACK_ENABLED opt-in since it isn't slow.
+
+    ``problem`` is None when at least one field was filled; otherwise it's a
+    code from ``CONTRACT_PROBLEM_MESSAGES`` saying why, so the page can
+    explain itself rather than showing a silently empty card. Whatever isn't
+    found stays None, to be filled in by hand.
     """
     text = pdf_reader.read_pdf_text(pdf_path)
+    problem = None
     if text.strip():
         found = {
             "smr_term": contract_extractors.extract_smr_term(text),
@@ -163,12 +222,23 @@ def build_contract_terms(pdf_path) -> tuple:
         }
     else:
         images = pdf_reader.render_pages_to_images(pdf_path)
-        found = ai_extractor.extract_contract_terms_from_images(images)
+        found, problem = ai_extractor.extract_contract_terms_from_images(images)
 
-    data = {field: found.get(field) for field in CONTRACT_FIELDS if field != "vat"}
-    data["vat"] = None
+    data = {field: found.get(field) for field in CONTRACT_FIELDS}
+
+    # Decide the warning on what the document itself gave up, before the VAT
+    # rule adds a field of its own — otherwise a known signing year would
+    # always suppress "nothing recognized".
+    recognized = [f for f in CONTRACT_FIELDS if data[f] is not None]
+    if problem is None and not recognized:
+        problem = CONTRACT_PROBLEM_NOTHING_FOUND
+
+    rate = vat_for_year(year_signed)
+    if rate is not None:
+        data["vat"] = rate
+
     filled = [f for f in CONTRACT_FIELDS if data[f] is not None]
-    return data, filled
+    return data, filled, problem
 
 
 def _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz):
@@ -289,6 +359,6 @@ def load_passport(path: Path) -> dict:
     # A passport saved before a field existed (e.g. contract_price_rub)
     # won't have that key — backfill it as unset rather than making every
     # caller (templates included) handle a missing key.
-    for field in PASSPORT_FIELDS:
+    for field in PASSPORT_FIELDS + CONTRACT_FIELDS:
         data.setdefault(field, None)
     return data

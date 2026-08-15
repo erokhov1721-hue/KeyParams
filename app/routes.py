@@ -123,6 +123,7 @@ def create_project():
     dgp_file = request.files.get("dgp_file")
     tz_file = request.files.get("tz_file")
     smeta_file = request.files.get("smeta_file")
+    contract_terms_file = request.files.get("contract_terms_file")
 
     if not project_name:
         return render_template("new_project.html", error="Введите название проекта"), 400
@@ -133,6 +134,21 @@ def create_project():
     has_smeta = bool(smeta_file and smeta_file.filename)
     if has_smeta and not smeta_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
         return render_template("new_project.html", error="Смета должна быть в формате .xlsx"), 400
+    has_contract_terms = bool(contract_terms_file and contract_terms_file.filename)
+    if has_contract_terms:
+        if not contract_terms_file.filename.lower().endswith(ALLOWED_CONTRACT_TERMS_EXTENSION):
+            return render_template(
+                "new_project.html",
+                error="Протокол окончательных условий должен быть в формате PDF",
+            ), 400
+        contract_terms_file.seek(0, 2)
+        if contract_terms_file.tell() > MAX_CONTRACT_TERMS_SIZE:
+            contract_terms_file.seek(0)
+            return render_template(
+                "new_project.html",
+                error="Файл протокола слишком большой — до 15 МБ",
+            ), 400
+        contract_terms_file.seek(0)
 
     try:
         slug = storage.create_project(root, project_name)
@@ -176,8 +192,19 @@ def create_project():
             error="Не удалось прочитать файл — убедитесь, что это корректный .docx",
         ), 400
 
+    problem = None
+    if has_contract_terms:
+        # Built after the passport so the VAT rule has the signing year.
+        dest = storage.contract_terms_path(root, slug)
+        contract_terms_file.save(dest)
+        extracted, filled, problem = passport_module.build_contract_terms(
+            dest, year_signed=data.get("year_signed"),
+        )
+        data.update(extracted)
+        data["contract_auto_fields"] = filled
+
     passport_module.save_passport(data, storage.passport_path(root, slug))
-    return redirect(url_for("main.project_page", slug=slug))
+    return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 
 @bp.route("/projects/<slug>", methods=["GET"])
@@ -210,6 +237,11 @@ def project_page(slug):
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
         contract_auto_fields=data.get("contract_auto_fields", []),
+        # Looked up in a fixed table, so an arbitrary ?problem=... value
+        # renders nothing rather than reaching the page.
+        contract_problem=passport_module.CONTRACT_PROBLEM_MESSAGES.get(
+            request.args.get("problem")
+        ),
     )
 
 
@@ -266,11 +298,15 @@ def upload_contract_terms(slug):
 
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
-    extracted, filled = passport_module.build_contract_terms(dest)
+    extracted, filled, problem = passport_module.build_contract_terms(
+        dest, year_signed=data.get("year_signed"),
+    )
     data.update(extracted)
     data["contract_auto_fields"] = filled
     passport_module.save_passport(data, path)
-    return redirect(url_for("main.project_page", slug=slug))
+    # A problem code travels back as a query parameter rather than a flash
+    # message: flashing would need a SECRET_KEY, which this app doesn't set.
+    return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 
 @bp.route("/projects/<slug>/contract", methods=["POST"])

@@ -467,3 +467,173 @@ def test_build_passport_ocr_skips_tz_when_only_dgp_field_missing(tmp_path, monke
     assert result["ocr_fields"] == []
     # Verify TZ images were NOT OCR'd (only DGP field is missing)
     assert tz_calls == [], "TZ images should not be OCR'd when only DGP fields are missing"
+
+
+# --- build_contract_terms: says why nothing was filled ---
+
+_PROTOCOL_TEXT = """Протокол окончательных условий
+1 Срок выполнения СМР и MR Base, месяц
+30 месяца, с даты передачи первой захватки до даты получения ЗОС
+3 Аванс, % 30% максимальная сумма не закрытого аванса 20%
+4 Банковская гарантия на возврат аванса Не включено - 90 134 910,00 руб.
+5 Performance bond, % 3%
+"""
+
+
+def _stub_pdf(monkeypatch, text, images=()):
+    monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: text)
+    monkeypatch.setattr(
+        passport.pdf_reader, "render_pages_to_images", lambda path: list(images),
+    )
+
+
+def test_build_contract_terms_text_layer_fills_fields_with_no_problem(monkeypatch):
+    _stub_pdf(monkeypatch, _PROTOCOL_TEXT)
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["performance_bond_pct"] == "3%"
+    assert data["bank_guarantee"] == "Не включено"
+    assert "smr_term" in filled
+    assert problem is None
+
+
+def test_build_contract_terms_text_layer_without_matches_reports_nothing_found(monkeypatch):
+    _stub_pdf(monkeypatch, "Совершенно посторонний текст без условий договора.")
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert filled == []
+    assert problem == passport.CONTRACT_PROBLEM_NOTHING_FOUND
+
+
+def test_build_contract_terms_scan_propagates_missing_key_problem(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_KEY),
+    )
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert filled == []
+    assert problem == passport.ai_extractor.PROBLEM_NO_KEY
+
+
+def test_build_contract_terms_scan_propagates_no_credit_problem(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),
+    )
+
+    _data, _filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert problem == passport.ai_extractor.PROBLEM_NO_CREDIT
+
+
+def test_build_contract_terms_scan_success_keeps_vat_from_recognition(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({"performance_bond_pct": "3%", "vat": "20%"}, None),
+    )
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["vat"] == "20%"
+    assert "vat" in filled
+    assert problem is None
+
+
+def test_every_contract_problem_code_has_a_russian_message():
+    codes = [
+        passport.CONTRACT_PROBLEM_NOTHING_FOUND,
+        passport.ai_extractor.PROBLEM_NO_KEY,
+        passport.ai_extractor.PROBLEM_NO_CREDIT,
+        passport.ai_extractor.PROBLEM_API_ERROR,
+    ]
+    for code in codes:
+        assert passport.CONTRACT_PROBLEM_MESSAGES[code].strip()
+
+
+# --- VAT rate follows the signing year, not the document ---
+
+def test_vat_for_year_is_20_percent_through_2025():
+    assert passport.vat_for_year(2024) == "20%"
+    assert passport.vat_for_year(2025) == "20%"
+
+
+def test_vat_for_year_is_22_percent_from_2026():
+    assert passport.vat_for_year(2026) == "22%"
+    assert passport.vat_for_year(2030) == "22%"
+
+
+def test_vat_for_year_accepts_the_year_as_stored_string():
+    assert passport.vat_for_year("2025") == "20%"
+    assert passport.vat_for_year("2026") == "22%"
+
+
+def test_vat_for_year_unknown_year_gives_no_rate():
+    assert passport.vat_for_year(None) is None
+    assert passport.vat_for_year("") is None
+    assert passport.vat_for_year("не указан") is None
+
+
+def test_build_contract_terms_sets_vat_from_signing_year(monkeypatch):
+    _stub_pdf(monkeypatch, _PROTOCOL_TEXT)
+
+    data, filled, _problem = passport.build_contract_terms("ignored.pdf", year_signed="2026")
+
+    assert data["vat"] == "22%"
+    assert "vat" in filled
+
+
+def test_build_contract_terms_rule_wins_over_vat_read_from_document(monkeypatch):
+    # The rate is statutory, so a figure recognized off a scan must not
+    # override the rule for a known signing year.
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({"vat": "18%"}, None),
+    )
+
+    data, _filled, _problem = passport.build_contract_terms("ignored.pdf", year_signed=2025)
+
+    assert data["vat"] == "20%"
+
+
+def test_build_contract_terms_keeps_document_vat_when_year_unknown(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({"vat": "20%"}, None),
+    )
+
+    data, _filled, _problem = passport.build_contract_terms("ignored.pdf", year_signed=None)
+
+    assert data["vat"] == "20%"
+
+
+def test_build_contract_terms_without_year_or_document_vat_leaves_it_empty(monkeypatch):
+    _stub_pdf(monkeypatch, _PROTOCOL_TEXT)
+
+    data, _filled, _problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["vat"] is None
+
+
+def test_build_contract_terms_still_warns_when_only_the_vat_rule_filled_anything(monkeypatch):
+    # The rule always yields a rate for a known year, so it must not mask
+    # the fact that the document itself gave nothing.
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, None),
+    )
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf", year_signed="2026")
+
+    assert data["vat"] == "22%"
+    assert filled == ["vat"]
+    assert problem == passport.CONTRACT_PROBLEM_NOTHING_FOUND

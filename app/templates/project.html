@@ -151,6 +151,12 @@
       </div>
     </div>
 
+    {# Sits outside the accordion on purpose: its panel is hidden by default,
+       so a warning placed inside would go unread. #}
+    {% if contract_problem %}
+    <div class="alert alert-error">Паспорт договора: {{ contract_problem }}</div>
+    {% endif %}
+
     <div class="accordion" data-accordion>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Паспорт договора</span>
