@@ -40,6 +40,33 @@ def test_new_project_form_loads(tmp_path):
     assert resp.status_code == 200
 
 
+def test_every_page_offers_the_theme_toggle(tmp_path):
+    # The toggle lives in the shared layout, so a page that renders its own
+    # header block must not end up without it.
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Тест")
+    storage.passport_path(tmp_path, slug).write_text("{}", encoding="utf-8")
+
+    for path in ("/", "/projects/new", f"/projects/{slug}"):
+        body = client.get(path).get_data(as_text=True)
+        assert 'id="theme-toggle"' in body, path
+
+
+def test_theme_choice_is_applied_before_the_page_paints(tmp_path):
+    # The saved theme has to be read in <head>: doing it lower down makes a
+    # light-theme user watch the dark theme flash on every single load.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    body = client.get("/").get_data(as_text=True)
+    head = body.split("</head>")[0]
+
+    assert "localStorage.getItem('theme')" in head
+
+
 def test_create_project_rejects_missing_name(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

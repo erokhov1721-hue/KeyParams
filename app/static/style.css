@@ -4,6 +4,8 @@
   --bg-700: #1a383a;
   --bg-650: #1f4143;
   --accent: #2dd4bf;
+  /* Second stop of the progress-bar gradient. */
+  --accent-2: #22b8a3;
   --accent-dim: rgba(45, 212, 191, 0.14);
   --accent-glow: rgba(45, 212, 191, 0.35);
   --accent-ink: #04302c;
@@ -20,12 +22,77 @@
   --text-100: #eaf6f4;
   --text-500: #93b0ad;
   --text-600: #6f8a87;
+  --surface-card: rgba(26, 56, 58, 0.55);
+  --surface-topbar: rgba(18, 43, 45, 0.6);
+  --overlay: rgba(4, 10, 10, 0.65);
   --radius-lg: 16px;
   --radius-md: 12px;
   --radius-sm: 8px;
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -20px rgba(0, 0, 0, 0.55);
   --sidebar-w: 264px;
   --sidebar-w-collapsed: 76px;
+}
+
+/* Light theme.
+   Set by the toggle in the top bar, which writes data-theme on <html>; no
+   attribute means the dark theme above, so an old bookmark or a browser
+   with no localStorage lands on what the app always looked like. */
+
+:root[data-theme="light"] {
+  --bg-900: #eef2f1;
+  --bg-800: #ffffff;
+  --bg-700: #e7edeb;
+  --bg-650: #dde5e3;
+  --accent: #12705c;
+  --accent-2: #1c9a80;
+  --accent-dim: rgba(18, 112, 92, 0.10);
+  --accent-glow: rgba(18, 112, 92, 0.22);
+  --accent-ink: #ffffff;
+  /* The status colours are re-picked rather than reused: the dark theme's
+     pastels are tuned for a near-black background and turn illegible on
+     white. These are the same hues at a contrast that works on paper. */
+  --amber: #9a5b00;
+  --amber-dim: rgba(154, 91, 0, 0.12);
+  --blue: #1d4ed8;
+  --blue-dim: rgba(29, 78, 216, 0.10);
+  --purple: #6d28d9;
+  --purple-dim: rgba(109, 40, 217, 0.10);
+  --red: #c62828;
+  --red-dim: rgba(198, 40, 40, 0.10);
+  --border: rgba(16, 43, 39, 0.13);
+  --border-soft: rgba(16, 43, 39, 0.07);
+  --text-100: #13201e;
+  --text-500: #4f625f;
+  --text-600: #6d807d;
+  --surface-card: #ffffff;
+  --surface-topbar: rgba(255, 255, 255, 0.85);
+  --overlay: rgba(19, 32, 30, 0.38);
+  --shadow-card: 0 1px 2px rgba(16, 43, 39, 0.05), 0 12px 28px -18px rgba(16, 43, 39, 0.30);
+}
+
+/* The sidebar stays dark in the light theme, as in the design reference.
+   Handing it back the dark values as scoped custom properties is what
+   keeps that cheap: every sidebar rule already reads these names, so not
+   one of them needs a light-theme variant of its own. The duplication of
+   the values above is the price of that, and is deliberate. */
+
+:root[data-theme="light"] .sidebar {
+  /* Also set as a plain colour, not only as a variable: anything inside the
+     sidebar that never declares a colour of its own (the brand wordmark)
+     inherits it from <body>, which in this theme is near-black — unreadable
+     against the dark panel. */
+  color: var(--text-100);
+  --bg-900: #0d1d1e;
+  --bg-800: #122b2d;
+  --bg-700: #1a383a;
+  --accent: #2dd4bf;
+  --accent-2: #22b8a3;
+  --accent-dim: rgba(45, 212, 191, 0.14);
+  --accent-glow: rgba(45, 212, 191, 0.35);
+  --border: rgba(255, 255, 255, 0.08);
+  --text-100: #eaf6f4;
+  --text-500: #93b0ad;
+  --text-600: #6f8a87;
 }
 
 * {
@@ -229,7 +296,7 @@ a {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  background: rgba(18, 43, 45, 0.6);
+  background: var(--surface-topbar);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
   padding: 16px 32px;
@@ -244,6 +311,41 @@ a {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-700);
+  color: var(--text-500);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Each icon shows the theme the button switches *to*, so the sun means
+   "go light". Only one is ever visible; both live in the markup so the
+   swap costs no request and can't flash a missing icon. */
+.theme-toggle .icon-moon {
+  display: none;
+}
+
+:root[data-theme="light"] .theme-toggle .icon-sun {
+  display: none;
+}
+
+:root[data-theme="light"] .theme-toggle .icon-moon {
+  display: block;
 }
 
 .container {
@@ -293,7 +395,7 @@ h1 {
 }
 
 .card {
-  background: rgba(26, 56, 58, 0.55);
+  background: var(--surface-card);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -334,6 +436,18 @@ h1 {
 
 .btn-secondary:hover {
   background: var(--bg-650);
+}
+
+/* The reference draws the secondary action as an outlined green pill rather
+   than a grey one — on white, grey-on-grey reads as a disabled control. */
+:root[data-theme="light"] .btn-secondary {
+  background: var(--surface-card);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+:root[data-theme="light"] .btn-secondary:hover {
+  background: var(--accent-dim);
 }
 
 .page-head-actions {
@@ -713,7 +827,7 @@ h1 {
 .accordion {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: rgba(26, 56, 58, 0.55);
+  background: var(--surface-card);
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-card);
   overflow: hidden;
@@ -768,7 +882,7 @@ body.no-scroll {
 .accordion-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(4, 10, 10, 0.65);
+  background: var(--overlay);
   backdrop-filter: blur(2px);
   z-index: 55;
 }
@@ -1009,7 +1123,7 @@ body.no-scroll {
 
 .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), #22b8a3);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
   border-radius: 0 4px 4px 0;
 }
 
