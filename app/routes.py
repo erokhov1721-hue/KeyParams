@@ -56,6 +56,10 @@ def inject_sidebar_projects():
 @bp.route("/")
 def index():
     root = _projects_root()
+    # Finish off any delete that a file in use left unfinished. The dashboard
+    # is where the user lands after deleting and every time they come back,
+    # so it's the one place a retry is guaranteed to get its chance.
+    storage.purge_deleted(root)
     slugs = storage.list_project_slugs(root)
     project_names = _project_names(root, slugs)
     return render_template("index.html", slugs=slugs, project_names=project_names)
@@ -348,7 +352,11 @@ def estimate_page(slug):
 def delete_project(slug):
     root = _projects_root()
     if slug not in storage.list_project_slugs(root):
-        abort(404)
+        # Nothing to delete means the user already got what they asked for,
+        # so send them back to the dashboard. Aborting here put a repeated
+        # delete — a double-clicked button, a re-submitted form — on a bare
+        # "Not Found" page with no way back.
+        return redirect(url_for("main.index"))
     storage.delete_project(root, slug)
     return redirect(url_for("main.index"))
 

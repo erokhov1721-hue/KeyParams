@@ -238,11 +238,32 @@ def test_delete_project_removes_it_and_redirects_to_index(tmp_path):
     assert not (tmp_path / slug).exists()
 
 
-def test_delete_project_unknown_slug_404s(tmp_path):
+def test_delete_project_unknown_slug_redirects_instead_of_404(tmp_path):
+    # Deleting what isn't there already got the user what they wanted, so it
+    # sends them back to the dashboard. A double-click on the delete button
+    # used to land the second POST on a bare "Not Found" page with no way back.
     app = create_app(tmp_path)
     client = app.test_client()
     resp = client.post("/projects/does-not-exist/delete")
-    assert resp.status_code == 404
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+
+
+def test_dashboard_sweeps_up_a_delete_that_could_not_finish(tmp_path):
+    # Whatever the user deletes has to end up actually deleted, even when a
+    # file was in use at the time and the removal had to be left for later.
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Недоудалённый")
+    storage.estimate_path(tmp_path, slug).write_bytes(b"PK\x03\x04")
+    (tmp_path / slug / storage.DELETED_MARKER).write_bytes(b"")
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert not (tmp_path / slug).exists()
 
 
 def test_rename_project_updates_name_and_redirects_to_index(tmp_path):
