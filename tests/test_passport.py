@@ -4,7 +4,7 @@ from tests.helpers import document_xml, make_docx
 
 def test_passport_fields_order():
     assert passport.PASSPORT_FIELDS == [
-        "project_name", "year_signed", "building_class",
+        "project_name", "address", "year_signed", "building_class",
         "general_contractor", "contract_price_rub", "underground_area_sqm",
         "aboveground_area_sqm", "total_area_sqm",
     ]
@@ -165,16 +165,9 @@ def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
 
 
 def test_save_and_load_passport_roundtrip(tmp_path):
-    data = {
-        "project_name": "Проспект Мира",
-        "year_signed": None,
-        "building_class": None,
-        "general_contractor": "ООО «АНТТЕК»",
-        "contract_price_rub": None,
-        "underground_area_sqm": None,
-        "aboveground_area_sqm": None,
-        "total_area_sqm": None,
-    }
+    data = {field: None for field in passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS}
+    data["project_name"] = "Проспект Мира"
+    data["general_contractor"] = "ООО «АНТТЕК»"
     path = tmp_path / "passport.json"
     passport.save_passport(data, path)
     loaded = passport.load_passport(path)
@@ -339,6 +332,7 @@ def test_build_passport_ai_fallback_skipped_when_nothing_missing(tmp_path, monke
         "г. Москва",
         "«04» февраля 2025 г.",
         "Жилой комплекс бизнес-класса.",
+        "Объект, расположенный по адресу: г. Москва, ул. Верейская, вл. 29/35.",
         "Цена Работ по настоящему Договору составляет 10 067 050 887,72 руб., включая НДС.",
         "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
         "именуемое в дальнейшем «Генподрядчик», с третьей стороны,",
