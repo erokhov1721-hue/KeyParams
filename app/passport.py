@@ -3,7 +3,10 @@ import os
 import re
 from pathlib import Path
 
-from . import ai_extractor, contract_extractors, extractors, ocr, pdf_reader, win_ocr
+from . import (
+    ai_extractor, contract_extractors, extractors, ocr, ocr_lines, pdf_reader,
+    protocol_columns, win_ocr,
+)
 from .document_reader import DocxContent, read_docx
 
 # The EasyOCR fallback is CPU-only in this environment and can take several
@@ -163,6 +166,12 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
 
 
 CONTRACT_PROBLEM_NOTHING_FOUND = "nothing_found"
+CONTRACT_PROBLEM_COLUMN_UNKNOWN = "column_unknown"
+
+# Below this much text, an engine has not read the page — it has returned the
+# few stray marks it could make out. A protocol page holds thousands of
+# characters; the scan that prompted this returned twelve.
+MIN_READABLE_TEXT = 200
 
 # The VAT rate is statutory rather than negotiated, so it's derived from the
 # signing year instead of read off the protocol: 20% through 2025, 22% from
@@ -201,6 +210,12 @@ CONTRACT_PROBLEM_MESSAGES = {
     CONTRACT_PROBLEM_NOTHING_FOUND: (
         "Файл прочитан, но ни одно условие распознать не удалось. "
         "Впишите значения вручную."
+    ),
+    CONTRACT_PROBLEM_COLUMN_UNKNOWN: (
+        "Протокол составлен на несколько объектов, а какой столбец относится "
+        "к этому проекту — определить не удалось: значения могут быть взяты "
+        "из соседнего. Проверьте их, а лучше назовите проект так же, как "
+        "объект назван в протоколе."
     ),
     ai_extractor.PROBLEM_NO_KEY: (
         "Это скан. Ключ API не настроен, а встроенное распознавание ничего "
@@ -244,7 +259,7 @@ def _local_ocr_engines():
     return engines
 
 
-def _terms_from_local_ocr(pdf_path, problem):
+def _terms_from_local_ocr(pdf_path, problem, project_name=None):
     """Read a scanned protocol with the OCR on this machine, after the API has
     already failed.
 
@@ -262,16 +277,47 @@ def _terms_from_local_ocr(pdf_path, problem):
     """
     images = pdf_reader.render_pages_to_images(pdf_path, max_long_edge=None)
     for engine in _local_ocr_engines():
-        text = "\n".join(engine.recognize_text(images))
-        if not text.strip():
+        pages = [engine.recognize_page_words(image) for image in images]
+        text, ambiguous = _protocol_text(pages, project_name)
+        if len(text.strip()) < MIN_READABLE_TEXT:
+            # Barely anything came back: this engine didn't read the page, so
+            # the next one is worth its time.
             continue
         found = _terms_from_text(text)
         if any(value is not None for value in found.values()):
-            return found, None
+            return found, CONTRACT_PROBLEM_COLUMN_UNKNOWN if ambiguous else None
+        # The page was read and simply doesn't say these things in words this
+        # program knows. A second engine reading the same page differently
+        # will not change that, and on this machine it costs six minutes of
+        # the user staring at a page that appears to be doing nothing.
+        return {}, CONTRACT_PROBLEM_NOTHING_FOUND
     return {}, problem
 
 
-def build_contract_terms(pdf_path, year_signed=None) -> tuple:
+def _protocol_text(pages, project_name):
+    """``(text, ambiguous)`` — the protocol as this project's own reading.
+
+    A protocol drawn up for two objects has a column of conditions each; read
+    flat they merge, and the term of works comes out as "38 месяцев ... 33
+    месяца". Where the project's name matches one of the columns, only that
+    one is kept.
+
+    ``ambiguous`` is True when there were columns to choose between and the
+    name matched none of them: the figures are then whatever both columns say
+    together, which is worth admitting rather than presenting as this
+    project's terms.
+    """
+    texts = []
+    ambiguous = False
+    for words in pages:
+        kept, chosen = protocol_columns.keep_project_column(words, project_name)
+        if not chosen and protocol_columns.is_multi_object(words):
+            ambiguous = True
+        texts.append("\n".join(ocr_lines.group_into_lines(kept)))
+    return "\n".join(texts), ambiguous
+
+
+def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple:
     """Best-effort extraction of the contract-terms protocol's fields.
 
     ``year_signed`` sets the VAT rate by rule (see ``vat_for_year``), which
@@ -296,7 +342,7 @@ def build_contract_terms(pdf_path, year_signed=None) -> tuple:
         images = pdf_reader.render_pages_to_images(pdf_path)
         found, problem = ai_extractor.extract_contract_terms_from_images(images)
         if problem is not None:
-            found, problem = _terms_from_local_ocr(pdf_path, problem)
+            found, problem = _terms_from_local_ocr(pdf_path, problem, project_name)
 
     data = {field: found.get(field) for field in CONTRACT_FIELDS}
 

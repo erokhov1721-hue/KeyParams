@@ -56,6 +56,11 @@ def render_pages_to_images(path, resolution=200, max_long_edge=MAX_IMAGE_LONG_ED
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
                 buf = io.BytesIO()
+                # Whichever way up the page comes out is left to the reader of
+                # it: a scan's real orientation and the /Rotate recorded
+                # against it agree far less often than one would hope, and the
+                # recogniser can simply try the page every way round and keep
+                # what reads (see ``win_ocr.recognize_page_words``).
                 rendered = page.to_image(resolution=resolution).original
                 if max_long_edge is not None:
                     rendered = _cap_long_edge(rendered, max_long_edge)

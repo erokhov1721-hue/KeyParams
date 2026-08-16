@@ -10,7 +10,13 @@ ADVANCE_RE = re.compile(r'аванс\w*\s*[,;]?\s*%\s*([^\n]+)', re.IGNORECASE)
 BANK_GUARANTEE_RE = re.compile(
     r'банковск\w+\s+гаранти\w+\s+на\s+возврат\s+аванса\W+([^\n]+)', re.IGNORECASE,
 )
-PERFORMANCE_BOND_RE = re.compile(r'performance\s+bond\b.*?(\d+\s*%)', re.IGNORECASE | re.DOTALL)
+# Anchored on "bond" alone rather than on "performance bond": recognition
+# mangles the long Latin word in Cyrillic surroundings — one scan turned it
+# into "Реноггтлапсе" — while the short word survives intact. In a Russian
+# contract protocol "bond" is distinctive enough on its own. The gap to the
+# figure is bounded so that a percentage further down the page can't be
+# mistaken for this one.
+PERFORMANCE_BOND_RE = re.compile(r'\bbond\b.{0,200}?(\d+\s*%)', re.IGNORECASE | re.DOTALL)
 
 
 def extract_smr_term(text):
