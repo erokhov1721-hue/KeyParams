@@ -1526,22 +1526,40 @@ select option {
   max-height: 2.7em;
 }
 
+/* 56px трека, зазор и место под подпись вроде «28%» — плюс отступы ячейки. */
 .sections-weight-col {
-  width: 90px;
+  width: 150px;
+  text-align: left;
+}
+
+.sections-weight-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sections-weight {
-  height: 6px;
-  margin-top: 6px;
-  border-radius: 999px;
+  flex-shrink: 0;
+  width: 56px;
+  height: 8px;
+  border-radius: 2px;
   background: var(--bg-700);
   overflow: hidden;
 }
 
 .sections-weight-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: 2px;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+/* Настоящая доля в итоге — рядом с полоской: полоска показывает раздел
+   относительно самого крупного, а не относительно сметы, и без этой подписи
+   28% и 100% не различить. */
+.sections-share {
+  font-size: 12px;
+  color: var(--text-500);
+  font-variant-numeric: tabular-nums;
 }
 
 .sections-value {
@@ -1929,4 +1947,140 @@ select option {
   display: flex;
   gap: 10px;
   margin-top: 18px;
+}
+
+/* --- Бар отклонения в таблице разделов --- */
+
+.dev {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.dev-track {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 88px;
+  height: 8px;
+}
+
+.dev-half {
+  flex: 1;
+  display: flex;
+  height: 100%;
+}
+
+/* Левая половина растёт от нуля влево, поэтому заполняется с правого края. */
+.dev-half-left {
+  justify-content: flex-end;
+}
+
+/* Нулевая линия по центру ячейки: от неё и отсчитывается отклонение. */
+.dev-zero {
+  flex-shrink: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+}
+
+.dev-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.dev-fill.is-better {
+  background: var(--accent);
+}
+
+.dev-fill.is-worse {
+  background: var(--red);
+}
+
+/* Значение вышло за шкалу — угол на конце полоски показывает, что она
+   упёрлась в край, а не остановилась сама. Без этого +90% и +300%
+   выглядели бы одинаково. */
+.dev-fill.is-clipped.is-worse {
+  border-radius: 2px 0 0 2px;
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 0 100%);
+}
+
+.dev-fill.is-clipped.is-better {
+  border-radius: 0 2px 2px 0;
+  clip-path: polygon(4px 0, 100% 0, 100% 100%, 4px 100%, 0 50%);
+}
+
+.dev-label {
+  min-width: 34px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Пустая подпись с той стороны, где полоски нет, всё равно занимает место —
+   так нулевая линия остаётся ровно посередине во всех строках. */
+.dev-label.is-better {
+  color: var(--accent);
+  text-align: right;
+}
+
+.dev-label.is-worse {
+  color: var(--red);
+  text-align: left;
+}
+
+/* Заголовки-кнопки для сортировки: выглядят как обычный заголовок, ведут
+   себя как кнопка. */
+.sections-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.sections-sort:hover {
+  color: var(--accent);
+}
+
+.sections-arrow::after {
+  content: "";
+  font-size: 10px;
+  color: var(--text-600);
+}
+
+.sections-sort[data-order="desc"] .sections-arrow::after {
+  content: "↓";
+}
+
+.sections-sort[data-order="asc"] .sections-arrow::after {
+  content: "↑";
+}
+
+/* Разделы меньше процента от сметы: цифры там верные, но крупными их делать
+   незачем — +90% на пятистах рублях при итоге в сто сорок тысяч поднимает
+   тревогу на ровном месте. */
+.sections-table tr.is-minor td,
+.sections-table tr.is-minor .sections-label-col {
+  color: var(--text-500);
+}
+
+.sections-table tr.is-minor .sections-weight-fill {
+  background: var(--text-600);
+}
+
+.sections-table tr.is-minor .dev-fill {
+  opacity: 0.4;
+}
+
+.sections-table tr.is-minor .dev-label {
+  color: var(--text-500);
 }

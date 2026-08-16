@@ -85,7 +85,8 @@
   <div class="sections-head">
     <h2 class="chart-title">Стоимость по разделам{% if sections.columns[0].per_sqm %}, ₽/м²{% endif %}</h2>
     <p class="sections-sub">
-      Отклонение считается от первого выбранного проекта — «{{ sections.columns[0].name }}».
+      Доля — от итога базового проекта. Отклонение — к базовому проекту,
+      шкала ±50%. Базовый — «{{ sections.columns[0].name }}».
     </p>
   </div>
 
@@ -114,11 +115,22 @@
     <table class="sections-table">
       <thead>
         <tr>
-          <th class="sections-label-col">Раздел</th>
-          <th class="sections-weight-col"></th>
+          <th class="sections-label-col">
+            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+              Раздел<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th class="sections-weight-col">
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+              доля в смете<span class="sections-arrow"></span>
+            </button>
+          </th>
           {% for column in sections.columns %}
           <th>
-            {{ column.name }}
+            <button type="button" class="sections-sort"
+                    data-sort-index="{{ loop.index + 1 }}" data-sort-type="number">
+              {{ column.name }}<span class="sections-arrow"></span>
+            </button>
             {% for note in column.notes %}
             <span class="sections-note">{{ note }}</span>
             {% endfor %}
@@ -128,16 +140,38 @@
       </thead>
       <tbody>
         {% for row in sections.rows %}
-        <tr>
-          <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}</span></td>
-          <td class="sections-weight-col">
-            <div class="sections-weight"><div class="sections-weight-fill" style="width: {{ row.width_pct }}%"></div></div>
+        <tr{{ ' class=is-minor' | safe if row.minor }}>
+          <td class="sections-label-col" data-sort-value="{{ row.label }}">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-weight-col" data-sort-value="{{ row.share if row.share is not none else -1 }}">
+            <div class="sections-weight-cell">
+              <div class="sections-weight"><div class="sections-weight-fill" style="width: {{ row.width_pct }}%"></div></div>
+              <span class="sections-share">{{ row.share_display }}</span>
+            </div>
           </td>
           {% for cell in row.cells %}
-          <td class="sections-value{{ ' is-empty' if cell.value is none }}">
+          <td class="sections-value{{ ' is-empty' if cell.value is none }}"
+              data-sort-value="{{ cell.value if cell.value is not none else -1 }}">
             <span class="sections-number">{{ cell.display }}</span>
-            {% if cell.deviation is not none %}
-            <span class="sections-deviation {{ 'is-worse' if cell.deviation > 0 else 'is-better' }}">{{ cell.deviation_display }}</span>
+            {% if cell.bar %}
+            <div class="dev">
+              <span class="dev-label is-better">{{ cell.deviation_display if cell.bar.side == 'left' }}</span>
+              <div class="dev-track">
+                <div class="dev-half dev-half-left">
+                  {% if cell.bar.side == 'left' %}
+                  <div class="dev-fill is-better{{ ' is-clipped' if cell.bar.clipped }}" style="width: {{ cell.bar.width_pct }}%"></div>
+                  {% endif %}
+                </div>
+                <div class="dev-zero"></div>
+                <div class="dev-half dev-half-right">
+                  {% if cell.bar.side == 'right' %}
+                  <div class="dev-fill is-worse{{ ' is-clipped' if cell.bar.clipped }}" style="width: {{ cell.bar.width_pct }}%"></div>
+                  {% endif %}
+                </div>
+              </div>
+              <span class="dev-label is-worse">{{ cell.deviation_display if cell.bar.side == 'right' }}</span>
+            </div>
             {% endif %}
           </td>
           {% endfor %}
@@ -160,6 +194,40 @@
       </tfoot>
     </table>
   </div>
+
+  <script>
+    (function () {
+      var table = document.querySelector('.sections-table');
+      if (!table) return;
+      var body = table.tBodies[0];
+
+      // Сортировка живёт только на время просмотра: это настройка чтения, а
+      // не данные, и гонять её через адрес страницы ради перезагрузки незачем.
+      table.querySelectorAll('.sections-sort').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var index = Number(button.dataset.sortIndex);
+          var numeric = button.dataset.sortType === 'number';
+          var descending = button.dataset.order !== 'desc';
+
+          table.querySelectorAll('.sections-sort').forEach(function (other) {
+            if (other !== button) { other.removeAttribute('data-order'); }
+          });
+          button.dataset.order = descending ? 'desc' : 'asc';
+
+          Array.from(body.rows)
+            .sort(function (a, b) {
+              var left = a.cells[index].dataset.sortValue;
+              var right = b.cells[index].dataset.sortValue;
+              var result = numeric
+                ? Number(left) - Number(right)
+                : left.localeCompare(right, 'ru');
+              return descending ? -result : result;
+            })
+            .forEach(function (row) { body.appendChild(row); });
+        });
+      });
+    })();
+  </script>
 </div>
 {% endif %}
 

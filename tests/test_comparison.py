@@ -395,3 +395,54 @@ def test_there_are_no_cards_without_two_different_objects():
     assert comparison.build_pair_cards("a", "a", passports, {}, NONE) is None
     assert comparison.build_pair_cards("a", None, passports, {}, NONE) is None
     assert comparison.build_pair_cards("a", "нет-такого", passports, {}, NONE) is None
+
+
+# --- полоска доли раздела ---
+
+def test_the_share_bar_is_scaled_against_the_base_column_alone():
+    # Раньше ширина бралась по всем колонкам сразу: раздел, дорогой у
+    # соседнего проекта, рисовался длинной полоской, хотя у базы там стояла
+    # мелочь.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("База"), "b": _passport("Сосед")},
+        {"a": {"facade": 1_000_000.0, "waterproofing": 10_000.0},
+         "b": {"facade": 1_000_000.0, "waterproofing": 900_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    waterproofing = next(row for row in table["rows"] if row["key"] == "waterproofing")
+    assert facade["width_pct"] == 100.0
+    assert waterproofing["width_pct"] == 1.0
+
+
+def test_a_section_the_base_project_lacks_has_no_bar():
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("База"), "b": _passport("Сосед")},
+        {"a": {"facade": 100.0}, "b": {"facade": 100.0, "lifts": 500.0}}, NONE,
+    )
+
+    lifts = next(row for row in table["rows"] if row["key"] == "lifts")
+    assert lifts["width_pct"] == 0
+    assert lifts["share_display"] == ""
+
+
+def test_the_share_of_the_total_is_shown_beside_the_bar():
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport()},
+        {"a": {"facade": 280.0, "roof": 720.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert round(facade["share"], 1) == 28.0
+    assert facade["share_display"] == "28%"
+
+
+def test_a_share_under_ten_per_cent_keeps_one_decimal():
+    # Разница между 0,4% и 1,6% существеннее, чем между 28% и 28,4%.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport()},
+        {"a": {"facade": 984.0, "roof": 16.0}}, NONE,
+    )
+
+    roof = next(row for row in table["rows"] if row["key"] == "roof")
+    assert roof["share_display"] == "1,6%"

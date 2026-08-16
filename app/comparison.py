@@ -183,6 +183,35 @@ def _cell(column, costs, key):
             "deviation_display": ""}
 
 
+# Шкала бара отклонения, ±%. Одна на всю таблицу: если у каждой строки она
+# своя, полоски перестают сравниваться между собой и смысл теряется.
+DEVIATION_SCALE = 50.0
+
+# Ниже этой доли раздел приглушается. «Гидроизоляция» даёт +90%, но в деньгах
+# это 503 ₽/м² при итоге 139 000 — ярко-красный процент там поднимает тревогу
+# на ровном месте.
+MINOR_SHARE = 1.0
+
+
+def _add_bar(cell):
+    """Двусторонний бар отклонения: влево дешевле, вправо дороже.
+
+    Значение за пределами шкалы обрезается по краю трека и помечается — иначе
+    +90% и +300% выглядели бы одинаково, и не было бы видно, что полоска
+    упёрлась.
+    """
+    deviation = cell["deviation"]
+    if deviation is None:
+        cell["bar"] = None
+        return
+    percent = deviation * 100
+    cell["bar"] = {
+        "side": "right" if percent > 0 else "left" if percent < 0 else "zero",
+        "width_pct": round(min(abs(percent), DEVIATION_SCALE) / DEVIATION_SCALE * 100, 1),
+        "clipped": abs(percent) > DEVIATION_SCALE,
+    }
+
+
 def _add_deviations(cells):
     """How each project stands against the first one chosen.
 
@@ -190,13 +219,16 @@ def _add_deviations(cells):
     the one being asked about, and the rest are the yardstick.
     """
     base = cells[0]["value"] if cells else None
-    if not base:
-        return
-    for cell in cells[1:]:
-        if cell["value"] is None:
-            continue
-        cell["deviation"] = cell["value"] / base - 1.0
-        cell["deviation_display"] = f"{cell['deviation'] * 100:+.0f}%".replace("-", "−")
+    if base:
+        for cell in cells[1:]:
+            if cell["value"] is None:
+                continue
+            cell["deviation"] = cell["value"] / base - 1.0
+            cell["deviation_display"] = (
+                f"{cell['deviation'] * 100:+.0f}%".replace("-", "−")
+            )
+    for cell in cells:
+        _add_bar(cell)
 
 
 def build_section_table(slugs, passports, costs_by_slug, adjustments):
@@ -242,8 +274,16 @@ def build_section_table(slugs, passports, costs_by_slug, adjustments):
         total.append({"value": value, "display": _money(value), "deviation": None,
                       "deviation_display": ""})
     _add_deviations(total)
-
-    _add_weights(rows, columns)
+    # По убыванию доли, а не в порядке из сметы: первым идёт то, из чего
+    # стоимость в основном и складывается. Итоговая строка живёт отдельно и
+    # в сортировке не участвует — она всегда последняя.
+    rows.sort(
+        key=lambda row: (
+            row["cells"][0]["value"] if row["cells"][0]["value"] is not None else -1.0
+        ),
+        reverse=True,
+    )
+    _add_weights(rows, total[0]["value"] if total else None)
     return {
         "columns": columns,
         "rows": rows,
@@ -400,28 +440,37 @@ def _section_deltas(sides):
     return rows
 
 
-def _add_weights(rows, columns):
-    """The bar beside each section, scaled against the priciest section shown.
+def _share_text(share):
+    """Долю пишем с одним знаком, пока она меньше десяти процентов: разница
+    между 0,4% и 1,6% там существеннее, чем между 28% и 28,4%."""
+    if share is None:
+        return ""
+    if share < 10:
+        return f"{share:.1f}%".replace(".", ",")
+    return f"{share:.0f}%"
 
-    Scaled across the whole table rather than row by row: the point is that a
-    facade is a third of the money and the process equipment a fraction of a
-    per cent, which a per-row bar would flatten into every row looking equal.
 
-    Only ₽/m² figures set the scale where there are any — a project with no
-    area contributes roubles, and a billion of those next to a hundred
-    thousand per square metre would leave every other bar invisible.
+def _add_weights(rows, base_total):
+    """Полоска доли раздела — по колонке базового проекта, и только по ней.
+
+    Самый дорогой раздел базы занимает трек целиком, остальные — сколько
+    приходится на них. Масштаб именно от крупнейшего раздела, а не от итога:
+    иначе даже фасад со своими 28% занимал бы четверть трека, а всё, что
+    меньше пяти процентов, слилось бы в точку.
+
+    Раньше ширина бралась как максимум по всем колонкам сразу — и раздел,
+    дорогой у соседнего проекта, рисовался длинной полоской, хотя у базы там
+    стояла мелочь: гидроизоляция занимала 15% трека при доле в 0,4%.
     """
-    scaled = [index for index, column in enumerate(columns) if column["per_sqm"]]
-    if not scaled:
-        scaled = list(range(len(columns)))
+    values = [row["cells"][0]["value"] for row in rows]
+    peak = max((value for value in values if value is not None), default=0.0)
 
-    def values_of(row):
-        return [
-            row["cells"][index]["value"] for index in scaled
-            if row["cells"][index]["value"] is not None
-        ]
-
-    peak = max((value for row in rows for value in values_of(row)), default=0.0)
-    for row in rows:
-        values = values_of(row)
-        row["width_pct"] = round(max(values) / peak * 100, 1) if values and peak else 0
+    for row, value in zip(rows, values):
+        row["width_pct"] = (
+            round(value / peak * 100, 1) if value is not None and peak else 0
+        )
+        row["share"] = (
+            value / base_total * 100 if value is not None and base_total else None
+        )
+        row["share_display"] = _share_text(row["share"])
+        row["minor"] = row["share"] is not None and row["share"] < MINOR_SHARE
