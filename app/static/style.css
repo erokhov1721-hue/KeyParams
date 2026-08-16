@@ -1,4 +1,9 @@
 :root {
+  /* Tells the browser which way round to draw the parts of a page this
+     stylesheet cannot reach: the popup of a <select>, scrollbars, the caret.
+     Without it the class-of-building list opened white while its options
+     inherited the field's near-white text, and could not be read at all. */
+  color-scheme: dark;
   --bg-900: #0d1d1e;
   --bg-800: #122b2d;
   --bg-700: #1a383a;
@@ -39,6 +44,7 @@
    with no localStorage lands on what the app always looked like. */
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg-900: #eef2f1;
   --bg-800: #ffffff;
   --bg-700: #e7edeb;
@@ -959,6 +965,15 @@ body.no-scroll {
 
 .field-row select {
   cursor: pointer;
+}
+
+/* Belt and braces alongside color-scheme above: an option's colours are set
+   outright, for the browsers that draw the popup themselves and take no hint
+   from the scheme. Both values come from the theme, so this one rule serves
+   the light theme as well. */
+select option {
+  background: var(--bg-800);
+  color: var(--text-100);
 }
 
 .field-row input[type="text"]:focus,

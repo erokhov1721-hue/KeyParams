@@ -55,6 +55,21 @@ def test_every_page_offers_the_theme_toggle(tmp_path):
         assert 'id="theme-toggle"' in body, path
 
 
+def test_native_dropdowns_follow_the_theme(tmp_path):
+    # The popup of a <select> is drawn by the browser, not by this
+    # stylesheet. With no colour scheme declared it opens on white while its
+    # options inherit the field's near-white text, which left the list of
+    # building classes unreadable in the dark theme.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+
+    assert "color-scheme: dark" in css
+    assert "color-scheme: light" in css
+    assert "select option" in css
+
+
 def test_theme_choice_is_applied_before_the_page_paints(tmp_path):
     # The saved theme has to be read in <head>: doing it lower down makes a
     # light-theme user watch the dark theme flash on every single load.
