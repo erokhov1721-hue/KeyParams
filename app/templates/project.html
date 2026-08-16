@@ -41,13 +41,13 @@
 
   <div class="object-main-col">
     <div class="accordion" data-accordion>
-      <button type="button" class="accordion-header" aria-expanded="true">
+      <button type="button" class="accordion-header" aria-expanded="false">
         <span>Паспорт объекта</span>
         <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 9l6 6 6-6"/>
         </svg>
       </button>
-      <div class="accordion-panel">
+      <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
           <div class="fields-card">
             {% for field in fields %}
@@ -96,58 +96,6 @@
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>
         </form>
-      </div>
-    </div>
-
-    <div class="accordion" data-accordion data-fullscreen>
-      <button type="button" class="accordion-header" aria-expanded="false">
-        <span>Смета</span>
-        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M6 9l6 6 6-6"/>
-        </svg>
-      </button>
-      <div class="accordion-panel" hidden>
-        {% if has_estimate %}
-          {% if sheets|length > 1 %}
-          <div class="sheet-tabs">
-            {% for sheet in sheets %}
-            <button type="button" class="sheet-tab {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">{{ sheet.name }}</button>
-            {% endfor %}
-          </div>
-          {% endif %}
-          {% for sheet in sheets %}
-          <div class="sheet-panel {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">
-            {% if sheet.truncated %}
-            <p class="sheet-truncated-notice">Показаны первые {{ sheet.rows|length }} строк и {{ sheet.col_widths|length }} столбцов — лист слишком большой для полного отображения.</p>
-            {% endif %}
-            <div class="estimate-table-wrap">
-              <table class="estimate-table">
-                <colgroup>
-                  {% for width in sheet.col_widths %}
-                  <col style="width: {{ width }}ch">
-                  {% endfor %}
-                </colgroup>
-                <tbody>
-                  {% for row in sheet.rows %}
-                  <tr>
-                    {% for cell in row %}
-                    <td
-                      {% if cell.rowspan > 1 %}rowspan="{{ cell.rowspan }}"{% endif %}
-                      {% if cell.colspan > 1 %}colspan="{{ cell.colspan }}"{% endif %}
-                      class="{{ 'is-bold' if cell.bold else '' }} {{ 'is-italic' if cell.italic else '' }} {{ 'align-' + cell.align if cell.align else '' }} {{ 'border-t' if cell.border_top else '' }} {{ 'border-r' if cell.border_right else '' }} {{ 'border-b' if cell.border_bottom else '' }} {{ 'border-l' if cell.border_left else '' }}"
-                      {% if cell.bg %}style="background-color: {{ cell.bg }}"{% endif %}
-                    >{{ cell.value }}</td>
-                    {% endfor %}
-                  </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-        <p class="accordion-empty">Смета не загружена для этого проекта.</p>
-        {% endif %}
       </div>
     </div>
 
@@ -208,6 +156,58 @@
             занять несколько минут.
           </span>
         </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="accordion" data-accordion data-fullscreen>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Смета</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if has_estimate %}
+          {% if sheets|length > 1 %}
+          <div class="sheet-tabs">
+            {% for sheet in sheets %}
+            <button type="button" class="sheet-tab {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">{{ sheet.name }}</button>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% for sheet in sheets %}
+          <div class="sheet-panel {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">
+            {% if sheet.truncated %}
+            <p class="sheet-truncated-notice">Показаны первые {{ sheet.rows|length }} строк и {{ sheet.col_widths|length }} столбцов — лист слишком большой для полного отображения.</p>
+            {% endif %}
+            <div class="estimate-table-wrap">
+              <table class="estimate-table">
+                <colgroup>
+                  {% for width in sheet.col_widths %}
+                  <col style="width: {{ width }}ch">
+                  {% endfor %}
+                </colgroup>
+                <tbody>
+                  {% for row in sheet.rows %}
+                  <tr>
+                    {% for cell in row %}
+                    <td
+                      {% if cell.rowspan > 1 %}rowspan="{{ cell.rowspan }}"{% endif %}
+                      {% if cell.colspan > 1 %}colspan="{{ cell.colspan }}"{% endif %}
+                      class="{{ 'is-bold' if cell.bold else '' }} {{ 'is-italic' if cell.italic else '' }} {{ 'align-' + cell.align if cell.align else '' }} {{ 'border-t' if cell.border_top else '' }} {{ 'border-r' if cell.border_right else '' }} {{ 'border-b' if cell.border_bottom else '' }} {{ 'border-l' if cell.border_left else '' }}"
+                      {% if cell.bg %}style="background-color: {{ cell.bg }}"{% endif %}
+                    >{{ cell.value }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <p class="accordion-empty">Смета не загружена для этого проекта.</p>
         {% endif %}
       </div>
     </div>
