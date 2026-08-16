@@ -22,6 +22,18 @@
     </div>
 
     <div class="field">
+      <label for="cover_file">Фото объекта (необязательно), JPG, PNG или WEBP</label>
+      <label class="file-drop" for="cover_file">
+        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/>
+          <circle cx="12" cy="13" r="3.2"/>
+        </svg>
+        <span class="file-drop-text" data-placeholder="Выберите изображение">Выберите изображение</span>
+      </label>
+      <input class="file-input" type="file" id="cover_file" name="cover_file" accept=".jpg,.jpeg,.png,.webp">
+    </div>
+
+    <div class="field">
       <label for="dgp_file">Договор генподряда (ДГП), .docx</label>
       <label class="file-drop" for="dgp_file">
         <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

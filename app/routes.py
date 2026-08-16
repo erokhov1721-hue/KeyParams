@@ -50,6 +50,24 @@ def _project_names(root, slugs):
     return {slug: _project_name(root, slug) for slug in slugs}
 
 
+def _cover_problem(cover_file):
+    """Why this photo can't be used, in words, or None if it can.
+
+    Shared by the two places a cover arrives — the create form and the camera
+    button on the project list — so neither can quietly accept what the other
+    refuses.
+    """
+    ext = Path(cover_file.filename).suffix.lower() if cover_file.filename else ""
+    if ext not in ALLOWED_COVER_EXTENSIONS:
+        return "Фото объекта должно быть в формате JPG, PNG или WEBP"
+    cover_file.seek(0, 2)
+    size = cover_file.tell()
+    cover_file.seek(0)
+    if size > MAX_COVER_SIZE:
+        return "Файл фото слишком большой — до 5 МБ"
+    return None
+
+
 def _cover_version(root, slug):
     path = storage.cover_path(root, slug)
     return int(path.stat().st_mtime) if path else None
@@ -141,6 +159,7 @@ def create_project():
     tz_file = request.files.get("tz_file")
     smeta_file = request.files.get("smeta_file")
     contract_terms_file = request.files.get("contract_terms_file")
+    cover_file = request.files.get("cover_file")
 
     if not project_name:
         return render_template("new_project.html", error="Введите название проекта"), 400
@@ -166,6 +185,11 @@ def create_project():
                 error="Файл протокола слишком большой — до 15 МБ",
             ), 400
         contract_terms_file.seek(0)
+    has_cover = bool(cover_file and cover_file.filename)
+    if has_cover:
+        problem = _cover_problem(cover_file)
+        if problem:
+            return render_template("new_project.html", error=problem), 400
 
     try:
         slug = storage.create_project(root, project_name)
@@ -182,6 +206,9 @@ def create_project():
     tz_path = raw / "tz.docx"
     dgp_file.save(dgp_path)
     tz_file.save(tz_path)
+
+    if has_cover:
+        storage.save_cover(root, slug, cover_file, Path(cover_file.filename).suffix.lower())
 
     if has_smeta:
         smeta_path = storage.estimate_path(root, slug)
@@ -280,17 +307,10 @@ def upload_project_cover(slug):
         abort(404)
 
     cover_file = request.files.get("cover_file")
-    ext = Path(cover_file.filename).suffix.lower() if cover_file and cover_file.filename else ""
-    if not cover_file or ext not in ALLOWED_COVER_EXTENSIONS:
+    if not cover_file or not cover_file.filename or _cover_problem(cover_file):
         abort(400)
 
-    cover_file.seek(0, 2)
-    size = cover_file.tell()
-    cover_file.seek(0)
-    if size > MAX_COVER_SIZE:
-        abort(400)
-
-    storage.save_cover(root, slug, cover_file, ext)
+    storage.save_cover(root, slug, cover_file, Path(cover_file.filename).suffix.lower())
     return redirect(url_for("main.project_page", slug=slug))
 
 

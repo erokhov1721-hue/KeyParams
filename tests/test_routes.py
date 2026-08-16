@@ -1159,3 +1159,118 @@ def test_new_project_form_offers_a_contract_terms_field(tmp_path):
     body = client.get("/projects/new").data.decode("utf-8")
 
     assert 'name="contract_terms_file"' in body
+
+
+# --- фото объекта на форме создания проекта ---
+
+def _cover_bytes(size=64):
+    return b"\x89PNG\r\n\x1a\n" + b"x" * size
+
+
+def test_new_project_form_offers_a_cover_field(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    body = client.get("/projects/new").data.decode("utf-8")
+
+    assert 'name="cover_file"' in body
+    assert "Фото объекта" in body
+
+
+def test_create_project_with_a_cover_saves_and_serves_it(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post("/projects", data={
+        "project_name": "С фото",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "cover_file": (io.BytesIO(_cover_bytes()), "photo.PNG"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = "С_фото"
+    assert storage.cover_path(tmp_path, slug) is not None
+    assert client.get(f"/projects/{slug}/cover").status_code == 200
+
+
+def test_create_project_without_a_cover_leaves_the_project_without_one(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    client.post("/projects", data={
+        "project_name": "Без фото",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    assert storage.cover_path(tmp_path, "Без_фото") is None
+    assert client.get("/projects/Без_фото/cover").status_code == 404
+
+
+def test_create_project_rejects_a_cover_in_the_wrong_format(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post("/projects", data={
+        "project_name": "Плохое фото",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "cover_file": (io.BytesIO(b"not a picture"), "photo.txt"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert "JPG, PNG или WEBP" in resp.data.decode("utf-8")
+    # Отказ до создания: нерабочей папки после него не остаётся.
+    assert not (tmp_path / "Плохое_фото").exists()
+
+
+def test_create_project_rejects_an_oversized_cover(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    too_big = b"\x89PNG\r\n\x1a\n" + b"x" * (5 * 1024 * 1024)
+
+    resp = client.post("/projects", data={
+        "project_name": "Тяжёлое фото",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "cover_file": (io.BytesIO(too_big), "photo.png"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert "до 5 МБ" in resp.data.decode("utf-8")
+
+
+def test_cover_upload_from_the_project_list_still_works(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Проект")
+
+    resp = client.post(
+        f"/projects/{slug}/cover",
+        data={"cover_file": (io.BytesIO(_cover_bytes()), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 302
+    assert storage.cover_path(tmp_path, slug).name == "cover.jpg"
+
+
+def test_cover_upload_from_the_project_list_refuses_a_wrong_format(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Проект")
+
+    resp = client.post(
+        f"/projects/{slug}/cover",
+        data={"cover_file": (io.BytesIO(b"nope"), "photo.txt")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
