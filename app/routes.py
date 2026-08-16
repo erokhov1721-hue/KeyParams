@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -30,11 +31,23 @@ def _selected_compare_slugs(root):
     ))
 
 
+def _project_name(root, slug):
+    """The project's own name, falling back to its folder name.
+
+    A passport that can't be parsed falls back rather than raising: this runs
+    from the sidebar context processor, so one corrupted file would otherwise
+    take down every page in the app — including the ones that could explain
+    the problem or delete the project.
+    """
+    try:
+        data = passport_module.load_passport(storage.passport_path(root, slug))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return slug
+    return data.get("project_name") or slug
+
+
 def _project_names(root, slugs):
-    return {
-        slug: passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
-        for slug in slugs
-    }
+    return {slug: _project_name(root, slug) for slug in slugs}
 
 
 def _cover_version(root, slug):
