@@ -361,3 +361,120 @@ def test_compare_page_offers_the_excel_export(tmp_path):
 
     assert "Выгрузить в Excel" in body
     assert "Сохранить в PDF" in body
+
+
+# --- строки затрат из сметы ---
+
+
+def test_report_row_keys_line_up_with_their_labels():
+    # The totals are matched to rows by position, so a key list that drifts
+    # from its labels would put a facade's cost on the roof line.
+    assert len(excel_report.WORK_KEYS) == len(excel_report.WORK_LABELS)
+    assert len(excel_report.MR_KEYS) == len(excel_report.MR_LABELS)
+    assert excel_report.WORK_KEYS[0] == "rd"
+    assert excel_report.MR_KEYS == ["mr_base", "mr_ready", "shell_core"]
+
+
+def test_estimate_totals_fill_the_cost_lines(tmp_path):
+    costs = {"rd": 192801180.0, "facade": 3034129955.4, "lifts": 220000000.0}
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=67413.0),
+        "cover": None,
+        "costs": costs,
+    }], tmp_path)
+
+    assert ws["E16"].value == 192801180.0            # Разработка стадии "Р"
+    assert ws["E22"].value == 3034129955.4           # Фасад
+    assert ws["E25"].value == 220000000.0            # Лифты
+    # The totals stay formulas: they must follow the figures, not freeze them.
+    assert ws["E30"].value.startswith("=SUBTOTAL(9,")
+    assert ws["F22"].value.startswith("=")
+
+
+def test_mr_lines_are_filled_from_the_estimate_too(tmp_path):
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": {"mr_base": 1900000000.0},
+    }], tmp_path)
+
+    assert ws["E31"].value == 1900000000.0
+    assert ws["E32"].value is None
+
+
+def test_a_cost_line_the_estimate_lacks_is_highlighted(tmp_path):
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": {"facade": 100.0},
+    }], tmp_path)
+
+    assert ws["E22"].value == 100.0
+    missing = ws["E25"]                               # Лифты — в смете нет
+    assert missing.value is None
+    assert missing.fill.fgColor.rgb.endswith(excel_report.COLOR_EMPTY)
+
+
+def test_without_an_estimate_the_cost_lines_stay_plain(tmp_path):
+    # Nothing to compare against: every line is empty by design and meant to
+    # be typed in, so marking all fourteen would say nothing.
+    ws = _build([_passport("П", total_area_sqm=1000.0)], tmp_path)
+
+    for row in (16, 22, 25, 29):
+        cell = ws.cell(row=row, column=5)
+        assert cell.value is None
+        assert not str(cell.fill.fgColor.rgb).endswith(excel_report.COLOR_EMPTY)
+
+
+def test_a_zero_cost_line_is_written_as_zero(tmp_path):
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": {"landscaping": 0.0},
+    }], tmp_path)
+
+    landscaping = ws["E27"]
+    assert landscaping.value == 0
+    assert not str(landscaping.fill.fgColor.rgb).endswith(excel_report.COLOR_EMPTY)
+
+
+def test_load_project_reads_the_estimate_when_there_is_one(tmp_path):
+    from openpyxl import Workbook
+
+    slug = _make_project_with_passport(tmp_path, "Со сметой")
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=1, value="№ п/п")
+    ws.cell(row=1, column=2, value="№ раздела")
+    ws.cell(row=1, column=3, value="Статья СМР")
+    ws.cell(row=1, column=4, value="Наименование работ")
+    ws.cell(row=1, column=5, value="Стоимость всего, RUB")
+    ws.merge_cells(start_row=1, start_column=5, end_row=1, end_column=6)
+    ws.cell(row=2, column=6, value="Всего")
+    ws.cell(row=3, column=1, value=1)
+    ws.cell(row=3, column=2, value=1)
+    ws.cell(row=3, column=3, value="6. Фасадные работы")
+    ws.cell(row=3, column=6, value=555.0)
+    wb.save(storage.estimate_path(tmp_path, slug))
+
+    project = excel_report.load_project(storage.project_dir(tmp_path, slug))
+
+    assert project["costs"] == {"facade": 555.0}
+
+
+def test_load_project_without_an_estimate_has_no_costs(tmp_path):
+    slug = _make_project_with_passport(tmp_path, "Без сметы")
+
+    project = excel_report.load_project(storage.project_dir(tmp_path, slug))
+
+    assert project["costs"] == {}
+
+
+def test_an_unreadable_estimate_does_not_stop_the_export(tmp_path):
+    slug = _make_project_with_passport(tmp_path, "Битая смета")
+    storage.estimate_path(tmp_path, slug).write_bytes(b"not a workbook")
+
+    project = excel_report.load_project(storage.project_dir(tmp_path, slug))
+
+    assert project["costs"] == {}
+    assert project["passport"]["project_name"] == "Битая смета"

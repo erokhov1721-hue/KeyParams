@@ -10,6 +10,7 @@ recalculates.
 """
 
 import json
+import logging
 import re
 from datetime import date, datetime
 from io import BytesIO
@@ -24,7 +25,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.units import pixels_to_EMU
 from PIL import Image
 
-from . import extractors, passport as passport_module, storage
+from . import estimate_sections, extractors, passport as passport_module, storage
+
+logger = logging.getLogger(__name__)
 
 
 class ExcelReportError(Exception):
@@ -185,7 +188,29 @@ def load_project(project_dir) -> dict:
             "Создайте проект заново, загрузив исходные документы."
         ) from e
 
-    return {"passport": passport, "cover": storage.cover_path(root, slug)}
+    return {
+        "passport": passport,
+        "cover": storage.cover_path(root, slug),
+        "costs": _estimate_costs(root, slug),
+    }
+
+
+def _estimate_costs(root, slug) -> dict:
+    """The project's cost lines, read from its estimate, or nothing.
+
+    An estimate that can't be parsed is not worth failing the whole export
+    over: the passport half of the report is still worth having, and the cost
+    lines fall back to being blank, which is what they were before an estimate
+    was attached at all.
+    """
+    path = storage.estimate_path(root, slug)
+    if not path.exists():
+        return {}
+    try:
+        return estimate_sections.read_section_totals(path)
+    except estimate_sections.EstimateSectionsError:
+        logger.exception("Не удалось разобрать смету проекта «%s»", slug)
+        return {}
 
 
 # --- the sheet -------------------------------------------------------------
@@ -262,6 +287,12 @@ WORK_LABELS = [
 ]
 
 MR_LABELS = ["MR Base", "MR Ready", "SHELL & CORE"]
+
+# The report's cost lines and the categories an estimate is read into are the
+# same list in the same order, which is what lets a section's total land on
+# its own row. Sliced rather than retyped so the two cannot drift apart.
+WORK_KEYS = estimate_sections.CATEGORY_KEYS[:len(WORK_LABELS)]
+MR_KEYS = estimate_sections.CATEGORY_KEYS[len(WORK_LABELS):]
 
 TERMS_LABELS = [
     ("smr_term", "Срок СМР"),
@@ -446,7 +477,16 @@ def _value_style(value):
     return _FILL_EMPTY if value is None else None
 
 
-def _project_column(ws, index, project, cover):
+def _missing_cost_style(value, costs):
+    """A cost line is only worth highlighting once there is an estimate to
+    compare it against. With no estimate attached every line is empty by
+    design and is meant to be typed in, so marking all fourteen would be a
+    wall of yellow saying nothing."""
+    return _FILL_EMPTY if value is None and costs else None
+
+
+def _project_column(ws, index, project, cover, costs=None):
+    costs = costs or {}
     col = _money_col(index)
     money = get_column_letter(col)
     per_sqm = get_column_letter(col + 1)
@@ -516,8 +556,11 @@ def _project_column(ws, index, project, cover):
     _per_sqm_cell(ws, ROW_CONTRACT_TOTAL, col, money, fill=_FILL_BAND,
                   top=MEDIUM, bottom=MEDIUM)
 
-    for row in range(ROW_WORK_FIRST, ROW_WORK_LAST + 1):
-        _write(ws, row, col, None, fmt=FMT_MONEY, font=_font(), align=_CENTER,
+    for offset in range(len(WORK_LABELS)):
+        row = ROW_WORK_FIRST + offset
+        value = costs.get(WORK_KEYS[offset])
+        _write(ws, row, col, value, fmt=FMT_MONEY, font=_font(), align=_CENTER,
+               fill=_missing_cost_style(value, costs),
                top=HAIR, bottom=HAIR, left=MEDIUM, right=THIN_BLACK)
         _per_sqm_cell(ws, row, col, money, top=HAIR, bottom=HAIR)
 
@@ -530,7 +573,8 @@ def _project_column(ws, index, project, cover):
 
     for offset in range(len(MR_LABELS)):
         row = ROW_MR_FIRST + offset
-        _write(ws, row, col, None, fmt=FMT_MONEY, font=_font(), fill=_FILL_BAND,
+        _write(ws, row, col, costs.get(MR_KEYS[offset]), fmt=FMT_MONEY,
+               font=_font(), fill=_FILL_BAND,
                align=_CENTER, top=MEDIUM if offset == 0 else HAIR, bottom=HAIR,
                left=MEDIUM, right=THIN_BLACK)
         _per_sqm_cell(ws, row, col, money, fill=_FILL_BAND,
@@ -641,14 +685,17 @@ def _layout(ws, count):
 def _as_projects(projects):
     normalized = []
     covers = []
+    costs = []
     for item in projects:
         if isinstance(item, dict) and "passport" in item:
             normalized.append(normalize_passport(item["passport"]))
             covers.append(item.get("cover"))
+            costs.append(item.get("costs") or {})
         else:
             normalized.append(normalize_passport(item))
             covers.append(None)
-    return normalized, covers
+            costs.append({})
+    return normalized, covers, costs
 
 
 def build_comparison_report(projects, out_path):
@@ -658,7 +705,7 @@ def build_comparison_report(projects, out_path):
     "cover": ...}`` — or bare passport dicts when there are no photos to
     place. ``out_path`` is a path or any file object openpyxl can save to.
     """
-    normalized, covers = _as_projects(projects)
+    normalized, covers, costs = _as_projects(projects)
     if not normalized:
         raise ExcelReportError(
             "Не выбрано ни одного проекта. Отметьте проекты галочками в списке "
@@ -671,8 +718,8 @@ def build_comparison_report(projects, out_path):
 
     _layout(ws, len(normalized))
     _label_column(ws, normalized)
-    for index, (project, cover) in enumerate(zip(normalized, covers)):
-        _project_column(ws, index, project, cover)
+    for index, (project, cover, project_costs) in enumerate(zip(normalized, covers, costs)):
+        _project_column(ws, index, project, cover, project_costs)
 
     wb.save(out_path)
     return out_path
