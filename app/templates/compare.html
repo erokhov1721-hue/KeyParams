@@ -12,6 +12,45 @@
   </div>
 </div>
 
+<div class="card compare-card">
+  <div class="sections-head">
+    <h2 class="chart-title" id="common-facts-title">Общие сведения</h2>
+  </div>
+  <table class="compare-table" aria-labelledby="common-facts-title">
+    <thead>
+      <tr>
+        <th></th>
+        {% for slug in slugs %}
+        <th>{{ passports[slug].project_name or slug }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for field in fields %}
+        {% if field != "project_name" %}
+        <tr>
+          <td class="compare-field-label">{{ field_labels.get(field, field) }}</td>
+          {% for slug in slugs %}
+            {% set value = passports[slug][field] %}
+            {% set display = format_number(value) if field in numeric_fields else value %}
+            <td>{{ display if display is not none else '—' }}</td>
+          {% endfor %}
+        </tr>
+        {% if field == "contract_price_rub" %}
+        <tr>
+          <td class="compare-field-label">Цена за м², руб.</td>
+          {% for slug in slugs %}
+            {% set psqm = price_per_sqm(passports[slug]) %}
+            <td>{{ format_number(psqm) if psqm is not none else '—' }}</td>
+          {% endfor %}
+        </tr>
+        {% endif %}
+        {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
 {% set chart_defs = [
   ("price_by_year", "Цена работ по году подписания договора"),
   ("price_by_class", "Цена работ по классу жилья"),
@@ -40,74 +79,6 @@
   </div>
   {% endfor %}
 </div>
-
-{% if pair %}
-<div class="card pair-card">
-  <div class="sections-head">
-    <h2 class="chart-title">Сравнение двух объектов</h2>
-    <p class="sections-sub">Разница считается слева направо: как правый объект стоит против левого.</p>
-  </div>
-
-  <form class="pair-form" method="get" action="{{ url_for('main.compare_projects') }}">
-    {% for slug in slugs %}<input type="hidden" name="slug" value="{{ slug }}">{% endfor %}
-    {% if adjustments.vat_rate is not none %}
-    <input type="hidden" name="vat_on" value="1">
-    <input type="hidden" name="vat" value="{{ adjustments.vat_display }}">
-    {% endif %}
-    {% if adjustments.inflation is not none %}
-    <input type="hidden" name="inflation_on" value="1">
-    <input type="hidden" name="inflation" value="{{ adjustments.inflation_display }}">
-    <input type="hidden" name="year" value="{{ adjustments.target_year }}">
-    {% endif %}
-    <select name="left" onchange="this.form.submit()">
-      {% for slug in slugs %}
-      <option value="{{ slug }}" {{ 'selected' if slug == pair_left }}>{{ passports[slug].project_name or slug }}</option>
-      {% endfor %}
-    </select>
-    <span class="pair-arrow">→</span>
-    <select name="right" onchange="this.form.submit()">
-      {% for slug in slugs %}
-      <option value="{{ slug }}" {{ 'selected' if slug == pair_right }}>{{ passports[slug].project_name or slug }}</option>
-      {% endfor %}
-    </select>
-    <noscript><button type="submit" class="btn btn-secondary">Показать</button></noscript>
-  </form>
-
-  <div class="pair-grid">
-    {% for metric in pair.metrics %}
-    <div class="pair-row">
-      <div class="pair-label">{{ metric.label }}</div>
-      <div class="pair-side">{{ metric.left }}</div>
-      <div class="pair-delta{{ ' is-worse' if metric.dearer is true }}{{ ' is-better' if metric.dearer is false }}">
-        <span class="pair-delta-pct">{{ metric.delta_display or '—' }}</span>
-        {% if metric.diff_display %}<span class="pair-delta-abs">{{ metric.diff_display }}</span>{% endif %}
-      </div>
-      <div class="pair-side">{{ metric.right }}</div>
-    </div>
-    {% endfor %}
-  </div>
-
-  {% if pair.sections %}
-  <h3 class="pair-subtitle">Дельта по разделам <span class="sections-sub">влево — дешевле, вправо — дороже</span></h3>
-  <div class="delta-list">
-    {% for row in pair.sections %}
-    <div class="delta-row">
-      <div class="delta-label">{{ row.label }}</div>
-      <div class="delta-track">
-        <div class="delta-half">
-          {% if not row.dearer %}<div class="delta-fill is-better" style="width: {{ row.width_pct }}%"></div>{% endif %}
-        </div>
-        <div class="delta-half">
-          {% if row.dearer %}<div class="delta-fill is-worse" style="width: {{ row.width_pct }}%"></div>{% endif %}
-        </div>
-      </div>
-      <div class="delta-value {{ 'is-worse' if row.dearer else 'is-better' }}">{{ row.display }}</div>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-</div>
-{% endif %}
 
 {% if sections %}
 <div class="card sections-card">
@@ -192,39 +163,72 @@
 </div>
 {% endif %}
 
-<div class="card compare-card">
-  <table class="compare-table">
-    <thead>
-      <tr>
-        <th></th>
-        {% for slug in slugs %}
-        <th>{{ passports[slug].project_name or slug }}</th>
-        {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for field in fields %}
-        {% if field != "project_name" %}
-        <tr>
-          <td class="compare-field-label">{{ field_labels.get(field, field) }}</td>
-          {% for slug in slugs %}
-            {% set value = passports[slug][field] %}
-            {% set display = format_number(value) if field in numeric_fields else value %}
-            <td>{{ display if display is not none else '—' }}</td>
-          {% endfor %}
-        </tr>
-        {% if field == "contract_price_rub" %}
-        <tr>
-          <td class="compare-field-label">Цена за м², руб.</td>
-          {% for slug in slugs %}
-            {% set psqm = price_per_sqm(passports[slug]) %}
-            <td>{{ format_number(psqm) if psqm is not none else '—' }}</td>
-          {% endfor %}
-        </tr>
-        {% endif %}
-        {% endif %}
+{% if pair %}
+<div class="card pair-card">
+  <div class="sections-head">
+    <h2 class="chart-title">Сравнение двух объектов</h2>
+    <p class="sections-sub">Разница считается слева направо: как правый объект стоит против левого.</p>
+  </div>
+
+  <form class="pair-form" method="get" action="{{ url_for('main.compare_projects') }}">
+    {% for slug in slugs %}<input type="hidden" name="slug" value="{{ slug }}">{% endfor %}
+    {% if adjustments.vat_rate is not none %}
+    <input type="hidden" name="vat_on" value="1">
+    <input type="hidden" name="vat" value="{{ adjustments.vat_display }}">
+    {% endif %}
+    {% if adjustments.inflation is not none %}
+    <input type="hidden" name="inflation_on" value="1">
+    <input type="hidden" name="inflation" value="{{ adjustments.inflation_display }}">
+    <input type="hidden" name="year" value="{{ adjustments.target_year }}">
+    {% endif %}
+    <select name="left" onchange="this.form.submit()">
+      {% for slug in slugs %}
+      <option value="{{ slug }}" {{ 'selected' if slug == pair_left }}>{{ passports[slug].project_name or slug }}</option>
       {% endfor %}
-    </tbody>
-  </table>
+    </select>
+    <span class="pair-arrow">→</span>
+    <select name="right" onchange="this.form.submit()">
+      {% for slug in slugs %}
+      <option value="{{ slug }}" {{ 'selected' if slug == pair_right }}>{{ passports[slug].project_name or slug }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit" class="btn btn-secondary">Показать</button></noscript>
+  </form>
+
+  <div class="pair-grid">
+    {% for metric in pair.metrics %}
+    <div class="pair-row">
+      <div class="pair-label">{{ metric.label }}</div>
+      <div class="pair-side">{{ metric.left }}</div>
+      <div class="pair-delta{{ ' is-worse' if metric.dearer is true }}{{ ' is-better' if metric.dearer is false }}">
+        <span class="pair-delta-pct">{{ metric.delta_display or '—' }}</span>
+        {% if metric.diff_display %}<span class="pair-delta-abs">{{ metric.diff_display }}</span>{% endif %}
+      </div>
+      <div class="pair-side">{{ metric.right }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if pair.sections %}
+  <h3 class="pair-subtitle">Дельта по разделам <span class="sections-sub">влево — дешевле, вправо — дороже</span></h3>
+  <div class="delta-list">
+    {% for row in pair.sections %}
+    <div class="delta-row">
+      <div class="delta-label">{{ row.label }}</div>
+      <div class="delta-track">
+        <div class="delta-half">
+          {% if not row.dearer %}<div class="delta-fill is-better" style="width: {{ row.width_pct }}%"></div>{% endif %}
+        </div>
+        <div class="delta-half">
+          {% if row.dearer %}<div class="delta-fill is-worse" style="width: {{ row.width_pct }}%"></div>{% endif %}
+        </div>
+      </div>
+      <div class="delta-value {{ 'is-worse' if row.dearer else 'is-better' }}">{{ row.display }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
+{% endif %}
+
 {% endblock %}
