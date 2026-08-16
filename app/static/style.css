@@ -1269,3 +1269,163 @@ select option {
   }
 
 }
+
+/* --- Сравнение по разделам сметы --- */
+
+.sections-card {
+  margin-bottom: 22px;
+}
+
+.sections-head {
+  margin-bottom: 16px;
+}
+
+.sections-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-500);
+}
+
+.adjust-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 22px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+}
+
+.adjust-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-100);
+  cursor: pointer;
+}
+
+.adjust-input {
+  width: 62px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 14px;
+  text-align: center;
+}
+
+.adjust-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.adjust-year {
+  width: 72px;
+}
+
+.adjust-unit {
+  color: var(--text-500);
+  font-size: 13px;
+}
+
+.sections-table-wrap {
+  overflow-x: auto;
+}
+
+.sections-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.sections-table th,
+.sections-table td {
+  padding: 10px 14px;
+  text-align: right;
+  color: var(--text-100);
+  vertical-align: top;
+}
+
+.sections-table thead th {
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  white-space: normal;
+}
+
+.sections-table tbody tr + tr td {
+  border-top: 1px solid var(--border-soft);
+}
+
+.sections-table tfoot td {
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+}
+
+.sections-label-col {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-500);
+  min-width: 210px;
+  max-width: 320px;
+  white-space: normal;
+}
+
+.sections-weight-col {
+  width: 90px;
+  min-width: 90px;
+}
+
+.sections-weight {
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--bg-700);
+  overflow: hidden;
+}
+
+.sections-weight-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.sections-value {
+  white-space: nowrap;
+}
+
+.sections-number {
+  display: block;
+  font-variant-numeric: tabular-nums;
+}
+
+.sections-value.is-empty .sections-number {
+  color: var(--text-600);
+}
+
+.sections-deviation {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sections-deviation.is-worse {
+  color: var(--red);
+}
+
+.sections-deviation.is-better {
+  color: var(--accent);
+}
+
+.sections-note {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--amber);
+  white-space: normal;
+}

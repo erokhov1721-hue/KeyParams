@@ -1274,3 +1274,115 @@ def test_cover_upload_from_the_project_list_refuses_a_wrong_format(tmp_path):
     )
 
     assert resp.status_code == 400
+
+
+# --- сравнение по разделам сметы ---
+
+def _offer_bytes(sections):
+    """Смета, похожая на настоящую оферту: разделы с номерами и итогами."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=1, value="№ п/п")
+    ws.cell(row=1, column=2, value="№ раздела")
+    ws.cell(row=1, column=3, value="Статья СМР")
+    ws.cell(row=1, column=4, value="Наименование работ")
+    ws.cell(row=1, column=5, value="Стоимость всего, RUB, с учетом НДС 20%")
+    ws.merge_cells(start_row=1, start_column=5, end_row=1, end_column=6)
+    ws.cell(row=2, column=6, value="Всего")
+    for offset, (article, total) in enumerate(sections):
+        row = 3 + offset
+        ws.cell(row=row, column=1, value=offset + 1)
+        ws.cell(row=row, column=2, value=offset + 1)
+        ws.cell(row=row, column=3, value=article)
+        ws.cell(row=row, column=6, value=total)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _project_with_offer(root, name, sections, **fields):
+    from app import passport as passport_module, storage
+
+    slug = storage.create_project(root, name)
+    data = {"project_name": name, "year_signed": "2025", "total_area_sqm": 1000.0}
+    data.update(fields)
+    passport_module.save_passport(data, storage.passport_path(root, slug))
+    storage.estimate_path(root, slug).write_bytes(_offer_bytes(sections))
+    return slug
+
+
+def test_compare_page_shows_the_section_table(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "СоСметой", [("6. Фасадные работы", 3_000_000.0)],
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Стоимость по разделам" in body
+    assert "Фасад" in body
+    assert "3 000" in body           # 3 000 000 ₽ / 1 000 м²
+    assert "Итого СМР" in body
+
+
+def test_compare_page_has_no_section_table_without_estimates(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезСметы", total_area_sqm=1000.0)
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Стоимость по разделам" not in body
+
+
+def test_section_table_corrections_are_off_by_default(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 1_200_000.0)], year_signed="2020",
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "1 200" in body
+
+
+def test_section_table_applies_inflation_from_the_address(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 1_000_000.0)], year_signed="2024",
+    )
+
+    body = client.get(
+        f"/compare?slug={slug}&inflation_on=1&inflation=10&year=2026"
+    ).get_data(as_text=True)
+
+    assert "1 210" in body          # 1 000 × 1,1²
+
+
+def test_section_table_applies_vat_from_the_address(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 1_200_000.0)], year_signed="2025",
+    )
+
+    body = client.get(f"/compare?slug={slug}&vat_on=1&vat=22").get_data(as_text=True)
+
+    assert "1 220" in body          # 1 200 × 122/120
+
+
+def test_section_table_marks_a_project_whose_year_is_unknown(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 1_000_000.0)], year_signed=None,
+    )
+
+    body = client.get(
+        f"/compare?slug={slug}&inflation_on=1&inflation=10"
+    ).get_data(as_text=True)
+
+    assert "без поправки на инфляцию" in body

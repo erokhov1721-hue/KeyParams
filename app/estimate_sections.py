@@ -50,6 +50,38 @@ CATEGORY_RULES = [
 
 CATEGORY_KEYS = [key for key, _ in CATEGORY_RULES]
 
+# What each line is called where a person reads it — the customer's own
+# wording, from their comparison sheet. Kept here rather than beside either
+# of the things that display it, so the Excel export and the page in the
+# browser cannot end up naming the same line differently.
+CATEGORY_LABELS = {
+    "rd": 'Разработка стадии "Р"',
+    "preparation": (
+        "Подготовительные работы и содержание площадки (включая содержание "
+        "прилегающей территории, аренда оборудования и механизмов и т.п.)"
+    ),
+    "excavation": "Устройство котлована",
+    "waterproofing": "Гидроизоляция подземной части",
+    "concrete": "Монолит + МК",
+    "partitions": "Перегородки и стены",
+    "facade": "Фасад",
+    "roof": "Кровли",
+    "finishing": "Отделка МОП, двери, ворота",
+    "lifts": "Лифты",
+    "utilities": "Инженерные системы",
+    "landscaping": "Благоустройство",
+    "technology": "Технологические решения",
+    "other": "Другие (ЗИП и т.д.)",
+    "mr_base": "MR Base",
+    "mr_ready": "MR Ready",
+    "shell_core": "SHELL & CORE",
+}
+
+# The last three lines are the finishing packages, which the sheet sets apart
+# from the fourteen numbered kinds of work.
+MR_CATEGORY_KEYS = ["mr_base", "mr_ready", "shell_core"]
+WORK_CATEGORY_KEYS = [key for key in CATEGORY_KEYS if key not in MR_CATEGORY_KEYS]
+
 # How far down to look for the header: an offer opens with the tender's name,
 # the object, the address and the bidder's details before the table starts.
 HEADER_SEARCH_ROWS = 40

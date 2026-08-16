@@ -7,7 +7,10 @@ from flask import (
     url_for,
 )
 
-from . import estimate, extractors, passport as passport_module, pdf_export, storage
+from . import (
+    comparison, estimate, excel_report, extractors, passport as passport_module,
+    pdf_export, storage,
+)
 from .document_reader import DocxReadError
 
 bp = Blueprint("main", __name__)
@@ -107,6 +110,7 @@ def compare_projects():
         slug: passport_module.load_passport(storage.passport_path(root, slug))
         for slug in slugs
     }
+    adjustments = comparison.adjustments_from_args(request.args)
     return render_template(
         "compare.html",
         slugs=slugs,
@@ -117,7 +121,20 @@ def compare_projects():
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
+        sections=comparison.build_section_table(
+            slugs, passports, _section_costs(root, slugs), adjustments,
+        ),
+        adjustments=adjustments,
     )
+
+
+def _section_costs(root, slugs):
+    """Each project's estimate, read into the report's cost lines.
+
+    Goes through the same reader the Excel export uses, so a figure on the
+    page and the same figure in the downloaded workbook cannot disagree.
+    """
+    return {slug: excel_report.estimate_costs(root, slug)[0] for slug in slugs}
 
 
 @bp.route("/compare/pdf", methods=["GET"])

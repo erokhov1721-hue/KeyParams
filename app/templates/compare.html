@@ -40,6 +40,89 @@
   {% endfor %}
 </div>
 
+{% if sections %}
+<div class="card sections-card">
+  <div class="sections-head">
+    <h2 class="chart-title">Стоимость по разделам{% if sections.columns[0].per_sqm %}, ₽/м²{% endif %}</h2>
+    <p class="sections-sub">
+      Отклонение считается от первого выбранного проекта — «{{ sections.columns[0].name }}».
+    </p>
+  </div>
+
+  <form class="adjust-form" method="get" action="{{ url_for('main.compare_projects') }}">
+    {% for slug in slugs %}<input type="hidden" name="slug" value="{{ slug }}">{% endfor %}
+    <label class="adjust-toggle">
+      <input type="checkbox" name="vat_on" value="1" {{ 'checked' if adjustments.vat_rate is not none }}>
+      <span>Привести НДС к ставке</span>
+      <input class="adjust-input" type="text" name="vat" inputmode="decimal"
+             value="{{ adjustments.vat_display }}">
+      <span class="adjust-unit">%</span>
+    </label>
+    <label class="adjust-toggle">
+      <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
+      <span>Учитывать инфляцию</span>
+      <input class="adjust-input" type="text" name="inflation" inputmode="decimal"
+             value="{{ adjustments.inflation_display }}">
+      <span class="adjust-unit">% в год к</span>
+      <input class="adjust-input adjust-year" type="text" name="year" inputmode="numeric"
+             value="{{ adjustments.target_year }}">
+    </label>
+    <button type="submit" class="btn btn-secondary">Применить</button>
+  </form>
+
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Раздел</th>
+          <th class="sections-weight-col"></th>
+          {% for column in sections.columns %}
+          <th>
+            {{ column.name }}
+            {% for note in column.notes %}
+            <span class="sections-note">{{ note }}</span>
+            {% endfor %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in sections.rows %}
+        <tr>
+          <td class="sections-label-col">{{ row.label }}</td>
+          <td class="sections-weight-col">
+            <div class="sections-weight"><div class="sections-weight-fill" style="width: {{ row.width_pct }}%"></div></div>
+          </td>
+          {% for cell in row.cells %}
+          <td class="sections-value{{ ' is-empty' if cell.value is none }}">
+            <span class="sections-number">{{ cell.display }}</span>
+            {% if cell.deviation is not none %}
+            <span class="sections-deviation {{ 'is-worse' if cell.deviation > 0 else 'is-better' }}">{{ cell.deviation_display }}</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="sections-label-col">{{ sections.total.label }}</td>
+          <td class="sections-weight-col"></td>
+          {% for cell in sections.total.cells %}
+          <td class="sections-value">
+            <span class="sections-number">{{ cell.display }}</span>
+            {% if cell.deviation is not none %}
+            <span class="sections-deviation {{ 'is-worse' if cell.deviation > 0 else 'is-better' }}">{{ cell.deviation_display }}</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <div class="card compare-card">
   <table class="compare-table">
     <thead>

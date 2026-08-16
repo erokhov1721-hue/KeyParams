@@ -189,7 +189,7 @@ def load_project(project_dir) -> dict:
             "Создайте проект заново, загрузив исходные документы."
         ) from e
 
-    costs, sources = _estimate_costs(root, slug)
+    costs, sources = estimate_costs(root, slug)
     return {
         "passport": passport,
         "cover": storage.cover_path(root, slug),
@@ -198,7 +198,7 @@ def load_project(project_dir) -> dict:
     }
 
 
-def _estimate_costs(root, slug):
+def estimate_costs(root, slug):
     """``({line: total}, {line: [section names]})`` from the project's estimate.
 
     An estimate that can't be parsed is not worth failing the whole export
@@ -277,31 +277,13 @@ CHARACTERISTIC_LABELS = [
     (ROW_VAT, "Ставка НДС"),
 ]
 
-WORK_LABELS = [
-    'Разработка стадии "Р"',
-    "Подготовительные работы и содержание площадки (включая содержание "
-    "прилегающей территории, аренда оборудования и механизмов и т.п.)",
-    "Устройство котлована",
-    "Гидроизоляция подземной части",
-    "Монолит + МК",
-    "Перегородки и стены",
-    "Фасад",
-    "Кровли",
-    "Отделка МОП, двери, ворота",
-    "Лифты",
-    "Инженерные системы",
-    "Благоустройство",
-    "Технологические решения",
-    "Другие (ЗИП и т.д.)",
-]
-
-MR_LABELS = ["MR Base", "MR Ready", "SHELL & CORE"]
-
 # The report's cost lines and the categories an estimate is read into are the
 # same list in the same order, which is what lets a section's total land on
-# its own row. Sliced rather than retyped so the two cannot drift apart.
-WORK_KEYS = estimate_sections.CATEGORY_KEYS[:len(WORK_LABELS)]
-MR_KEYS = estimate_sections.CATEGORY_KEYS[len(WORK_LABELS):]
+# its own row. Both come from one place so they cannot drift apart.
+WORK_KEYS = estimate_sections.WORK_CATEGORY_KEYS
+MR_KEYS = estimate_sections.MR_CATEGORY_KEYS
+WORK_LABELS = [estimate_sections.CATEGORY_LABELS[key] for key in WORK_KEYS]
+MR_LABELS = [estimate_sections.CATEGORY_LABELS[key] for key in MR_KEYS]
 
 TERMS_LABELS = [
     ("smr_term", "Срок СМР"),
