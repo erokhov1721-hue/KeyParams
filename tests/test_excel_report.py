@@ -478,3 +478,58 @@ def test_an_unreadable_estimate_does_not_stop_the_export(tmp_path):
 
     assert project["costs"] == {}
     assert project["passport"]["project_name"] == "Битая смета"
+
+
+def test_each_filled_cost_line_says_which_sections_it_came_from(tmp_path):
+    # Placing a section on a line is a judgement about wording; the one place
+    # it can be checked is next to the number.
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": {"other": 12.5},
+        "cost_sources": {"other": ["99. Прочее", "Дополнительные работы"]},
+    }], tmp_path)
+
+    comment = ws["E29"].comment
+    assert comment is not None
+    assert "99. Прочее" in comment.text
+    assert "Дополнительные работы" in comment.text
+
+
+def test_an_empty_cost_line_carries_no_note(tmp_path):
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": {"facade": 1.0},
+        "cost_sources": {"facade": ["6. Фасадные работы"]},
+    }], tmp_path)
+
+    assert ws["E22"].comment is not None
+    assert ws["E25"].comment is None
+
+
+def test_load_project_reports_the_sections_behind_each_line(tmp_path):
+    from openpyxl import Workbook
+
+    slug = _make_project_with_passport(tmp_path, "Со сметой")
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=1, value="№ п/п")
+    ws.cell(row=1, column=2, value="№ раздела")
+    ws.cell(row=1, column=3, value="Статья СМР")
+    ws.cell(row=1, column=4, value="Наименование работ")
+    ws.cell(row=1, column=5, value="Стоимость всего, RUB")
+    ws.merge_cells(start_row=1, start_column=5, end_row=1, end_column=6)
+    ws.cell(row=2, column=6, value="Всего")
+    ws.cell(row=3, column=1, value=1)
+    ws.cell(row=3, column=2, value=1)
+    ws.cell(row=3, column=3, value="99. Прочее")
+    ws.cell(row=3, column=6, value=10.0)
+    ws.cell(row=4, column=4, value="Дополнительные работы")
+    ws.cell(row=4, column=6, value=2.5)
+    wb.save(storage.estimate_path(tmp_path, slug))
+
+    project = excel_report.load_project(storage.project_dir(tmp_path, slug))
+
+    assert project["costs"] == {"other": 12.5}
+    assert project["cost_sources"] == {"other": ["99. Прочее", "Дополнительные работы"]}

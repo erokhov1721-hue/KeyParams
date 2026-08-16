@@ -113,6 +113,12 @@ Header = namedtuple(
     "Header", "row item_col section_col article_col name_col total_col",
 )
 
+# One section of an estimate, already placed on a report line: ``key`` is the
+# line, ``name`` the section as the estimate spells it. The name is carried
+# along so the report can say where a figure came from — the placement is a
+# judgement about wording, and a judgement nobody can check is worth little.
+Section = namedtuple("Section", "key name amount")
+
 
 def _find_header(ws):
     """Where the table starts and which columns matter, or None if this
@@ -178,8 +184,17 @@ def read_section_totals(path) -> dict:
     Only the lines the estimate actually has appear in the result — a section
     it doesn't carry stays absent rather than becoming a zero, so the report
     can tell "nothing was spent here" from "this estimate doesn't say".
+    """
+    totals = {}
+    for section in read_sections(path):
+        totals[section.key] = totals.get(section.key, 0.0) + section.amount
+    return totals
 
-    Returns an empty dict for a workbook that isn't laid out as a sectioned
+
+def read_sections(path) -> list:
+    """Every section of one estimate that has a line in the report.
+
+    Returns an empty list for a workbook that isn't laid out as a sectioned
     offer at all: the report then leaves its cost lines blank, exactly as it
     did before any estimate was attached.
     """
@@ -194,18 +209,18 @@ def read_section_totals(path) -> dict:
         raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
 
     for ws in wb.worksheets:
-        totals = _totals_from_sheet(ws)
-        if totals:
-            return totals
-    return {}
+        sections = _sections_from_sheet(ws)
+        if sections:
+            return sections
+    return []
 
 
-def _totals_from_sheet(ws):
+def _sections_from_sheet(ws):
     header = _find_header(ws)
     if header is None:
-        return {}
+        return []
 
-    totals = {}
+    sections = []
     unmatched = []
     started = False
     for row in range(header.row + 2, ws.max_row + 1):
@@ -246,10 +261,10 @@ def _totals_from_sheet(ws):
         if key is None:
             unmatched.append(str(name).strip())
             continue
-        totals[key] = totals.get(key, 0.0) + amount
+        sections.append(Section(key, str(name).strip(), amount))
 
     if unmatched:
         # Not an error: an estimate may carry sections this report has no line
         # for. Logged so that a section quietly going missing can be traced.
         logger.info("Разделы сметы без строки в отчёте: %s", "; ".join(unmatched))
-    return totals
+    return sections

@@ -17,6 +17,7 @@ from io import BytesIO
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
 from openpyxl.drawing.xdr import XDRPositiveSize2D
@@ -188,15 +189,17 @@ def load_project(project_dir) -> dict:
             "Создайте проект заново, загрузив исходные документы."
         ) from e
 
+    costs, sources = _estimate_costs(root, slug)
     return {
         "passport": passport,
         "cover": storage.cover_path(root, slug),
-        "costs": _estimate_costs(root, slug),
+        "costs": costs,
+        "cost_sources": sources,
     }
 
 
-def _estimate_costs(root, slug) -> dict:
-    """The project's cost lines, read from its estimate, or nothing.
+def _estimate_costs(root, slug):
+    """``({line: total}, {line: [section names]})`` from the project's estimate.
 
     An estimate that can't be parsed is not worth failing the whole export
     over: the passport half of the report is still worth having, and the cost
@@ -205,12 +208,18 @@ def _estimate_costs(root, slug) -> dict:
     """
     path = storage.estimate_path(root, slug)
     if not path.exists():
-        return {}
+        return {}, {}
     try:
-        return estimate_sections.read_section_totals(path)
+        sections = estimate_sections.read_sections(path)
     except estimate_sections.EstimateSectionsError:
         logger.exception("Не удалось разобрать смету проекта «%s»", slug)
-        return {}
+        return {}, {}
+
+    totals, sources = {}, {}
+    for section in sections:
+        totals[section.key] = totals.get(section.key, 0.0) + section.amount
+        sources.setdefault(section.key, []).append(section.name)
+    return totals, sources
 
 
 # --- the sheet -------------------------------------------------------------
@@ -477,6 +486,24 @@ def _value_style(value):
     return _FILL_EMPTY if value is None else None
 
 
+COMMENT_AUTHOR = "Паспорт объекта"
+COMMENT_PREFIX = "Из сметы:"
+
+
+def _note_source(cell, names):
+    """Say which sections of the estimate a figure was made of.
+
+    Placing a section on a line is a judgement about wording, and the one
+    place it can be checked is next to the number itself. Two sections landing
+    on one line — an offer's "Прочее" and its unnumbered "Дополнительные
+    работы" both belong to "Другие" — are both named, so a total that looks
+    too big can be taken apart without opening the estimate.
+    """
+    if not names:
+        return
+    cell.comment = Comment(f"{COMMENT_PREFIX} {'; '.join(names)}", COMMENT_AUTHOR)
+
+
 def _missing_cost_style(value, costs):
     """A cost line is only worth highlighting once there is an estimate to
     compare it against. With no estimate attached every line is empty by
@@ -485,8 +512,9 @@ def _missing_cost_style(value, costs):
     return _FILL_EMPTY if value is None and costs else None
 
 
-def _project_column(ws, index, project, cover, costs=None):
+def _project_column(ws, index, project, cover, costs=None, sources=None):
     costs = costs or {}
+    sources = sources or {}
     col = _money_col(index)
     money = get_column_letter(col)
     per_sqm = get_column_letter(col + 1)
@@ -559,9 +587,10 @@ def _project_column(ws, index, project, cover, costs=None):
     for offset in range(len(WORK_LABELS)):
         row = ROW_WORK_FIRST + offset
         value = costs.get(WORK_KEYS[offset])
-        _write(ws, row, col, value, fmt=FMT_MONEY, font=_font(), align=_CENTER,
-               fill=_missing_cost_style(value, costs),
-               top=HAIR, bottom=HAIR, left=MEDIUM, right=THIN_BLACK)
+        cell = _write(ws, row, col, value, fmt=FMT_MONEY, font=_font(), align=_CENTER,
+                      fill=_missing_cost_style(value, costs),
+                      top=HAIR, bottom=HAIR, left=MEDIUM, right=THIN_BLACK)
+        _note_source(cell, sources.get(WORK_KEYS[offset]))
         _per_sqm_cell(ws, row, col, money, top=HAIR, bottom=HAIR)
 
     _write(ws, ROW_SMR_TOTAL, col,
@@ -573,10 +602,11 @@ def _project_column(ws, index, project, cover, costs=None):
 
     for offset in range(len(MR_LABELS)):
         row = ROW_MR_FIRST + offset
-        _write(ws, row, col, costs.get(MR_KEYS[offset]), fmt=FMT_MONEY,
-               font=_font(), fill=_FILL_BAND,
-               align=_CENTER, top=MEDIUM if offset == 0 else HAIR, bottom=HAIR,
-               left=MEDIUM, right=THIN_BLACK)
+        cell = _write(ws, row, col, costs.get(MR_KEYS[offset]), fmt=FMT_MONEY,
+                      font=_font(), fill=_FILL_BAND,
+                      align=_CENTER, top=MEDIUM if offset == 0 else HAIR, bottom=HAIR,
+                      left=MEDIUM, right=THIN_BLACK)
+        _note_source(cell, sources.get(MR_KEYS[offset]))
         _per_sqm_cell(ws, row, col, money, fill=_FILL_BAND,
                       top=MEDIUM if offset == 0 else HAIR, bottom=HAIR)
 
@@ -686,16 +716,19 @@ def _as_projects(projects):
     normalized = []
     covers = []
     costs = []
+    sources = []
     for item in projects:
         if isinstance(item, dict) and "passport" in item:
             normalized.append(normalize_passport(item["passport"]))
             covers.append(item.get("cover"))
             costs.append(item.get("costs") or {})
+            sources.append(item.get("cost_sources") or {})
         else:
             normalized.append(normalize_passport(item))
             covers.append(None)
             costs.append({})
-    return normalized, covers, costs
+            sources.append({})
+    return normalized, covers, costs, sources
 
 
 def build_comparison_report(projects, out_path):
@@ -705,7 +738,7 @@ def build_comparison_report(projects, out_path):
     "cover": ...}`` — or bare passport dicts when there are no photos to
     place. ``out_path`` is a path or any file object openpyxl can save to.
     """
-    normalized, covers, costs = _as_projects(projects)
+    normalized, covers, costs, sources = _as_projects(projects)
     if not normalized:
         raise ExcelReportError(
             "Не выбрано ни одного проекта. Отметьте проекты галочками в списке "
@@ -718,8 +751,8 @@ def build_comparison_report(projects, out_path):
 
     _layout(ws, len(normalized))
     _label_column(ws, normalized)
-    for index, (project, cover, project_costs) in enumerate(zip(normalized, covers, costs)):
-        _project_column(ws, index, project, cover, project_costs)
+    for index, column in enumerate(zip(normalized, covers, costs, sources)):
+        _project_column(ws, index, *column)
 
     wb.save(out_path)
     return out_path
