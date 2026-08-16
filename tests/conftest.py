@@ -2,11 +2,23 @@ from pathlib import Path
 
 import pytest
 
+from app import win_ocr
 from app.document_reader import read_docx
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 DGP_FIXTURE = FIXTURES_DIR / "dgp_mira.docx"
 TZ_FIXTURE = FIXTURES_DIR / "tz_mira.docx"
+
+
+@pytest.fixture(autouse=True)
+def windows_ocr_off(monkeypatch):
+    """Switch off the Windows OCR engine for every test by default.
+
+    Whether the machine running the tests happens to have that engine — and
+    the Russian language pack it needs — must not change what the tests say.
+    A test that wants it turns it back on itself.
+    """
+    monkeypatch.setattr(win_ocr, "available", lambda: False)
 
 
 def _require_fixture(path):

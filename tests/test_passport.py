@@ -192,10 +192,11 @@ def test_save_passport_writes_readable_utf8(tmp_path):
     assert "Проспект Мира" in text
 
 
-def test_build_passport_ocr_disabled_by_default(tmp_path, monkeypatch):
-    # OCR is opt-in (OCR_FALLBACK_ENABLED=1) because EasyOCR is CPU-only and
-    # slow in this environment. With the env var unset, recognize_text must
-    # never be called, even when fields are missing and images are present.
+def test_build_passport_easyocr_disabled_by_default(tmp_path, monkeypatch):
+    # EasyOCR is opt-in (OCR_FALLBACK_ENABLED=1) because it is CPU-only and
+    # slow in this environment. With the env var unset and no fast engine to
+    # be had, recognize_text must never be called, even when fields are
+    # missing and images are present.
     monkeypatch.delenv(passport.OCR_FALLBACK_ENV_VAR, raising=False)
     calls = []
     monkeypatch.setattr(
@@ -215,6 +216,33 @@ def test_build_passport_ocr_disabled_by_default(tmp_path, monkeypatch):
     assert calls == []
     assert result["ocr_fields"] == []
     assert result["total_area_sqm"] is None
+
+
+def test_build_passport_uses_the_windows_engine_without_the_opt_in(tmp_path, monkeypatch):
+    # The opt-in guards against EasyOCR's minutes, not against OCR as such:
+    # where the fast engine exists it simply runs, and the slow one is left
+    # alone.
+    monkeypatch.delenv(passport.OCR_FALLBACK_ENV_VAR, raising=False)
+    monkeypatch.setattr(passport.win_ocr, "available", lambda: True)
+    monkeypatch.setattr(
+        passport.win_ocr, "recognize_text",
+        lambda images: ["Общая площадь м2 67 413"] * len(images),
+    )
+    slow_calls = []
+    monkeypatch.setattr(
+        ocr, "recognize_text", lambda images: slow_calls.append(images) or [],
+    )
+    dgp_path = make_docx(tmp_path, document_xml(), "dgp.docx")
+    tz_path = make_docx(
+        tmp_path, document_xml(), "tz.docx",
+        extra_files={"word/media/image1.png": b"fake-image-bytes"},
+    )
+
+    result = passport.build_passport("Тест", dgp_path, tz_path)
+
+    assert result["total_area_sqm"] == 67413.0
+    assert result["ocr_fields"] == ["total_area_sqm"]
+    assert slow_calls == [], "медленный распознаватель не трогаем, есть быстрый"
 
 
 def test_build_passport_ocr_fallback_fills_area_from_image(tmp_path, monkeypatch):
@@ -480,11 +508,19 @@ _PROTOCOL_TEXT = """Протокол окончательных условий
 """
 
 
-def _stub_pdf(monkeypatch, text, images=()):
+def _stub_pdf(monkeypatch, text, images=(), ocr_texts=()):
     monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: text)
     monkeypatch.setattr(
-        passport.pdf_reader, "render_pages_to_images", lambda path: list(images),
+        passport.pdf_reader, "render_pages_to_images",
+        lambda path, **kwargs: list(images),
     )
+    # Local OCR is stubbed by default: it is the last-resort path for a scan,
+    # and letting the real one run would load the recognition model into every
+    # test that touches a scanned protocol. Windows' engine is switched off
+    # here so these tests read the same on a machine that has it and one that
+    # doesn't; the ordering between the two engines is tested on its own.
+    monkeypatch.setattr(passport.win_ocr, "available", lambda: False)
+    monkeypatch.setattr(passport.ocr, "recognize_text", lambda images: list(ocr_texts))
 
 
 def test_build_contract_terms_text_layer_fills_fields_with_no_problem(monkeypatch):
@@ -543,6 +579,104 @@ def test_build_contract_terms_scan_success_keeps_vat_from_recognition(monkeypatc
 
     assert data["vat"] == "20%"
     assert "vat" in filled
+    assert problem is None
+
+
+def test_build_contract_terms_falls_back_to_local_ocr_when_the_api_is_unavailable(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"], ocr_texts=[_PROTOCOL_TEXT])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),
+    )
+
+    data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["performance_bond_pct"] == "3%"
+    assert data["bank_guarantee"] == "Не включено"
+    assert "smr_term" in filled
+    # The API failure stops being worth reporting once the card is filled.
+    assert problem is None
+
+
+def test_build_contract_terms_local_ocr_is_not_used_when_the_api_succeeds(monkeypatch):
+    calls = []
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(
+        passport.ocr, "recognize_text", lambda images: calls.append(images) or [],
+    )
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({"performance_bond_pct": "3%"}, None),
+    )
+
+    _data, _filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert problem is None
+    assert calls == [], "минуты на распознавание не тратятся, если API ответил"
+
+
+def test_build_contract_terms_keeps_the_api_problem_when_ocr_reads_nothing(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"], ocr_texts=[""])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_KEY),
+    )
+
+    _data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert filled == []
+    assert problem == passport.ai_extractor.PROBLEM_NO_KEY
+
+
+def test_build_contract_terms_keeps_the_api_problem_when_ocr_finds_no_conditions(monkeypatch):
+    _stub_pdf(
+        monkeypatch, "", images=[b"png"],
+        ocr_texts=["Совершенно посторонний распознанный текст."],
+    )
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),
+    )
+
+    _data, filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert filled == []
+    assert problem == passport.ai_extractor.PROBLEM_NO_CREDIT
+
+
+def test_build_contract_terms_prefers_the_windows_engine_over_easyocr(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    slow_calls = []
+    monkeypatch.setattr(passport.win_ocr, "available", lambda: True)
+    monkeypatch.setattr(passport.win_ocr, "recognize_text", lambda images: [_PROTOCOL_TEXT])
+    monkeypatch.setattr(
+        passport.ocr, "recognize_text", lambda images: slow_calls.append(images) or [],
+    )
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),
+    )
+
+    data, _filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["performance_bond_pct"] == "3%"
+    assert problem is None
+    assert slow_calls == [], "медленный распознаватель не запускается, если быстрый справился"
+
+
+def test_build_contract_terms_falls_back_to_easyocr_when_windows_reads_nothing(monkeypatch):
+    _stub_pdf(monkeypatch, "", images=[b"png"])
+    monkeypatch.setattr(passport.win_ocr, "available", lambda: True)
+    monkeypatch.setattr(passport.win_ocr, "recognize_text", lambda images: [""])
+    monkeypatch.setattr(passport.ocr, "recognize_text", lambda images: [_PROTOCOL_TEXT])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),
+    )
+
+    data, _filled, problem = passport.build_contract_terms("ignored.pdf")
+
+    assert data["performance_bond_pct"] == "3%"
     assert problem is None
 
 

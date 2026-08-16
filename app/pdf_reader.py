@@ -14,16 +14,16 @@ class PdfReadError(Exception):
     pass
 
 
-def _cap_long_edge(image):
-    """Shrink to fit MAX_IMAGE_LONG_EDGE, preserving aspect ratio.
+def _cap_long_edge(image, max_long_edge=MAX_IMAGE_LONG_EDGE):
+    """Shrink to fit ``max_long_edge``, preserving aspect ratio.
 
     Images already within the limit are returned untouched — upscaling a
     small page would only invent detail.
     """
     long_edge = max(image.size)
-    if long_edge <= MAX_IMAGE_LONG_EDGE:
+    if long_edge <= max_long_edge:
         return image
-    scale = MAX_IMAGE_LONG_EDGE / long_edge
+    scale = max_long_edge / long_edge
     size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
     return image.resize(size, Image.LANCZOS)
 
@@ -43,15 +43,23 @@ def read_pdf_text(path) -> str:
     return '\n'.join(pages_text)
 
 
-def render_pages_to_images(path, resolution=200) -> list:
-    """PNG bytes for every page, for OCR when there's no text layer."""
+def render_pages_to_images(path, resolution=200, max_long_edge=MAX_IMAGE_LONG_EDGE) -> list:
+    """PNG bytes for every page, for reading a scan that has no text layer.
+
+    ``max_long_edge`` exists for the API, which won't take a bigger image.
+    Pass None for local OCR: the shrink costs it the small print. On a real
+    A3 protocol, capping the page turned "30%" into text the extractor could
+    no longer recognise as a rate at all.
+    """
     images = []
     try:
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
                 buf = io.BytesIO()
                 rendered = page.to_image(resolution=resolution).original
-                _cap_long_edge(rendered).save(buf, format='PNG')
+                if max_long_edge is not None:
+                    rendered = _cap_long_edge(rendered, max_long_edge)
+                rendered.save(buf, format='PNG')
                 images.append(buf.getvalue())
     except Exception as e:
         raise PdfReadError(f"Cannot read {path}: {e}") from e

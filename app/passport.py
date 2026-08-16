@@ -3,12 +3,14 @@ import os
 import re
 from pathlib import Path
 
-from . import ai_extractor, contract_extractors, extractors, ocr, pdf_reader
+from . import ai_extractor, contract_extractors, extractors, ocr, pdf_reader, win_ocr
 from .document_reader import DocxContent, read_docx
 
-# OCR fallback (EasyOCR) is CPU-only in this environment and can take
-# several minutes per project, so it's opt-in: set OCR_FALLBACK_ENABLED=1
-# in the environment before starting the app to turn it back on.
+# The EasyOCR fallback is CPU-only in this environment and can take several
+# minutes per project, so it stays opt-in: set OCR_FALLBACK_ENABLED=1 in the
+# environment before starting the app to turn it back on. The Windows engine
+# needs no such protection — it reads a whole technical specification's worth
+# of pictures in under two seconds — so where it exists, it simply runs.
 OCR_FALLBACK_ENV_VAR = "OCR_FALLBACK_ENABLED"
 
 PASSPORT_FIELDS = [
@@ -61,18 +63,34 @@ AREA_TOKENS = {
 }
 
 
-def _ocr_lines(images):
+def _ocr_lines(engine, images):
     if not images:
         return []
     lines = []
-    for text in ocr.recognize_text(images):
+    for text in engine.recognize_text(images):
         lines.extend(text.splitlines())
     return lines
 
 
+def _passport_ocr_engine():
+    """Which engine reads the pictures inside the documents, if any.
+
+    Windows' own engine is fast enough that there is nothing to protect the
+    user from, so it runs whenever it's there. EasyOCR is not, and keeps the
+    opt-in it has always had: a project that would have taken a second now
+    taking several minutes is not something to spring on someone.
+    """
+    if win_ocr.available():
+        return win_ocr
+    if os.environ.get(OCR_FALLBACK_ENV_VAR) == "1":
+        return ocr
+    return None
+
+
 def _apply_ocr_fallback(data, dgp, tz):
     empty_ocr = DocxContent(paragraphs=[], tables=[])
-    if os.environ.get(OCR_FALLBACK_ENV_VAR) != "1":
+    engine = _passport_ocr_engine()
+    if engine is None:
         return [], empty_ocr, empty_ocr
 
     missing = [f for f in PASSPORT_FIELDS if f != "project_name" and data[f] is None]
@@ -82,8 +100,8 @@ def _apply_ocr_fallback(data, dgp, tz):
     needs_dgp_ocr = any(f in TEXT_FIELDS for f in missing)
     needs_tz_ocr = any(f == "building_class" or f in AREA_FIELDS for f in missing)
 
-    dgp_lines = _ocr_lines(dgp.images) if needs_dgp_ocr else []
-    tz_lines = _ocr_lines(tz.images) if needs_tz_ocr else []
+    dgp_lines = _ocr_lines(engine, dgp.images) if needs_dgp_ocr else []
+    tz_lines = _ocr_lines(engine, tz.images) if needs_tz_ocr else []
 
     ocr_dgp = DocxContent(paragraphs=dgp_lines, tables=[])
     ocr_tz = DocxContent(paragraphs=tz_lines, tables=[])
@@ -173,25 +191,84 @@ def vat_for_year(year_signed):
 # What to tell the user when a contract-terms upload fills nothing. Each
 # message names the action that fixes it — an empty card with no
 # explanation is indistinguishable from "the document had no such row".
+#
+# The three API messages are only ever reached once local OCR has also been
+# tried and come back with nothing, so each one says so: otherwise "задайте
+# ключ" would read as the only way forward, when in fact the offline path has
+# already been down and failed, and typing the four values in is quicker than
+# either.
 CONTRACT_PROBLEM_MESSAGES = {
     CONTRACT_PROBLEM_NOTHING_FOUND: (
         "Файл прочитан, но ни одно условие распознать не удалось. "
         "Впишите значения вручную."
     ),
     ai_extractor.PROBLEM_NO_KEY: (
-        "Это скан, а ключ API не настроен — без него распознавание сканов "
-        "не работает. Задайте переменную окружения ANTHROPIC_API_KEY и "
-        "перезапустите программу."
+        "Это скан. Ключ API не настроен, а встроенное распознавание ничего "
+        "не разобрало на странице. Впишите значения вручную — или задайте "
+        "переменную окружения ANTHROPIC_API_KEY и загрузите файл заново."
     ),
     ai_extractor.PROBLEM_NO_CREDIT: (
-        "Ключ API принят, но на счёте Anthropic нет средств. Пополните "
-        "баланс в разделе Plans & Billing и загрузите файл заново."
+        "Это скан. На счёте Anthropic нет средств, а встроенное распознавание "
+        "ничего не разобрало на странице. Впишите значения вручную — или "
+        "пополните баланс в разделе Plans & Billing и загрузите файл заново."
     ),
     ai_extractor.PROBLEM_API_ERROR: (
-        "Не удалось обратиться к распознаванию: проверьте подключение к сети "
-        "и попробуйте загрузить файл заново."
+        "Это скан. Обратиться к быстрому распознаванию не удалось, а "
+        "встроенное ничего не разобрало на странице. Впишите значения вручную "
+        "— или проверьте подключение к сети и загрузите файл заново."
     ),
 }
+
+
+def _terms_from_text(text):
+    """The four protocol conditions, read off whatever text we have — the
+    PDF's own text layer or a page put through OCR. The patterns were written
+    to cope with either."""
+    return {
+        "smr_term": contract_extractors.extract_smr_term(text),
+        "advance_payment": contract_extractors.extract_advance_payment(text),
+        "bank_guarantee": contract_extractors.extract_bank_guarantee(text),
+        "performance_bond_pct": contract_extractors.extract_performance_bond(text),
+    }
+
+
+def _local_ocr_engines():
+    """The OCR engines to try on a scan, fastest first.
+
+    Windows' own engine reads a protocol page in about a second; EasyOCR takes
+    minutes over the same page, so it only gets a turn if Windows can't help —
+    the package missing, or the Russian language pack not installed.
+    """
+    engines = [win_ocr] if win_ocr.available() else []
+    engines.append(ocr)
+    return engines
+
+
+def _terms_from_local_ocr(pdf_path, problem):
+    """Read a scanned protocol with the OCR on this machine, after the API has
+    already failed.
+
+    Renders its own pages rather than reusing the ones sent to the API: those
+    are capped to the size the API accepts, and on an A3 protocol the shrink
+    costs exactly the small print the rates are written in.
+
+    Runs without the OCR_FALLBACK_ENABLED opt-in that the passport fields
+    need: by the time this is reached the fast path is already gone, so the
+    choice isn't between a quick answer and a slow one but between a slow
+    answer and none at all.
+
+    Keeps the original problem code when OCR turns up nothing, so the page
+    still names the thing that actually needs fixing.
+    """
+    images = pdf_reader.render_pages_to_images(pdf_path, max_long_edge=None)
+    for engine in _local_ocr_engines():
+        text = "\n".join(engine.recognize_text(images))
+        if not text.strip():
+            continue
+        found = _terms_from_text(text)
+        if any(value is not None for value in found.values()):
+            return found, None
+    return {}, problem
 
 
 def build_contract_terms(pdf_path, year_signed=None) -> tuple:
@@ -202,9 +279,9 @@ def build_contract_terms(pdf_path, year_signed=None) -> tuple:
 
     Returns ``(data, filled, problem)``. Tries the PDF's own text layer
     first (instant, regex-based). If the page turns out to be a scan with no
-    text at all, asks Claude to read it directly as an image instead of
-    running local OCR — much faster on this CPU-only setup, and doesn't need
-    the OCR_FALLBACK_ENABLED opt-in since it isn't slow.
+    text at all, asks Claude to read it directly as an image — much faster on
+    this CPU-only setup than OCR, and it needs no opt-in since it isn't slow.
+    Only if that fails does local OCR get its turn, slowly and offline.
 
     ``problem`` is None when at least one field was filled; otherwise it's a
     code from ``CONTRACT_PROBLEM_MESSAGES`` saying why, so the page can
@@ -214,15 +291,12 @@ def build_contract_terms(pdf_path, year_signed=None) -> tuple:
     text = pdf_reader.read_pdf_text(pdf_path)
     problem = None
     if text.strip():
-        found = {
-            "smr_term": contract_extractors.extract_smr_term(text),
-            "advance_payment": contract_extractors.extract_advance_payment(text),
-            "bank_guarantee": contract_extractors.extract_bank_guarantee(text),
-            "performance_bond_pct": contract_extractors.extract_performance_bond(text),
-        }
+        found = _terms_from_text(text)
     else:
         images = pdf_reader.render_pages_to_images(pdf_path)
         found, problem = ai_extractor.extract_contract_terms_from_images(images)
+        if problem is not None:
+            found, problem = _terms_from_local_ocr(pdf_path, problem)
 
     data = {field: found.get(field) for field in CONTRACT_FIELDS}
 

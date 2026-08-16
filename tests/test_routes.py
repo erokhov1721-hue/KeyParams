@@ -916,7 +916,8 @@ def _stub_scan_returning(monkeypatch, fields, problem):
 
     monkeypatch.setattr(passport_module.pdf_reader, "read_pdf_text", lambda path: "")
     monkeypatch.setattr(
-        passport_module.pdf_reader, "render_pages_to_images", lambda path: [b"png"],
+        passport_module.pdf_reader, "render_pages_to_images",
+        lambda path, **kwargs: [b"png"],
     )
     monkeypatch.setattr(
         passport_module.ai_extractor, "extract_contract_terms_from_images",
