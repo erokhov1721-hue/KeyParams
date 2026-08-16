@@ -72,3 +72,58 @@ def test_smr_term_joins_the_row_with_the_line_before_it():
 
 def test_smr_term_is_none_when_the_row_is_absent():
     assert contract_extractors.extract_smr_term("Аванс, % 30%") is None
+
+
+# --- протокол, написанный пунктами, а не таблицей ---
+
+JOIS_CLAUSES = """- 24 мес. (2 года) — отделочные работы,
+благоустройство и озеленение.
+- Авансы до 20%
+1.4. Авансовый платеж, % от общей стоимости работ: - Выплата аванса производится на ОБС, без
+БГ.
+нет
+1.5. Банковская гарантия возврата авансового платежа: Банк-эмитент должен быть согласован с
+Управляющим проектом АО «МРГ»
+1.6 Банковская гарантия гарантийного срока 1,2%
+"""
+
+
+def test_advance_is_read_from_a_clause_with_the_figure_above_it():
+    # Not every protocol is a table: in a written-out one the value lands on
+    # the line above its own clause.
+    value = contract_extractors.extract_advance_payment(JOIS_CLAUSES)
+
+    assert "до 20%" in value
+    assert "на ОБС" in value
+
+
+def test_bank_guarantee_of_a_clause_reads_the_answer_above_it():
+    assert contract_extractors.extract_bank_guarantee(JOIS_CLAUSES) == "Не включено"
+
+
+def test_a_clause_worded_the_other_way_round_is_still_matched():
+    # "возврата авансового платежа" rather than "на возврат аванса".
+    text = "да\n1.5. Банковская гарантия возврата авансового платежа:"
+
+    assert contract_extractors.extract_bank_guarantee(text) == "Включено"
+
+
+def test_the_table_wording_still_wins_where_it_is_present():
+    # A protocol that has both must be read as the table it is.
+    text = (
+        "3 Аванс, % 30% максимальная сумма не закрытого аванса 20%\n"
+        "нет\n"
+        "1.4. Авансовый платеж, % от общей стоимости работ:\n"
+        "4 Банковская гарантия на возврат аванса Не включено\n"
+    )
+
+    assert contract_extractors.extract_advance_payment(text) == (
+        "30% максимальная сумма не закрытого аванса 20%"
+    )
+    assert contract_extractors.extract_bank_guarantee(text) == "Не включено"
+
+
+def test_a_clause_without_an_answer_above_it_stays_empty():
+    text = "1.5. Банковская гарантия возврата авансового платежа:"
+
+    assert contract_extractors.extract_bank_guarantee(text) is None
