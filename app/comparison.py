@@ -252,6 +252,154 @@ def build_section_table(slugs, passports, costs_by_slug, adjustments):
     }
 
 
+UNIT_MONEY = "money"
+UNIT_PER_SQM = "per_sqm"
+UNIT_AREA = "area"
+
+# What the two cards put side by side. Money is corrected for VAT and
+# inflation like everything else on the page; areas are not — a square metre
+# in 2020 is a square metre in 2026.
+PAIR_METRICS = [
+    ("contract_price", "Цена работ по договору", UNIT_MONEY),
+    ("contract_per_sqm", "Цена работ на 1 м²", UNIT_PER_SQM),
+    ("total_area", "Общая площадь комплекса", UNIT_AREA),
+    ("underground_area", "Площадь подземной части", UNIT_AREA),
+    ("aboveground_area", "Площадь надземной части", UNIT_AREA),
+    ("estimate_total", "Итого СМР по смете", UNIT_MONEY),
+    ("estimate_per_sqm", "Итого СМР на 1 м²", UNIT_PER_SQM),
+]
+
+
+def _format_metric(value, unit):
+    if value is None:
+        return "—"
+    if unit == UNIT_MONEY:
+        return f"{format_number(round(value / 1_000_000))} млн ₽"
+    if unit == UNIT_PER_SQM:
+        return f"{format_number(round(value))} ₽/м²"
+    # Whole square metres: a tenth of a metre on a building of a hundred
+    # thousand is noise, and "131 940.40 м²" reads worse than the figure is
+    # worth.
+    return f"{format_number(round(value))} м²"
+
+
+def _signed(value, unit):
+    if value is None:
+        return ""
+    sign = "+" if value > 0 else "−" if value < 0 else ""
+    return f"{sign}{_format_metric(abs(value), unit)}"
+
+
+def _metric_values(passport, costs, factor):
+    """Every figure the cards can show, for one project."""
+    area = passport.get("total_area_sqm") or None
+    price = passport.get("contract_price_rub")
+    price = price * factor if price is not None else None
+    estimate = sum(costs.values()) * factor if costs else None
+    return {
+        "contract_price": price,
+        "contract_per_sqm": price / area if price is not None and area else None,
+        "total_area": area,
+        "underground_area": passport.get("underground_area_sqm"),
+        "aboveground_area": passport.get("aboveground_area_sqm"),
+        "estimate_total": estimate,
+        "estimate_per_sqm": estimate / area if estimate is not None and area else None,
+    }
+
+
+def build_pair_cards(left, right, passports, costs_by_slug, adjustments):
+    """Two objects head to head, or None when there aren't two to compare.
+
+    The difference is read left to right — how the right-hand object stands
+    against the left-hand one — because that is the order they are chosen in.
+    Money is coloured (dearer is red), area is not: a bigger building is
+    neither better nor worse.
+    """
+    if not left or not right or left == right:
+        return None
+    if left not in passports or right not in passports:
+        return None
+
+    costs_by_slug = costs_by_slug or {}
+    sides = []
+    for slug in (left, right):
+        passport = passports[slug]
+        factor, notes = project_factor(
+            _source_vat(passport), passport.get("year_signed"), adjustments,
+        )
+        costs = costs_by_slug.get(slug) or {}
+        sides.append({
+            "slug": slug,
+            "name": passport.get("project_name") or slug,
+            "notes": notes,
+            "values": _metric_values(passport, costs, factor),
+            "costs": {key: value * factor for key, value in costs.items()},
+            "area": passport.get("total_area_sqm") or None,
+        })
+
+    metrics = []
+    for key, label, unit in PAIR_METRICS:
+        a, b = sides[0]["values"][key], sides[1]["values"][key]
+        metrics.append({
+            "label": label,
+            "unit": unit,
+            "left": _format_metric(a, unit),
+            "right": _format_metric(b, unit),
+            "delta_display": _percent_change(a, b),
+            "diff_display": _signed(b - a, unit) if a is not None and b is not None else "",
+            "dearer": None if a is None or b is None or unit == UNIT_AREA else b > a,
+        })
+
+    return {
+        "left": sides[0],
+        "right": sides[1],
+        "metrics": metrics,
+        "sections": _section_deltas(sides),
+    }
+
+
+def _percent_change(before, after):
+    if before is None or after is None or not before:
+        return ""
+    change = after / before - 1.0
+    return f"{change * 100:+.1f} %".replace("-", "−").replace(".", ",")
+
+
+def _section_deltas(sides):
+    """Where the right-hand object's money goes that the left-hand one's does
+    not, section by section, biggest difference first.
+
+    Compared per square metre wherever both objects have an area — two
+    buildings of different size have little to say to each other in roubles.
+    """
+    per_sqm = bool(sides[0]["area"] and sides[1]["area"])
+
+    rows = []
+    for key in estimate_sections.CATEGORY_KEYS:
+        values = []
+        for side in sides:
+            value = side["costs"].get(key)
+            if value is not None and per_sqm:
+                value = value / side["area"]
+            values.append(value)
+        if values[0] is None and values[1] is None:
+            continue
+        difference = (values[1] or 0.0) - (values[0] or 0.0)
+        rows.append({
+            "key": key,
+            "label": estimate_sections.CATEGORY_LABELS[key],
+            "difference": difference,
+            "display": _signed(difference, UNIT_PER_SQM if per_sqm else UNIT_MONEY),
+            "dearer": difference > 0,
+        })
+
+    peak = max((abs(row["difference"]) for row in rows), default=0.0)
+    for row in rows:
+        row["width_pct"] = round(abs(row["difference"]) / peak * 100, 1) if peak else 0
+    rows.sort(key=lambda row: abs(row["difference"]), reverse=True)
+    return rows
+
+
 def _add_weights(rows, columns):
     """The bar beside each section, scaled against the priciest section shown.
 

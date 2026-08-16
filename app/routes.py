@@ -111,8 +111,13 @@ def compare_projects():
         for slug in slugs
     }
     adjustments = comparison.adjustments_from_args(request.args)
+    costs = _section_costs(root, slugs)
+    left, right = _pair_choice(slugs)
     return render_template(
         "compare.html",
+        pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
+        pair_left=left,
+        pair_right=right,
         slugs=slugs,
         passports=passports,
         fields=passport_module.PASSPORT_FIELDS,
@@ -121,11 +126,25 @@ def compare_projects():
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
-        sections=comparison.build_section_table(
-            slugs, passports, _section_costs(root, slugs), adjustments,
-        ),
+        sections=comparison.build_section_table(slugs, passports, costs, adjustments),
         adjustments=adjustments,
     )
+
+
+def _pair_choice(slugs):
+    """Which two projects the cards put head to head.
+
+    Whatever was picked in the two selectors, as long as both are among the
+    projects on the page; otherwise the first two, so the cards are there to
+    look at without having to choose first.
+    """
+    chosen = [request.args.get("left"), request.args.get("right")]
+    left, right = (slug if slug in slugs else None for slug in chosen)
+    if left is None:
+        left = slugs[0] if slugs else None
+    if right is None:
+        right = next((slug for slug in slugs if slug != left), None)
+    return left, right
 
 
 def _section_costs(root, slugs):

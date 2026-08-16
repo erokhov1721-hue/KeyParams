@@ -1386,3 +1386,51 @@ def test_section_table_marks_a_project_whose_year_is_unknown(tmp_path):
     ).get_data(as_text=True)
 
     assert "без поправки на инфляцию" in body
+
+
+def test_compare_page_shows_the_pair_cards(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "Левый", [("6. Фасадные работы", 1_000_000_000.0)],
+        contract_price_rub=1_000_000_000.0,
+    )
+    b = _project_with_offer(
+        tmp_path, "Правый", [("6. Фасадные работы", 2_000_000_000.0)],
+        contract_price_rub=2_000_000_000.0,
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert "Сравнение двух объектов" in body
+    assert "Цена работ по договору" in body
+    assert "1 000 млн ₽" in body
+    assert "2 000 млн ₽" in body
+    assert "+100,0 %" in body
+    assert "Дельта по разделам" in body
+
+
+def test_the_pair_can_be_chosen_from_the_page(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slugs = [
+        _project_with_offer(tmp_path, f"П{i}", [("6. Фасадные работы", i * 1_000_000_000.0)],
+                            contract_price_rub=i * 1_000_000_000.0)
+        for i in (1, 2, 3)
+    ]
+    query = "&".join(f"slug={slug}" for slug in slugs)
+
+    body = client.get(f"/compare?{query}&left={slugs[0]}&right={slugs[2]}").get_data(as_text=True)
+
+    assert "3 000 млн ₽" in body
+    assert "+200,0 %" in body
+
+
+def test_one_project_alone_gets_no_pair_cards(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Один", [("6. Фасадные работы", 1.0)])
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Сравнение двух объектов" not in body

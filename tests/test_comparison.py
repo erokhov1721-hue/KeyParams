@@ -267,3 +267,131 @@ def test_the_vat_rate_comes_from_the_signing_year_when_the_passport_has_none():
     facade = next(row for row in table["rows"] if row["key"] == "facade")
     assert round(facade["cells"][0]["value"], 2) == round(1200.0 * 122 / 120, 2)
     assert table["columns"][0]["notes"] == []
+
+
+# --- карточки двух объектов ---
+
+def _pair(left_fields=None, right_fields=None, left_costs=None, right_costs=None,
+          adjustments=NONE):
+    passports = {
+        "a": _passport("Левый", **(left_fields or {})),
+        "b": _passport("Правый", **(right_fields or {})),
+    }
+    costs = {"a": left_costs or {}, "b": right_costs or {}}
+    return comparison.build_pair_cards("a", "b", passports, costs, adjustments)
+
+
+def _metric(cards, label):
+    return next(m for m in cards["metrics"] if m["label"].startswith(label))
+
+
+def test_the_cards_put_the_two_objects_side_by_side():
+    cards = _pair(
+        left_fields={"contract_price_rub": 1_000_000_000.0, "total_area_sqm": 10_000.0},
+        right_fields={"contract_price_rub": 2_000_000_000.0, "total_area_sqm": 10_000.0},
+    )
+
+    price = _metric(cards, "Цена работ по договору")
+    assert price["left"] == "1 000 млн ₽"
+    assert price["right"] == "2 000 млн ₽"
+    assert price["delta_display"] == "+100,0 %"
+    assert price["diff_display"] == "+1 000 млн ₽"
+    assert price["dearer"] is True
+
+
+def test_a_cheaper_object_on_the_right_reads_as_better():
+    cards = _pair(
+        left_fields={"contract_price_rub": 2_000_000_000.0},
+        right_fields={"contract_price_rub": 1_000_000_000.0},
+    )
+
+    assert _metric(cards, "Цена работ по договору")["dearer"] is False
+
+
+def test_area_is_compared_without_being_called_better_or_worse():
+    # A bigger building is neither.
+    cards = _pair(
+        left_fields={"total_area_sqm": 10_000.0},
+        right_fields={"total_area_sqm": 20_000.0},
+    )
+
+    area = _metric(cards, "Общая площадь")
+    assert area["left"] == "10 000 м²"
+    assert area["delta_display"] == "+100,0 %"
+    assert area["dearer"] is None
+
+
+def test_the_estimate_total_is_a_card_of_its_own():
+    cards = _pair(
+        left_fields={"total_area_sqm": 1_000.0},
+        right_fields={"total_area_sqm": 1_000.0},
+        left_costs={"facade": 100_000_000.0},
+        right_costs={"facade": 150_000_000.0},
+    )
+
+    assert _metric(cards, "Итого СМР по смете")["right"] == "150 млн ₽"
+    assert _metric(cards, "Итого СМР на 1 м²")["right"] == "150 000 ₽/м²"
+
+
+def test_a_figure_neither_object_has_is_shown_as_a_dash():
+    cards = _pair()
+
+    price = _metric(cards, "Цена работ по договору")
+    assert price["left"] == "—"
+    assert price["delta_display"] == ""
+    assert price["diff_display"] == ""
+
+
+def test_corrections_reach_the_cards_but_not_the_areas():
+    cards = _pair(
+        left_fields={"contract_price_rub": 1_000_000_000.0, "total_area_sqm": 10_000.0,
+                     "year_signed": "2024"},
+        right_fields={"contract_price_rub": 1_000_000_000.0, "total_area_sqm": 10_000.0,
+                      "year_signed": "2026"},
+        adjustments=INFLATION_10,
+    )
+
+    # The left-hand contract is two years older, so carrying both to 2026
+    # makes it the dearer of the two.
+    assert _metric(cards, "Цена работ по договору")["dearer"] is False
+    # The areas are equal and stay equal: a square metre of 2024 is a square
+    # metre of 2026, whatever the money did in between.
+    assert _metric(cards, "Общая площадь")["delta_display"] == "+0,0 %"
+
+
+def test_the_section_deltas_are_sorted_by_size():
+    cards = _pair(
+        left_fields={"total_area_sqm": 1_000.0},
+        right_fields={"total_area_sqm": 1_000.0},
+        left_costs={"facade": 100_000.0, "roof": 50_000.0},
+        right_costs={"facade": 300_000.0, "roof": 40_000.0},
+    )
+
+    keys = [row["key"] for row in cards["sections"]]
+    assert keys[0] == "facade"
+    facade = cards["sections"][0]
+    assert facade["dearer"] is True
+    assert facade["display"] == "+200 ₽/м²"
+    assert facade["width_pct"] == 100.0
+    roof = next(row for row in cards["sections"] if row["key"] == "roof")
+    assert roof["dearer"] is False
+    assert roof["width_pct"] == 5.0
+
+
+def test_sections_are_compared_in_roubles_when_an_area_is_missing():
+    cards = _pair(
+        left_fields={"total_area_sqm": None},
+        right_fields={"total_area_sqm": 1_000.0},
+        left_costs={"facade": 100_000_000.0},
+        right_costs={"facade": 300_000_000.0},
+    )
+
+    assert cards["sections"][0]["display"] == "+200 млн ₽"
+
+
+def test_there_are_no_cards_without_two_different_objects():
+    passports = {"a": _passport("Один")}
+
+    assert comparison.build_pair_cards("a", "a", passports, {}, NONE) is None
+    assert comparison.build_pair_cards("a", None, passports, {}, NONE) is None
+    assert comparison.build_pair_cards("a", "нет-такого", passports, {}, NONE) is None

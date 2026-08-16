@@ -1429,3 +1429,183 @@ select option {
   color: var(--amber);
   white-space: normal;
 }
+
+/* --- Карточки сравнения двух объектов --- */
+
+.pair-card {
+  margin-bottom: 22px;
+}
+
+.pair-form {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.pair-form select {
+  flex: 1 1 200px;
+  min-width: 160px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.pair-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pair-arrow {
+  color: var(--text-500);
+  font-size: 18px;
+  flex: 0 0 auto;
+}
+
+.pair-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pair-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.pair-label {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-500);
+}
+
+.pair-side,
+.pair-delta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pair-delta {
+  align-items: center;
+  background: var(--bg-700);
+}
+
+.pair-delta.is-worse {
+  background: var(--red-dim);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.pair-delta.is-better {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pair-delta-abs {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.pair-subtitle {
+  margin: 26px 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-100);
+}
+
+.pair-subtitle .sections-sub {
+  display: inline;
+  margin-left: 8px;
+  font-weight: 400;
+  text-transform: lowercase;
+}
+
+.delta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.delta-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) minmax(180px, 2fr) 120px;
+  align-items: center;
+  gap: 12px;
+}
+
+.delta-label {
+  font-size: 13px;
+  color: var(--text-100);
+}
+
+.delta-track {
+  display: flex;
+  height: 10px;
+}
+
+.delta-half {
+  flex: 1;
+  display: flex;
+  height: 100%;
+  background: var(--bg-700);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.delta-half:first-child {
+  justify-content: flex-end;
+  margin-right: 2px;
+}
+
+.delta-half:last-child {
+  margin-left: 2px;
+}
+
+.delta-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.delta-fill.is-worse {
+  background: var(--red);
+}
+
+.delta-fill.is-better {
+  background: var(--accent);
+}
+
+.delta-value {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.delta-value.is-worse {
+  color: var(--red);
+}
+
+.delta-value.is-better {
+  color: var(--accent);
+}
