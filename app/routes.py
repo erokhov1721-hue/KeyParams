@@ -9,7 +9,7 @@ from flask import (
 
 from . import (
     comparison, estimate, excel_report, extractors, passport as passport_module,
-    pdf_export, storage,
+    pdf_export, project_filter, storage,
 )
 from .document_reader import DocxReadError
 
@@ -34,8 +34,8 @@ def _selected_compare_slugs(root):
     ))
 
 
-def _project_name(root, slug):
-    """The project's own name, falling back to its folder name.
+def _safe_passport(root, slug):
+    """The project's passport, or an empty one if the file can't be read.
 
     A passport that can't be parsed falls back rather than raising: this runs
     from the sidebar context processor, so one corrupted file would otherwise
@@ -43,10 +43,14 @@ def _project_name(root, slug):
     the problem or delete the project.
     """
     try:
-        data = passport_module.load_passport(storage.passport_path(root, slug))
+        return passport_module.load_passport(storage.passport_path(root, slug))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return slug
-    return data.get("project_name") or slug
+        return {}
+
+
+def _project_name(root, slug):
+    """The project's own name, falling back to its folder name."""
+    return _safe_passport(root, slug).get("project_name") or slug
 
 
 def _project_names(root, slugs):
@@ -95,8 +99,18 @@ def index():
     # so it's the one place a retry is guaranteed to get its chance.
     storage.purge_deleted(root)
     slugs = storage.list_project_slugs(root)
-    project_names = _project_names(root, slugs)
-    return render_template("index.html", slugs=slugs, project_names=project_names)
+    passports = {slug: _safe_passport(root, slug) for slug in slugs}
+    filters = project_filter.build(passports, request.args)
+    return render_template(
+        "index.html",
+        slugs=filters["slugs"],
+        project_names={
+            slug: passport.get("project_name") or slug
+            for slug, passport in passports.items()
+        },
+        filters=filters,
+        has_projects=bool(slugs),
+    )
 
 
 @bp.route("/compare", methods=["GET"])

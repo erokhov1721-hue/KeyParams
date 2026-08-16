@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block main_extra_class %}container-wide{% endblock %}
 {% block header_actions %}
 <a class="btn btn-secondary" href="{{ url_for('main.compare_projects_pdf', slug=slugs) }}" download>Сохранить в PDF</a>
 <a class="btn btn-secondary" href="{{ url_for('excel_report.excel_report_download', slug=slugs) }}" download>Выгрузить в Excel</a>
@@ -157,7 +158,7 @@
       <tbody>
         {% for row in sections.rows %}
         <tr>
-          <td class="sections-label-col">{{ row.label }}</td>
+          <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}</span></td>
           <td class="sections-weight-col">
             <div class="sections-weight"><div class="sections-weight-fill" style="width: {{ row.width_pct }}%"></div></div>
           </td>

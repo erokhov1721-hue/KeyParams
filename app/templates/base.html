@@ -22,6 +22,10 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
+      <a class="sidebar-logo" href="{{ url_for('main.index') }}" aria-label="На главную">
+        <img src="{{ url_for('static', filename='mr-logo.png') }}" alt="MR"
+             width="49" height="32">
+      </a>
       <a class="sidebar-top" href="{{ url_for('main.index') }}">
         <span class="brand-mark">ПО</span>
         <span class="brand-text">Паспорта объектов</span>
