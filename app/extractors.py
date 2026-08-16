@@ -7,8 +7,27 @@ GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\
 # street name + plot number are wanted, e.g. "г. Москва, ул. Верейская 29/35".
 ADDRESS_ANCHOR_RE = re.compile(r'расположенн\w*\s+по\s+адресу\s*:?', re.IGNORECASE)
 ADDRESS_CITY_RE = re.compile(r'\bг\.?\s*([А-ЯЁ][а-яё]+)')
+# The kinds of thoroughfare that turn up in these contracts, abbreviated and
+# spelled out. Only "ул." was recognised until a contract came through for an
+# object on проспект Мира: the name never matched, so the whole address came
+# back empty even though the city and the street were both plainly there.
+ADDRESS_STREET_TYPES = (
+    r'ул|улица|пр-?кт|просп|проспект|пр-?д|проезд|пер|переулок|ш|шоссе|'
+    r'наб|набережная|б-?р|бульвар|пл|площадь|туп|тупик|аллея|линия'
+)
 ADDRESS_STREET_RE = re.compile(
-    r'\bул\.?\s*([^,()]+?)\s*,\s*[^,()\d]*?(\d+[А-Яа-я]?(?:/\d+)?)', re.IGNORECASE,
+    rf'\b(({ADDRESS_STREET_TYPES})\.?)\s+([^,()\n]+)', re.IGNORECASE,
+)
+# The house or plot number, and only when it comes directly after the street
+# name. Anchored rather than searched: the same sentence usually ends with a
+# cadastral number ("кадастровый номер земельного участка 77:02:0019010:7241"),
+# and a free search would happily report its first digits as the house number.
+# An address with no number at all is normal — the plot is then identified by
+# that cadastral number instead — so a missing number is not a failure.
+ADDRESS_PLOT_RE = re.compile(
+    r'^\s*,\s*(?:вл|влд|влад|владение|д|дом|уч|участок|стр|строение)?\.?\s*'
+    r'(\d+[А-Яа-я]?(?:/\d+)?)\b',
+    re.IGNORECASE,
 )
 PREAMBLE_CITY_RE = re.compile(r'^г\.?\s*Москва\s*$', re.IGNORECASE)
 FULL_DATE_RE = re.compile(r'\b\d{2}\.\d{2}\.(20\d{2})\b')
@@ -90,9 +109,13 @@ def extract_address(dgp):
         return None
 
     city = city_match.group(1)
-    street = street_match.group(1).strip()
-    plot_number = street_match.group(2)
-    return f"г. {city}, ул. {street} {plot_number}"
+    street_type = street_match.group(1)
+    # Trailing punctuation belongs to the sentence, not to the street name.
+    street_name = street_match.group(3).strip(' .;')
+    address = f"г. {city}, {street_type} {street_name}"
+
+    plot_match = ADDRESS_PLOT_RE.match(window[street_match.end():])
+    return f"{address} {plot_match.group(1)}" if plot_match else address
 
 
 def extract_contract_price(dgp):

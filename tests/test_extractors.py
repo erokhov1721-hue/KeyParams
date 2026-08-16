@@ -41,6 +41,58 @@ def test_extract_general_contractor_not_found():
     assert extractors.extract_general_contractor(dgp) is None
 
 
+# --- extract_address (synthetic) ---
+
+def _dgp_with_address(line):
+    return DocxContent(paragraphs=[line], tables=[])
+
+
+def test_extract_address_street_with_plot_number():
+    dgp = _dgp_with_address(
+        "Объект, расположенный по адресу: г. Москва, ул. Верейская, вл. 29/35."
+    )
+    assert extractors.extract_address(dgp) == "г. Москва, ул. Верейская 29/35"
+
+
+def test_extract_address_prospekt_without_a_plot_number():
+    # The real "Проспект Мира" contract: the thoroughfare is a проспект, not a
+    # улица, and the plot is identified by its cadastral number rather than by
+    # a house number.
+    dgp = _dgp_with_address(
+        "Объект, расположенный по адресу: г. Москва, вн. тер. г. муниципальный "
+        "округ Алексеевский, пр-кт Мира, кадастровый номер земельного участка "
+        "77:02:0019010:7241."
+    )
+    assert extractors.extract_address(dgp) == "г. Москва, пр-кт Мира"
+
+
+def test_extract_address_does_not_take_a_cadastral_number_as_the_house_number():
+    dgp = _dgp_with_address(
+        "Объект, расположенный по адресу: г. Москва, ул. Тестовая, "
+        "кадастровый номер земельного участка 77:02:0019010:7241."
+    )
+    assert extractors.extract_address(dgp) == "г. Москва, ул. Тестовая"
+
+
+def test_extract_address_other_thoroughfare_types():
+    for line, expected in [
+        ("расположенный по адресу: г. Москва, шоссе Энтузиастов, д. 5.",
+         "г. Москва, шоссе Энтузиастов 5"),
+        ("расположенный по адресу: г. Химки, наб. Академика Туполева, влд. 15.",
+         "г. Химки, наб. Академика Туполева 15"),
+        ("расположенный по адресу: г. Москва, пер. Кривоколенный.",
+         "г. Москва, пер. Кривоколенный"),
+    ]:
+        assert extractors.extract_address(_dgp_with_address(line)) == expected, line
+
+
+def test_extract_address_not_found_without_a_thoroughfare():
+    dgp = _dgp_with_address(
+        "Объект, расположенный по адресу: г. Москва, кадастровый номер 77:02:1."
+    )
+    assert extractors.extract_address(dgp) is None
+
+
 # --- extract_contract_price (synthetic) ---
 
 def test_extract_contract_price_found():
