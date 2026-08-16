@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block header_actions %}
 <a class="btn btn-secondary" href="{{ url_for('main.compare_projects_pdf', slug=slugs) }}" download>Сохранить в PDF</a>
+<a class="btn btn-secondary" href="{{ url_for('excel_report.excel_report_download', slug=slugs) }}" download>Выгрузить в Excel</a>
 {% endblock %}
 {% block content %}
 <div class="page-head">

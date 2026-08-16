@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
+    <h1>Выгрузка в Excel</h1>
+  </div>
+</div>
+
+<div class="card">
+  <div class="alert alert-error">{{ message }}</div>
+</div>
+{% endblock %}

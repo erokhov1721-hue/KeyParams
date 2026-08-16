@@ -2,6 +2,11 @@
 {% block header_actions %}
 {% if slugs %}
 <button type="submit" form="compare-form" class="btn btn-secondary">Сравнить проекты</button>
+{# Same form, different destination: the Excel export takes exactly the ticked
+   projects, and the download leaves the list page where it is. #}
+<button type="submit" form="compare-form"
+        formaction="{{ url_for('excel_report.excel_report_download') }}"
+        class="btn btn-secondary">Выгрузить в Excel</button>
 {% endif %}
 {% endblock %}
 {% block content %}
