@@ -1,5 +1,5 @@
 from app import ai_extractor, ocr, passport
-from tests.helpers import document_xml, make_docx
+from tests.helpers import document_xml, make_docx, words_from_text
 
 
 def test_passport_fields_order():
@@ -520,7 +520,10 @@ def _stub_pdf(monkeypatch, text, images=(), ocr_texts=()):
     # here so these tests read the same on a machine that has it and one that
     # doesn't; the ordering between the two engines is tested on its own.
     monkeypatch.setattr(passport.win_ocr, "available", lambda: False)
-    monkeypatch.setattr(passport.ocr, "recognize_text", lambda images: list(ocr_texts))
+    monkeypatch.setattr(
+        passport.ocr, "recognize_page_words",
+        lambda image: words_from_text("\n".join(ocr_texts)),
+    )
 
 
 def test_build_contract_terms_text_layer_fills_fields_with_no_problem(monkeypatch):
@@ -648,9 +651,13 @@ def test_build_contract_terms_prefers_the_windows_engine_over_easyocr(monkeypatc
     _stub_pdf(monkeypatch, "", images=[b"png"])
     slow_calls = []
     monkeypatch.setattr(passport.win_ocr, "available", lambda: True)
-    monkeypatch.setattr(passport.win_ocr, "recognize_text", lambda images: [_PROTOCOL_TEXT])
     monkeypatch.setattr(
-        passport.ocr, "recognize_text", lambda images: slow_calls.append(images) or [],
+        passport.win_ocr, "recognize_page_words",
+        lambda image: words_from_text(_PROTOCOL_TEXT),
+    )
+    monkeypatch.setattr(
+        passport.ocr, "recognize_page_words",
+        lambda image: slow_calls.append(image) or [],
     )
     monkeypatch.setattr(
         passport.ai_extractor, "extract_contract_terms_from_images",
@@ -667,8 +674,11 @@ def test_build_contract_terms_prefers_the_windows_engine_over_easyocr(monkeypatc
 def test_build_contract_terms_falls_back_to_easyocr_when_windows_reads_nothing(monkeypatch):
     _stub_pdf(monkeypatch, "", images=[b"png"])
     monkeypatch.setattr(passport.win_ocr, "available", lambda: True)
-    monkeypatch.setattr(passport.win_ocr, "recognize_text", lambda images: [""])
-    monkeypatch.setattr(passport.ocr, "recognize_text", lambda images: [_PROTOCOL_TEXT])
+    monkeypatch.setattr(passport.win_ocr, "recognize_page_words", lambda image: [])
+    monkeypatch.setattr(
+        passport.ocr, "recognize_page_words",
+        lambda image: words_from_text(_PROTOCOL_TEXT),
+    )
     monkeypatch.setattr(
         passport.ai_extractor, "extract_contract_terms_from_images",
         lambda images: ({}, passport.ai_extractor.PROBLEM_NO_CREDIT),

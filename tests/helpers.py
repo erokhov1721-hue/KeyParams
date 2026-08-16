@@ -83,3 +83,25 @@ def make_docx(tmp_path, doc_xml, filename="test.docx", extra_files=None):
     path = tmp_path / filename
     path.write_bytes(build_docx_bytes(doc_xml, extra_files=extra_files))
     return path
+
+
+def words_from_text(text, height=20, line_step=40):
+    """Positioned words, the way an OCR engine hands a page over.
+
+    One line of text becomes one row of words laid left to right, so a test
+    can write what the page says and let the code reassemble it exactly as it
+    would a real recognition result.
+    """
+    from app.ocr_lines import Word
+
+    words = []
+    for index, line in enumerate(str(text).splitlines()):
+        cursor = 10
+        for token in line.split():
+            width = max(len(token), 1) * 10
+            words.append(Word(
+                y=index * line_step, x0=cursor, x1=cursor + width,
+                height=height, text=token,
+            ))
+            cursor += width + 10
+    return words

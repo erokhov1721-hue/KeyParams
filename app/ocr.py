@@ -1,6 +1,6 @@
 import easyocr
 
-from .ocr_lines import group_into_lines
+from .ocr_lines import Word, group_into_lines
 
 _READER = None
 
@@ -12,11 +12,17 @@ def _get_reader():
     return _READER
 
 
-def _line_key(detection):
+def _word(detection):
     bbox, text, confidence = detection
     ys = [point[1] for point in bbox]
     xs = [point[0] for point in bbox]
-    return sum(ys) / len(ys), min(xs), max(ys) - min(ys)
+    return Word(
+        y=sum(ys) / len(ys),
+        x0=min(xs),
+        x1=max(xs),
+        height=max(ys) - min(ys),
+        text=text,
+    )
 
 
 def _group_into_lines(detections):
@@ -27,7 +33,21 @@ def _group_into_lines(detections):
     as two or three separate detections, which is what
     ``ocr_lines.group_into_lines`` exists to put back together.
     """
-    return group_into_lines((*_line_key(det), det[1]) for det in detections)
+    return group_into_lines(_word(det) for det in detections)
+
+
+def recognize_page_words(data: bytes) -> list:
+    """Positioned words for one page image. Empty if the page can't be read.
+
+    The counterpart of ``win_ocr.recognize_page_words``, so that whatever
+    needs to know where a word sits — telling one column of a protocol from
+    another — works the same whichever engine read the page.
+    """
+    try:
+        detections = _get_reader().readtext(data)
+    except Exception:
+        return []
+    return [_word(det) for det in detections]
 
 
 def recognize_text(images: list) -> list:

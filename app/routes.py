@@ -259,7 +259,7 @@ def create_project():
         dest = storage.contract_terms_path(root, slug)
         contract_terms_file.save(dest)
         extracted, filled, problem = passport_module.build_contract_terms(
-            dest, year_signed=data.get("year_signed"),
+            dest, year_signed=data.get("year_signed"), project_name=project_name,
         )
         data.update(extracted)
         data["contract_auto_fields"] = filled
@@ -353,7 +353,7 @@ def upload_contract_terms(slug):
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
     extracted, filled, problem = passport_module.build_contract_terms(
-        dest, year_signed=data.get("year_signed"),
+        dest, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
     )
     data.update(extracted)
     data["contract_auto_fields"] = filled

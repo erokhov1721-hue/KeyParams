@@ -11,34 +11,42 @@ dependencies: importing ``ocr`` costs a PyTorch load, which is not something
 the Windows engine should have to pay for.
 """
 
-# How far apart two fragments' vertical centres may sit and still count as
-# the same line, as a share of the taller one's height.
+from collections import namedtuple
+
+# A recognised word and where it sits on the page. The right edge is carried
+# as well as the left because a protocol covering two objects puts their
+# figures in two columns, and telling those apart is a question of horizontal
+# position and nothing else.
+Word = namedtuple("Word", "y x0 x1 height text")
+
+# How far apart two words' vertical centres may sit and still count as the
+# same line, as a share of the taller one's height.
 LINE_TOLERANCE = 0.6
 
 
-def group_into_lines(items) -> list:
-    """Visual lines from ``(y_center, x_left, height, text)`` fragments.
+def group_into_lines(words) -> list:
+    """Visual lines from positioned words.
 
-    Fragments are read in vertical order and cut into a new line whenever the
-    gap to the previous one exceeds the tolerance; within a line they are put
-    back in left-to-right order, which is what reunites a table row's label
-    with the value sitting in the column beside it.
+    Words are read in vertical order and cut into a new line whenever the gap
+    to the previous one exceeds the tolerance; within a line they are put back
+    in left-to-right order, which is what reunites a table row's label with
+    the value sitting in the column beside it.
     """
-    ordered = sorted(items, key=lambda item: item[0])
+    ordered = sorted(words, key=lambda word: word.y)
 
     lines = []
     current = []
     current_y = None
-    for y_center, x_left, height, text in ordered:
-        if current and abs(y_center - current_y) > max(height, 1) * LINE_TOLERANCE:
+    for word in ordered:
+        if current and abs(word.y - current_y) > max(word.height, 1) * LINE_TOLERANCE:
             lines.append(current)
             current = []
-        current.append((x_left, text))
-        current_y = y_center
+        current.append(word)
+        current_y = word.y
     if current:
         lines.append(current)
 
     return [
-        ' '.join(text for _, text in sorted(line, key=lambda item: item[0]))
+        ' '.join(word.text for word in sorted(line, key=lambda word: word.x0))
         for line in lines
     ]
