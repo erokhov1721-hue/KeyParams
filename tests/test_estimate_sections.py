@@ -216,3 +216,134 @@ def test_an_unreadable_file_is_reported_rather_than_crashing(tmp_path):
         pass
     else:
         raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")
+
+
+# --- смета, написанная уровнями («укрупнённая смета») ---
+
+def _levels_estimate(rows, *, header_row=3):
+    """A workbook shaped like the other kind of estimate: a column pair per
+    level of nesting instead of one column of section numbers.
+
+    ``rows`` are ``(level, number, name, total)`` with level 1, 2 or 3.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=5, value="Приложение № 2 к Договору")
+    ws.cell(row=header_row, column=2, value="номер 1")
+    ws.cell(row=header_row, column=3, value="уровень 1")
+    ws.cell(row=header_row, column=4, value="номер 2")
+    ws.cell(row=header_row, column=5, value="уровень 2")
+    ws.cell(row=header_row, column=6, value="номер 3")
+    ws.cell(row=header_row, column=7, value="уровень 3")
+    ws.cell(row=header_row, column=8, value="Ед. изм.")
+    ws.cell(row=header_row, column=13, value="Всего, \nруб. \nс учетом НДС")
+
+    for offset, (level, number, name, total) in enumerate(rows):
+        row = header_row + 1 + offset
+        number_col = {1: 2, 2: 4, 3: 6}[level]
+        ws.cell(row=row, column=number_col, value=number)
+        ws.cell(row=row, column=number_col + 1, value=name)
+        if total is not None:
+            ws.cell(row=row, column=13, value=total)
+    return wb
+
+
+def test_a_levels_estimate_sums_the_parts_of_each_section(tmp_path):
+    # A section's own cell is empty and the money sits underneath it.
+    path = _save(_levels_estimate([
+        (1, 1, "Подготовительные работы, содержание площадки", None),
+        (2, "1.1.", "Мобилизация площадки", 100.0),
+        (2, "1.2.", "Содержание площадки", 200.0),
+        (1, 2, "Котлован", None),
+        (2, "2.1.", "Разработка грунта", 50.0),
+    ]), tmp_path, "levels.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": 300.0, "excavation": 50.0}
+
+
+def test_a_levels_estimate_goes_a_level_deeper_when_it_has_to(tmp_path):
+    # The sub-section is empty in its turn and its parts carry the money;
+    # counting both would double the section.
+    path = _save(_levels_estimate([
+        (1, 4, "Конструктивные решения", None),
+        (2, "4.1.", "Подземная часть", None),
+        (3, "4.1.1.", "Фундаментная плита", 70.0),
+        (3, "4.1.2.", "Горизонтальные конструкции", 30.0),
+        (2, "4.2.", "Надземная часть", 400.0),
+        (3, "4.2.1.", "Эта часть уже посчитана выше", 999.0),
+    ]), tmp_path, "levels.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"concrete": 500.0}
+
+
+def test_a_levels_section_that_states_its_own_total_is_taken_at_its_word(tmp_path):
+    path = _save(_levels_estimate([
+        (1, 15, "Разработка рабочей документации", 278.0),
+    ]), tmp_path, "levels.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {"rd": 278.0}
+
+
+def test_two_levels_sections_on_one_report_line_are_added_up(tmp_path):
+    # "ВИС - механические системы" and "ВИС - электрические системы" are both
+    # the report's utilities line.
+    path = _save(_levels_estimate([
+        (1, 10, "ВИС - механические системы", None),
+        (2, "10.1.", "Отопление", 100.0),
+        (1, 11, "ВИС - Электрические и слаботочные системы", None),
+        (2, "11.1.", "Освещение", 200.0),
+    ]), tmp_path, "levels.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {"utilities": 300.0}
+
+
+# --- разбор шапки в разных написаниях ---
+
+def test_the_totals_column_is_found_even_when_its_heading_is_not_merged(tmp_path):
+    # One offer leaves "Стоимость всего" unmerged; insisting on the merge left
+    # it without a totals column and so without any sections at all.
+    wb = _offer([(1, 1, "1. Котлован", "Котлован", 200.0)], header_row=1)
+    ws = wb.active
+    ws.unmerge_cells(start_row=1, start_column=9, end_row=1, end_column=12)
+    path = _save(wb, tmp_path, "unmerged.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {"excavation": 200.0}
+
+
+def test_the_article_column_is_recognised_however_it_is_headed(tmp_path):
+    wb = _offer([(1, 1, "1. Котлован", "Котлован", 200.0)])
+    wb.active.cell(row=9, column=3, value="Справочник статей СМР")
+    path = _save(wb, tmp_path, "spravochnik.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {"excavation": 200.0}
+
+
+def test_a_section_numbered_rather_than_named_is_read_from_the_works_column(tmp_path):
+    # One offer numbers its articles ("1", "1.1") and puts the wording in the
+    # works column instead.
+    path = _save(_offer([
+        (1, 1, "1", "Устройство котлована", 200.0),
+    ]), tmp_path, "numbered.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {"excavation": 200.0}
+
+
+def test_the_wordings_of_four_real_estimates_are_all_recognised():
+    cases = {
+        "Возведение несущих конструкций здания (22-341-П-КР)": "concrete",
+        "Отделка паркинга, технических помещений, МОП, двери, ворота": "finishing",
+        "ВИС - механические системы": "utilities",
+        "ВИС - Электрические и слаботочные системы": "utilities",
+        "отделка квартир": "mr_base",
+        "ПРОЕКТИРОВАНИЕ": "rd",
+        "Устройство фасадов": "facade",
+        "Устройство кровли": "roof",
+        "лифты, подъемники": "lifts",
+        "Общестроительные работы - перегородки и стены": "partitions",
+    }
+    for name, expected in cases.items():
+        assert estimate_sections.classify(name) == expected, name

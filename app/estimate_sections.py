@@ -29,21 +29,27 @@ logger = logging.getLogger(__name__)
 # has to be claimed by the partitions line before the finishing line can see
 # the word "отдел" in it.
 CATEGORY_RULES = [
-    ("rd", ("рабочей документации", "рабочая документация", "стадии \"р\"", "стадии р")),
+    ("rd", ("рабочей документации", "рабочая документация", "стадии \"р\"",
+            "стадии р", "проектирование")),
     ("preparation", ("подготовительные работы", "содержание площадки")),
     ("excavation", ("котлован",)),
     ("waterproofing", ("гидроизоляц",)),
-    ("concrete", ("конструктивные решения", "монолит")),
+    ("concrete", ("конструктивные решения", "монолит", "несущих конструкций",
+                  "конструкций здания")),
     ("partitions", ("общестроительные", "перегородк")),
     ("facade", ("фасад",)),
     ("roof", ("кровля", "кровли")),
-    ("finishing", ("отделочные работы", "отделка")),
+    # Not a bare "отделка": the flats' own finishing is a package of its own
+    # ("отделка квартир" = MR Base) and must not be swept in with the finishing
+    # of the common areas.
+    ("finishing", ("отделочные работы", "отделка моп", "отделка паркинга",
+                   "отделка мест общего", "внутреняя отделка", "внутренняя отделка")),
     ("lifts", ("лифт",)),
-    ("utilities", ("инженерн",)),
+    ("utilities", ("инженерн", "вис")),
     ("landscaping", ("благоустройств",)),
     ("technology", ("технологическ", "тх")),
     ("other", ("прочее", "зип", "другие", "дополнительные работы")),
-    ("mr_base", ("mr-base", "mr base")),
+    ("mr_base", ("mr-base", "mr base", "отделка квартир", "квартир")),
     ("mr_ready", ("mr-ready", "mr ready")),
     ("shell_core", ("shell", "нулевого цикла", "нулевой цикл")),
 ]
@@ -88,7 +94,10 @@ HEADER_SEARCH_ROWS = 40
 HEADER_SEARCH_COLS = 40
 
 SECTION_HEADER = "раздел"
-ARTICLE_HEADER = "статья"
+# The stem, not the word: one offer heads the column "Статья СМР" and another
+# "Справочник статей СМР", and matching the nominative alone left the second
+# without an article column and so without any sections at all.
+ARTICLE_HEADER = "стат"
 ITEM_HEADER = "п/п"
 NAME_HEADER = "наименование"
 TOTAL_HEADER = "стоимость всего"
@@ -107,34 +116,47 @@ class EstimateSectionsError(Exception):
     pass
 
 
+_LETTER_RE = re.compile(r"[a-zа-яё]", re.IGNORECASE)
+
+
+def _named(value):
+    """The value as a name, or None if it is only a number or a code."""
+    text = str(value or "").strip()
+    return text if _LETTER_RE.search(text) else None
+
+
 def _cell_text(ws, row, col):
     value = ws.cell(row=row, column=col).value
     return str(value).strip().lower() if value is not None else ""
 
 
-def _horizontal_span(ws, row, col):
-    for merged in ws.merged_cells.ranges:
-        if merged.min_row == row and merged.min_col == col:
-            return merged.min_col, merged.max_col
-    return col, col
+def _heading_block(ws, row, col):
+    """The columns a heading covers: up to just before the next heading.
+
+    Read from the headings themselves rather than from the merged cells they
+    are usually written in — one offer left "Стоимость всего" unmerged, and a
+    reader that insisted on the merge found no totals column at all and gave
+    up on the whole workbook.
+    """
+    for following in range(col + 1, HEADER_SEARCH_COLS + 1):
+        if _cell_text(ws, row, following):
+            return col, following - 1
+    return col, HEADER_SEARCH_COLS
 
 
 def _find_total_column(ws, header_row):
     """The column holding each section's total cost.
 
-    An offer states costs twice over — per unit and in total — under merged
-    headings with the same four sub-columns beneath each, so the heading alone
-    doesn't identify a column. The total block is the one spanning several
-    columns with a "Всего" underneath it; "Стоимость всего за объёмы
-    заказчика" sits alongside as a single column with nothing under it, and is
-    passed over for exactly that reason.
+    An offer states costs twice over — per unit and in total — under headings
+    with the same four sub-columns beneath each, so the heading alone doesn't
+    identify a column: the one wanted is the "Всего" under "Стоимость всего".
+    "Стоимость всего за объёмы заказчика" stands alongside with nothing
+    underneath it, and is passed over for exactly that reason.
     """
     for col in range(1, HEADER_SEARCH_COLS + 1):
         if TOTAL_HEADER not in _cell_text(ws, header_row, col):
             continue
-        first, last = _horizontal_span(ws, header_row, col)
-        if last == first:
-            continue
+        first, last = _heading_block(ws, header_row, col)
         for sub in range(first, last + 1):
             if _cell_text(ws, header_row + 1, sub) == TOTAL_SUBHEADER:
                 return sub
@@ -247,7 +269,122 @@ def read_sections(path) -> list:
     return []
 
 
+LEVEL_HEADER = "уровень"
+LEVEL_TOTAL_HEADER = "всего"
+
+Levels = namedtuple("Levels", "row first second third total_col")
+
+
+def _find_levels_header(ws):
+    """Where a "укрупнённая смета" states its levels, or None.
+
+    A different shape of estimate from the offer above: instead of one column
+    of section numbers it gives a column pair per level of nesting — "номер 1"
+    and "уровень 1", "номер 2" and "уровень 2", and so on — with the money in
+    a "Всего" column of its own.
+    """
+    for row in range(1, HEADER_SEARCH_ROWS + 1):
+        levels, total_col = [], None
+        for col in range(1, HEADER_SEARCH_COLS + 1):
+            text = _cell_text(ws, row, col)
+            if text.startswith(LEVEL_HEADER):
+                levels.append(col)
+            elif total_col is None and text.startswith(LEVEL_TOTAL_HEADER):
+                total_col = col
+        if len(levels) >= 2 and total_col is not None:
+            return Levels(
+                row=row, first=levels[0], second=levels[1],
+                third=levels[2] if len(levels) > 2 else None,
+                total_col=total_col,
+            )
+    return None
+
+
+def _sections_from_levels(ws):
+    """Section totals from an estimate written in levels.
+
+    The money sits at the deepest level that has any: a section's own row is
+    usually empty, and so is the row of a sub-section whose parts are listed
+    beneath it. Each sub-section is therefore taken at its own figure where it
+    has one, and as the sum of its parts where it hasn't — which is the one
+    reading that neither loses money nor counts it twice.
+    """
+    header = _find_levels_header(ws)
+    if header is None:
+        return []
+
+    sections, unmatched = [], []
+    current_key = current_name = None
+    current_own = None      # сумма, записанная на самой строке раздела
+    total = 0.0
+    pending = None          # (собственная сумма подраздела, сумма его частей)
+
+    def close_subsection():
+        nonlocal total, pending
+        if pending is not None:
+            own, parts = pending
+            total += own if own is not None else parts
+            pending = None
+
+    def close_section():
+        nonlocal current_key, current_own, total
+        close_subsection()
+        if current_key is not None:
+            # A section that states its own total is taken at its word; one
+            # that leaves the cell empty is the sum of what is listed under it.
+            sections.append(Section(
+                current_key, current_name,
+                current_own if current_own is not None else total,
+            ))
+        current_key, current_own, total = None, None, 0.0
+
+    for row in range(header.row + 1, ws.max_row + 1):
+        amount = _amount(ws.cell(row=row, column=header.total_col).value)
+        first = _named(ws.cell(row=row, column=header.first).value)
+        second = _named(ws.cell(row=row, column=header.second).value)
+        third = (
+            _named(ws.cell(row=row, column=header.third).value)
+            if header.third else None
+        )
+
+        if first:
+            close_section()
+            key = classify(first)
+            if key is None:
+                unmatched.append(first)
+                current_name = None
+            else:
+                current_key, current_name, current_own = key, first, amount
+            continue
+        if current_key is None:
+            continue
+        if second:
+            close_subsection()
+            pending = (amount, 0.0)
+        elif pending is not None and amount is not None:
+            own, parts = pending
+            pending = (own, parts + amount)
+        elif amount is not None and third:
+            total += amount
+
+    close_section()
+    _report_unmatched(unmatched)
+    return sections
+
+
+def _report_unmatched(unmatched):
+    if unmatched:
+        # Not an error: an estimate may carry sections this report has no line
+        # for. Logged so that a section quietly going missing can be traced.
+        logger.info("Разделы сметы без строки в отчёте: %s", "; ".join(unmatched))
+
+
 def _sections_from_sheet(ws):
+    sections = _sections_from_offer(ws)
+    return sections if sections else _sections_from_levels(ws)
+
+
+def _sections_from_offer(ws):
     header = _find_header(ws)
     if header is None:
         return []
@@ -281,7 +418,10 @@ def _sections_from_sheet(ws):
                 continue
             started = True
 
-        name = article or (
+        # The column meant for the article name doesn't always hold one: one
+        # offer numbers its articles there ("1", "1.1") and puts the wording
+        # in the works column instead. A name has to have letters in it.
+        name = _named(article) or _named(
             ws.cell(row=row, column=header.name_col).value if header.name_col else None
         )
         if not name:
@@ -295,8 +435,5 @@ def _sections_from_sheet(ws):
             continue
         sections.append(Section(key, str(name).strip(), amount))
 
-    if unmatched:
-        # Not an error: an estimate may carry sections this report has no line
-        # for. Logged so that a section quietly going missing can be traced.
-        logger.info("Разделы сметы без строки в отчёте: %s", "; ".join(unmatched))
+    _report_unmatched(unmatched)
     return sections
