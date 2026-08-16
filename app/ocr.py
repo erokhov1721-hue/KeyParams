@@ -1,5 +1,7 @@
 import easyocr
 
+from .ocr_lines import group_into_lines
+
 _READER = None
 
 
@@ -22,32 +24,10 @@ def _group_into_lines(detections):
 
     ``readtext`` returns one entry per detected text region, not per visual
     line — a single table row like "Общая площадь м2 67 413" can come back
-    as two or three separate detections. Grouping by vertical position (and
-    then ordering left-to-right within a group) reconstructs the same
-    "one string per line" shape that the rest of the extraction pipeline
-    (built for plain paragraph text) already expects.
+    as two or three separate detections, which is what
+    ``ocr_lines.group_into_lines`` exists to put back together.
     """
-    items = sorted(
-        ((*_line_key(det), det[1]) for det in detections),
-        key=lambda item: item[0],
-    )
-
-    lines = []
-    current = []
-    current_y = None
-    for y_center, x_left, height, text in items:
-        if current and abs(y_center - current_y) > max(height, 1) * 0.6:
-            lines.append(current)
-            current = []
-        current.append((x_left, text))
-        current_y = y_center
-    if current:
-        lines.append(current)
-
-    return [
-        ' '.join(text for _, text in sorted(line, key=lambda item: item[0]))
-        for line in lines
-    ]
+    return group_into_lines((*_line_key(det), det[1]) for det in detections)
 
 
 def recognize_text(images: list) -> list:
