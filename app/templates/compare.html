@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block main_extra_class %}container-wide{% endblock %}
 {% block header_actions %}
-<a class="btn btn-secondary" href="{{ url_for('main.compare_projects_pdf', slug=slugs) }}" download>Сохранить в PDF</a>
+{# Ссылка уносит с собой весь адрес страницы, а не только список проектов:
+   поправки на НДС и инфляцию и выбранная пара объектов заданы там же, и без
+   них файл показал бы другие цифры, чем те, что перед глазами. Проекты при
+   этом берутся уже проверенные — те, что на странице, — чтобы мусор из
+   адреса не переезжал в ссылку. #}
+{% set pdf_args = dict(request.args.to_dict(flat=False), slug=slugs) %}
+<a class="btn btn-secondary" href="{{ url_for('main.compare_projects_pdf', **pdf_args) }}" download>Сохранить в PDF</a>
 <a class="btn btn-secondary" href="{{ url_for('excel_report.excel_report_download', slug=slugs) }}" download>Выгрузить в Excel</a>
 {% endblock %}
 {% block content %}

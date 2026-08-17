@@ -1,21 +1,48 @@
+"""Страница сравнения, положенная на бумагу.
+
+Печатная версия повторяет страницу целиком и в том же порядке: общие
+сведения, диаграммы, стоимость по разделам, сравнение двух объектов. Всё, что
+на экране нарисовано полосками — доля раздела, отклонение от базового
+проекта, дельта между двумя объектами, — полосками и остаётся: в этих блоках
+полоска и есть сообщение, а один столбец цифр читается совсем иначе.
+
+Данные берутся ровно те же, что отдаёт страница (``comparison`` считает их
+один раз для обеих), поэтому цифра на экране и цифра в файле разойтись не
+могут — включая поправки на НДС и инфляцию, если они включены.
+"""
+
 from io import BytesIO
 from pathlib import Path
 
-from reportlab.graphics.charts.barcharts import HorizontalBarChart
-from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+from reportlab.platypus import (
+    KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+)
 
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
 # text is drawn, or Cyrillic characters render as blank boxes.
 _FONT_DIR = Path(r"C:\Windows\Fonts")
 _FONTS_REGISTERED = False
-ACCENT_COLOR = colors.HexColor("#1f6b4c")
+
+# Цвета — из светлой темы страницы: она и рассчитана на белый фон.
+ACCENT = colors.HexColor("#12705c")
+ACCENT_2 = colors.HexColor("#1c9a80")
+RED = colors.HexColor("#c62828")
+AMBER = colors.HexColor("#9a5b00")
+INK = colors.HexColor("#13201e")
+MUTED = colors.HexColor("#4f625f")
+MUTED_2 = colors.HexColor("#6d807d")
+GRID = colors.HexColor("#dfe3e2")
+TRACK = colors.HexColor("#eef1f0")
+HEAD_BG = colors.HexColor("#f4f8f6")
+
+ACCENT_COLOR = ACCENT  # прежнее имя: на него мог ссылаться внешний код
 
 CHART_DEFS = [
     ("price_by_year", "Цена работ по году подписания договора"),
@@ -23,6 +50,9 @@ CHART_DEFS = [
     ("price", "Цена работ по проектам"),
     ("price_per_sqm", "Цена за м² по проектам"),
 ]
+
+PAGE_SIZE = landscape(A4)
+MARGIN = 28
 
 
 def _ensure_fonts():
@@ -34,87 +64,506 @@ def _ensure_fonts():
     _FONTS_REGISTERED = True
 
 
-def _chart_drawing(rows, width):
-    height = 28 * len(rows) + 30
+def _styles():
+    return {
+        "title": ParagraphStyle(
+            "title", fontName="Arial-Bold", fontSize=17, leading=21,
+            textColor=INK, spaceAfter=4,
+        ),
+        "heading": ParagraphStyle(
+            "heading", fontName="Arial-Bold", fontSize=12, leading=15,
+            textColor=INK, spaceBefore=14, spaceAfter=4,
+        ),
+        "subheading": ParagraphStyle(
+            "subheading", fontName="Arial-Bold", fontSize=10, leading=13,
+            textColor=INK, spaceBefore=10, spaceAfter=4,
+        ),
+        "sub": ParagraphStyle(
+            "sub", fontName="Arial", fontSize=7.5, leading=10,
+            textColor=MUTED, spaceAfter=6,
+        ),
+        "body": ParagraphStyle("body", fontName="Arial", fontSize=9, leading=12, textColor=INK),
+        "cell": ParagraphStyle("cell", fontName="Arial", fontSize=8, leading=10.5, textColor=INK),
+        "cell_label": ParagraphStyle(
+            "cell_label", fontName="Arial-Bold", fontSize=8, leading=10.5, textColor=INK,
+        ),
+        "cell_muted": ParagraphStyle(
+            "cell_muted", fontName="Arial", fontSize=8, leading=10.5, textColor=MUTED,
+        ),
+        "cell_muted_right": ParagraphStyle(
+            "cell_muted_right", fontName="Arial", fontSize=8, leading=10.5,
+            textColor=MUTED, alignment=2,
+        ),
+        "cell_right": ParagraphStyle(
+            "cell_right", fontName="Arial", fontSize=8, leading=10.5,
+            textColor=INK, alignment=2,
+        ),
+        "head": ParagraphStyle(
+            "head", fontName="Arial-Bold", fontSize=8, leading=10.5, textColor=INK,
+        ),
+        "note": ParagraphStyle(
+            "note", fontName="Arial", fontSize=6.5, leading=8.5, textColor=AMBER,
+        ),
+    }
+
+
+def _hex(color):
+    """Цвет для разметки внутри абзаца — в том виде, в каком её читает
+    reportlab: без решётки он принимает строку за десятичное число."""
+    return "#" + color.hexval()[2:]
+
+
+def _fade(color, amount=0.62):
+    """Тот же цвет, выцветший к белому.
+
+    Экран приглушает мелкие разделы прозрачностью; на печати надёжнее
+    подмешать белого — результат тот же, а от поддержки прозрачности в
+    просмотрщике не зависит.
+    """
+    return colors.Color(
+        color.red + (1.0 - color.red) * amount,
+        color.green + (1.0 - color.green) * amount,
+        color.blue + (1.0 - color.blue) * amount,
+    )
+
+
+# --- Полоски ---------------------------------------------------------------
+
+def _share_drawing(row, width, minor=False):
+    """Доля раздела в смете базового проекта: полоска и рядом процент."""
+    height = 9.0
+    label_w = 26.0
+    track_w = max(width - label_w - 4, 12.0)
     drawing = Drawing(width, height)
-    chart = HorizontalBarChart()
-    chart.x = 170
-    chart.y = 10
-    chart.width = width - 210
-    chart.height = height - 20
-    chart.data = [[row["value"] for row in rows]]
-    chart.categoryAxis.categoryNames = [row["label"] for row in rows]
-    chart.categoryAxis.labels.fontName = "Arial"
-    chart.categoryAxis.labels.fontSize = 8
-    chart.valueAxis.labels.fontName = "Arial"
-    chart.valueAxis.labels.fontSize = 8
-    chart.valueAxis.valueMin = 0
-    chart.bars[0].fillColor = ACCENT_COLOR
-    drawing.add(chart)
+    drawing.hAlign = "LEFT"
+    drawing.add(Rect(0, 1.5, track_w, height - 3, rx=2, ry=2,
+                     fillColor=TRACK, strokeColor=None))
+    filled = track_w * (row.get("width_pct") or 0) / 100.0
+    if filled > 0:
+        drawing.add(Rect(0, 1.5, filled, height - 3, rx=2, ry=2,
+                         fillColor=MUTED_2 if minor else ACCENT_2, strokeColor=None))
+    if row.get("share_display"):
+        drawing.add(String(
+            width, 2.2, row["share_display"], fontName="Arial", fontSize=6.5,
+            textAnchor="end", fillColor=MUTED if minor else INK,
+        ))
     return drawing
+
+
+def _deviation_drawing(cell, width, minor=False):
+    """Двусторонний бар отклонения от базового проекта, или None.
+
+    Влево — дешевле, вправо — дороже; ноль в середине. Значение, вышедшее за
+    шкалу, обрезается по краю и получает уголок на конце — как на экране,
+    иначе +90% и +300% выглядели бы одинаково.
+
+    None — там, где отклонения нет вовсе: у самого базового проекта и там, где
+    цифры не нашлось. Пустой трек в этих клетках говорил бы, что отклонение
+    посчитано и равно нулю; на странице его в них тоже не рисуют. Ровный ноль
+    — дело другое, он посчитан, и трек с чертой по центру остаётся.
+    """
+    bar = cell.get("bar")
+    if not bar:
+        return None
+
+    height = 9.0
+    label_w = 24.0
+    drawing = Drawing(width, height)
+    drawing.hAlign = "LEFT"
+
+    track_x = label_w
+    track_w = max(width - 2 * label_w, 14.0)
+    half = track_w / 2.0
+    center = track_x + half
+    drawing.add(Rect(track_x, 1.5, track_w, height - 3, rx=2, ry=2,
+                     fillColor=TRACK, strokeColor=None))
+    drawing.add(Line(center, 0.8, center, height - 0.8, strokeColor=GRID, strokeWidth=0.7))
+
+    if bar["side"] == "zero":
+        return drawing
+
+    dearer = bar["side"] == "right"
+    color = RED if dearer else ACCENT
+    if minor:
+        color = _fade(color)
+    length = max(half * bar["width_pct"] / 100.0, 0.0)
+    tip = 3.5 if bar.get("clipped") and length > 4 else 0.0
+    y, h = 1.5, height - 3
+
+    if dearer:
+        drawing.add(Rect(center, y, length - tip, h, rx=2, ry=2,
+                         fillColor=color, strokeColor=None))
+        if tip:
+            drawing.add(Polygon(
+                points=[center + length - tip, y, center + length, y + h / 2,
+                        center + length - tip, y + h],
+                fillColor=color, strokeColor=None,
+            ))
+        drawing.add(String(
+            width, 2.2, cell.get("deviation_display", ""), fontName="Arial",
+            fontSize=6.5, textAnchor="end", fillColor=MUTED if minor else RED,
+        ))
+    else:
+        left = center - length
+        drawing.add(Rect(left + tip, y, length - tip, h, rx=2, ry=2,
+                         fillColor=color, strokeColor=None))
+        if tip:
+            drawing.add(Polygon(
+                points=[left + tip, y, left, y + h / 2, left + tip, y + h],
+                fillColor=color, strokeColor=None,
+            ))
+        drawing.add(String(
+            0, 2.2, cell.get("deviation_display", ""), fontName="Arial",
+            fontSize=6.5, textAnchor="start", fillColor=MUTED if minor else ACCENT,
+        ))
+    return drawing
+
+
+def _two_sided_drawing(width, width_pct, dearer):
+    """Полоска дельты между двумя объектами: влево дешевле, вправо дороже."""
+    height = 10.0
+    drawing = Drawing(width, height)
+    drawing.hAlign = "LEFT"
+    half = width / 2.0
+    drawing.add(Rect(0, 2, width, height - 4, rx=2, ry=2,
+                     fillColor=TRACK, strokeColor=None))
+    drawing.add(Line(half, 0.8, half, height - 0.8, strokeColor=GRID, strokeWidth=0.7))
+    length = max(half * (width_pct or 0) / 100.0, 0.0)
+    if length:
+        color = RED if dearer else ACCENT
+        x = half if dearer else half - length
+        drawing.add(Rect(x, 2, length, height - 4, rx=2, ry=2,
+                         fillColor=color, strokeColor=None))
+    return drawing
+
+
+def _chart_bar_drawing(width, width_pct):
+    height = 10.0
+    drawing = Drawing(width, height)
+    drawing.hAlign = "LEFT"
+    drawing.add(Rect(0, 1, width, height - 2, rx=3, ry=3,
+                     fillColor=TRACK, strokeColor=None))
+    filled = width * (width_pct or 0) / 100.0
+    if filled > 0:
+        drawing.add(Rect(0, 1, filled, height - 2, rx=3, ry=3,
+                         fillColor=ACCENT, strokeColor=None))
+    return drawing
+
+
+# --- Блоки страницы -------------------------------------------------------
+
+def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
+                 format_number, price_per_sqm, styles, page_width):
+    """«Общие сведения» — та же таблица фактов, что и на странице."""
+    header = [Paragraph("", styles["head"])]
+    for slug in slugs:
+        header.append(Paragraph(
+            passports[slug].get("project_name") or slug, styles["head"]
+        ))
+    data = [header]
+
+    for field in fields:
+        if field == "project_name":
+            continue
+        row = [Paragraph(field_labels.get(field, field), styles["cell_label"])]
+        for slug in slugs:
+            value = passports[slug].get(field)
+            if value is None:
+                text = "—"
+            elif field in numeric_fields:
+                text = format_number(value)
+            else:
+                text = str(value)
+            row.append(Paragraph(text, styles["cell"]))
+        data.append(row)
+
+        if field == "contract_price_rub":
+            psqm_row = [Paragraph("Цена за м², руб.", styles["cell_label"])]
+            for slug in slugs:
+                psqm = price_per_sqm(passports[slug])
+                psqm_row.append(Paragraph(
+                    format_number(psqm) if psqm is not None else "—", styles["cell"]
+                ))
+            data.append(psqm_row)
+
+    label_w = min(170.0, page_width * 0.28)
+    value_w = (page_width - label_w) / max(len(slugs), 1)
+    table = Table(data, colWidths=[label_w] + [value_w] * len(slugs), repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return [Paragraph("Общие сведения", styles["heading"]), table]
+
+
+def _charts_block(charts, styles, page_width):
+    """Четыре диаграммы — подпись, полоска, значение, как в карточках."""
+    story = []
+    label_w = min(210.0, page_width * 0.32)
+    value_w = 110.0
+    bar_w = max(page_width - label_w - value_w - 12, 60.0)
+
+    for key, title in CHART_DEFS:
+        rows = charts.get(key) or []
+        block = [Paragraph(title, styles["heading"])]
+        if not rows:
+            block.append(Paragraph("Недостаточно данных для этого графика.", styles["body"]))
+            story.extend(block)
+            continue
+        data = [
+            [
+                Paragraph(row["label"], styles["cell"]),
+                _chart_bar_drawing(bar_w, row.get("width_pct")),
+                Paragraph(row.get("display") or "", styles["cell_right"]),
+            ]
+            for row in rows
+        ]
+        table = Table(data, colWidths=[label_w, bar_w + 12, value_w])
+        table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
+        ]))
+        block.append(table)
+        story.append(KeepTogether(block))
+    return story
+
+
+def _adjustments_line(adjustments):
+    """Какие поправки применены — то, что на экране показывают галочки.
+
+    В файле галочек нет, а без этой строки нельзя понять, что за цифры перед
+    тобой: приведённые к одной ставке НДС и одному году или как в договоре.
+    """
+    if adjustments is None or not adjustments.applied:
+        return "Поправки не применялись: цифры как в сметах."
+    parts = []
+    if adjustments.vat_rate is not None:
+        parts.append(f"НДС приведён к ставке {adjustments.vat_display}%")
+    if adjustments.inflation is not None:
+        parts.append(
+            f"инфляция {adjustments.inflation_display}% в год "
+            f"к {adjustments.target_year} году"
+        )
+    return "Применены поправки: " + ", ".join(parts) + "."
+
+
+def _sections_block(sections, styles, page_width):
+    """«Стоимость по разделам» — с долей в смете и отклонениями."""
+    if not sections:
+        return []
+
+    columns = sections["columns"]
+    suffix = ", ₽/м²" if columns and columns[0]["per_sqm"] else ""
+    story = [
+        Paragraph(f"Стоимость по разделам{suffix}", styles["heading"]),
+        Paragraph(
+            "Доля — от итога базового проекта. Отклонение — к базовому проекту, "
+            f"шкала ±50%. Базовый — «{columns[0]['name']}». "
+            + _adjustments_line(sections.get("adjustments")),
+            styles["sub"],
+        ),
+    ]
+
+    label_w = min(150.0, page_width * 0.22)
+    weight_w = 86.0
+    value_w = max((page_width - label_w - weight_w) / max(len(columns), 1), 70.0)
+
+    header = [
+        Paragraph("Раздел", styles["head"]),
+        Paragraph("доля в смете", styles["head"]),
+    ]
+    for column in columns:
+        cell = [Paragraph(column["name"], styles["head"])]
+        for note in column["notes"]:
+            cell.append(Paragraph(note, styles["note"]))
+        header.append(cell)
+    data = [header]
+
+    minor_rows = []
+    for row in sections["rows"]:
+        minor = bool(row.get("minor"))
+        if minor:
+            minor_rows.append(len(data))
+        line = [
+            Paragraph(row["label"], styles["cell_muted"] if minor else styles["cell"]),
+            _share_drawing(row, weight_w - 12, minor),
+        ]
+        for cell in row["cells"]:
+            content = [Paragraph(
+                cell["display"],
+                styles["cell_muted_right"] if minor else styles["cell_right"],
+            )]
+            bar = _deviation_drawing(cell, value_w - 12, minor)
+            if bar is not None:
+                content.append(bar)
+            line.append(content)
+        data.append(line)
+
+    total = sections["total"]
+    total_line = [Paragraph(total["label"], styles["cell_label"]), ""]
+    for cell in total["cells"]:
+        text = cell["display"]
+        if cell.get("deviation") is not None:
+            color = RED if cell["deviation"] > 0 else ACCENT
+            text += (
+                f' <font color="{_hex(color)}">{cell["deviation_display"]}</font>'
+            )
+        total_line.append(Paragraph(text, styles["cell_right"]))
+    data.append(total_line)
+
+    table = Table(
+        data,
+        colWidths=[label_w, weight_w] + [value_w] * len(columns),
+        repeatRows=1,
+    )
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (2, -1), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    table.setStyle(TableStyle(style))
+    story.append(table)
+    return story
+
+
+def _pair_block(pair, styles, page_width):
+    """«Сравнение двух объектов» — карточки и дельта по разделам."""
+    if not pair:
+        return []
+
+    story = [
+        Paragraph("Сравнение двух объектов", styles["heading"]),
+        Paragraph(
+            "Разница считается слева направо: как правый объект стоит против левого.",
+            styles["sub"],
+        ),
+    ]
+
+    label_w = min(190.0, page_width * 0.26)
+    side_w = (page_width - label_w) / 3.0
+
+    head = [
+        Paragraph("", styles["head"]),
+        Paragraph(pair["left"]["name"], styles["head"]),
+        Paragraph("разница", styles["head"]),
+        Paragraph(pair["right"]["name"], styles["head"]),
+    ]
+    data = [head]
+    for metric in pair["metrics"]:
+        delta = metric["delta_display"] or "—"
+        if metric["dearer"] is True:
+            delta = f'<font color="{_hex(RED)}">{delta}</font>'
+        elif metric["dearer"] is False:
+            delta = f'<font color="{_hex(ACCENT)}">{delta}</font>'
+        if metric["diff_display"]:
+            delta += (
+                f'<br/><font size="7" color="{_hex(MUTED)}">'
+                f'{metric["diff_display"]}</font>'
+            )
+        data.append([
+            Paragraph(metric["label"], styles["cell_label"]),
+            Paragraph(metric["left"], styles["cell_right"]),
+            Paragraph(delta, styles["cell_right"]),
+            Paragraph(metric["right"], styles["cell_right"]),
+        ])
+
+    table = Table(data, colWidths=[label_w, side_w, side_w, side_w], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        # Плотнее остальных таблиц: два блока пары рассчитаны уместиться на
+        # одном листе, иначе последние разделы дельты уезжают на пустую
+        # страницу и выглядят обрывком.
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    if not pair["sections"]:
+        return story
+
+    story.append(Paragraph("Дельта по разделам", styles["subheading"]))
+    story.append(Paragraph("влево — дешевле, вправо — дороже", styles["sub"]))
+
+    delta_label_w = min(220.0, page_width * 0.3)
+    delta_value_w = 100.0
+    track_w = max(page_width - delta_label_w - delta_value_w - 12, 80.0)
+    rows = []
+    for row in pair["sections"]:
+        color = RED if row["dearer"] else ACCENT
+        rows.append([
+            Paragraph(row["label"], styles["cell"]),
+            _two_sided_drawing(track_w, row.get("width_pct"), row["dearer"]),
+            Paragraph(
+                f'<font color="{_hex(color)}">{row["display"]}</font>',
+                styles["cell_right"],
+            ),
+        ])
+    delta_table = Table(rows, colWidths=[delta_label_w, track_w + 12, delta_value_w])
+    delta_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
+    ]))
+    story.append(delta_table)
+    return story
 
 
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
+    sections=None, pair=None,
 ) -> bytes:
+    """Страница сравнения одним файлом.
+
+    ``sections`` и ``pair`` — готовые блоки из ``comparison``, те же объекты,
+    что уходят в шаблон страницы. Если их не передать, файл соберётся из
+    того, что есть: блока без данных на странице тоже не бывает.
+    """
     _ensure_fonts()
+    styles = _styles()
     buffer = BytesIO()
     doc = SimpleDocTemplate(
-        buffer, pagesize=A4, title="Сравнение проектов",
-        leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36,
+        buffer, pagesize=PAGE_SIZE, title="Сравнение проектов",
+        leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
     )
+    page_width = PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
 
-    title_style = ParagraphStyle("Title", fontName="Arial-Bold", fontSize=18, spaceAfter=16)
-    heading_style = ParagraphStyle("Heading", fontName="Arial-Bold", fontSize=13, spaceBefore=18, spaceAfter=8)
-    body_style = ParagraphStyle("Body", fontName="Arial", fontSize=10)
-
-    page_width = A4[0] - doc.leftMargin - doc.rightMargin
-    story = [Paragraph("Сравнение проектов", title_style)]
-
-    for key, title in CHART_DEFS:
-        rows = charts.get(key) or []
-        story.append(Paragraph(title, heading_style))
-        if rows:
-            story.append(_chart_drawing(rows, page_width))
-        else:
-            story.append(Paragraph("Недостаточно данных для этого графика.", body_style))
-
-    story.append(Paragraph("Таблица сравнения", heading_style))
-    header = [""] + [passports[slug].get("project_name") or slug for slug in slugs]
-    table_data = [header]
-    for field in fields:
-        if field == "project_name":
-            continue
-        row = [field_labels.get(field, field)]
-        for slug in slugs:
-            value = passports[slug].get(field)
-            if value is None:
-                row.append("—")
-            elif field in numeric_fields:
-                row.append(format_number(value))
-            else:
-                row.append(str(value))
-        table_data.append(row)
-
-        if field == "contract_price_rub":
-            psqm_row = ["Цена за м², руб."]
-            for slug in slugs:
-                psqm = price_per_sqm(passports[slug])
-                psqm_row.append(format_number(psqm) if psqm is not None else "—")
-            table_data.append(psqm_row)
-
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, -1), "Arial"),
-        ("FONTNAME", (0, 0), (-1, 0), "Arial-Bold"),
-        ("FONTNAME", (0, 0), (0, -1), "Arial-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e3e8e5")),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f8f4")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
-    story.append(table)
+    story = [Paragraph("Сравнение проектов", styles["title"])]
+    story += _facts_block(
+        passports, slugs, fields, field_labels, numeric_fields,
+        format_number, price_per_sqm, styles, page_width,
+    )
+    story += _charts_block(charts, styles, page_width)
+    sections_story = _sections_block(sections, styles, page_width)
+    if sections_story:
+        story.append(PageBreak())
+        story += sections_story
+    pair_story = _pair_block(pair, styles, page_width)
+    if pair_story:
+        story.append(Spacer(1, 10))
+        story += pair_story
 
     doc.build(story)
     return buffer.getvalue()

@@ -181,6 +181,13 @@ def compare_projects_pdf():
         slug: passport_module.load_passport(storage.passport_path(root, slug))
         for slug in slugs
     }
+    # Ровно то же, что собирает страница сравнения, и из того же места: файл
+    # должен показывать её целиком, включая поправки на НДС и инфляцию и
+    # выбранную пару объектов, — иначе цифра на экране и цифра в файле
+    # расходятся, а виновата в этом выгрузка.
+    adjustments = comparison.adjustments_from_args(request.args)
+    costs = _section_costs(root, slugs)
+    left, right = _pair_choice(slugs)
     pdf_bytes = pdf_export.build_compare_pdf(
         passports, slugs,
         passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
@@ -188,6 +195,8 @@ def compare_projects_pdf():
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
+        sections=comparison.build_section_table(slugs, passports, costs, adjustments),
+        pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
     )
     return Response(
         pdf_bytes,
