@@ -1,0 +1,94 @@
+{# Отбор проектов: кнопка «Фильтры», чипы применённого, сама панель и
+   сообщение о том, что под условия не подошёл никто.
+
+   Один кусок разметки на две страницы — общий список проектов и выбор
+   проектов для сравнения. Фильтр там нужен один и тот же, и разъехаться ему
+   незачем: поправка в одном месте должна доходить до обоих.
+
+   Ждёт в контексте: `filters`, `slugs`, `has_projects` и `list_url` — адрес
+   страницы, которая фильтр показывает (на неё же он и отправляет форму). #}
+{% if has_projects %}
+<div class="filter-bar">
+  <button type="button" class="filter-toggle" id="filter-toggle"
+          aria-expanded="false" aria-controls="filter-panel">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z"/>
+    </svg>
+    <span>Фильтры</span>
+    {% if filters.active_count %}<span class="filter-count">{{ filters.active_count }}</span>{% endif %}
+  </button>
+
+  <div class="filter-chips">
+    {% for chip in filters.chips %}
+    <a class="filter-chip" href="{{ list_url }}{% if chip.query %}?{{ chip.query }}{% endif %}"
+       title="Убрать фильтр «{{ chip.group_label }}: {{ chip.label }}»">
+      <span>{{ chip.label }}</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M18 6 6 18M6 6l12 12"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if filters.any %}
+  <a class="filter-reset" href="{{ list_url }}">Сбросить всё</a>
+  {% endif %}
+</div>
+
+<form class="card filter-panel" id="filter-panel" method="get"
+      action="{{ list_url }}" hidden>
+  <div class="filter-groups">
+    {% for group in filters.groups %}
+    <fieldset class="filter-group">
+      <legend>{{ group.label }}</legend>
+      {% for option in group.options %}
+      <label class="filter-option">
+        <input type="checkbox" name="{{ group.key }}" value="{{ option.value }}"
+               {{ 'checked' if option.checked }}>
+        <span class="filter-option-text">{{ option.label }}</span>
+        <span class="filter-option-count">{{ option.count }}</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+  </div>
+  <div class="filter-actions">
+    <button type="submit" class="btn btn-primary">Применить</button>
+    <a class="btn btn-secondary" href="{{ list_url }}">Сбросить</a>
+  </div>
+</form>
+{% endif %}
+
+{% if not slugs and filters.any %}
+<div class="card empty-state">
+  <p class="empty-title">Под фильтр не подошёл ни один проект</p>
+  <p class="empty-sub">Попробуйте убрать часть условий — или сбросьте фильтр целиком.</p>
+  <a class="btn btn-primary" href="{{ list_url }}">Сбросить фильтр</a>
+</div>
+{% endif %}
+
+<script>
+  (function () {
+    var toggle = document.getElementById('filter-toggle');
+    var panel = document.getElementById('filter-panel');
+    if (!toggle || !panel) return;
+
+    function setOpen(open) {
+      panel.hidden = !open;
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    toggle.addEventListener('click', function () {
+      setOpen(panel.hidden);
+    });
+
+    // Esc закрывает панель и возвращает фокус на кнопку — иначе он остаётся
+    // на скрытом поле, и следующий Tab уводит непонятно куда.
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !panel.hidden) {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+  })();
+</script>

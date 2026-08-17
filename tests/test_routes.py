@@ -50,7 +50,7 @@ def test_every_page_offers_the_theme_toggle(tmp_path):
     slug = storage.create_project(tmp_path, "Тест")
     storage.passport_path(tmp_path, slug).write_text("{}", encoding="utf-8")
 
-    for path in ("/", "/projects/new", f"/projects/{slug}"):
+    for path in ("/", "/projects/new", "/compare/select", f"/projects/{slug}"):
         body = client.get(path).get_data(as_text=True)
         assert 'id="theme-toggle"' in body, path
 
@@ -139,7 +139,8 @@ def test_index_lists_created_project(tmp_path):
         "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
     }, content_type="multipart/form-data")
     resp = client.get("/")
-    assert "Видимый_проект".encode("utf-8") in resp.data
+    # Именно название, а не имя папки: в списке стоит то, как проект назвали.
+    assert "Видимый проект".encode("utf-8") in resp.data
 
 
 def test_update_project_saves_manual_field(tmp_path):
@@ -493,24 +494,117 @@ def test_compare_projects_pdf_returns_pdf_file(tmp_path):
     assert resp.data[:4] == b"%PDF"
 
 
-def test_compare_projects_pdf_redirects_to_index_when_none_selected(tmp_path):
+def test_compare_projects_pdf_redirects_to_the_selection_when_none_chosen(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
 
     resp = client.get("/compare/pdf", follow_redirects=True)
 
     assert resp.status_code == 200
-    assert resp.request.path == "/"
+    assert resp.request.path == "/compare/select"
 
 
-def test_compare_projects_redirects_to_index_when_none_selected(tmp_path):
+def test_compare_projects_redirects_to_the_selection_when_none_chosen(tmp_path):
+    # Нечего сравнивать — значит, проекты ещё не выбраны, и вести надо туда,
+    # где их выбирают, а не на общий список.
     app = create_app(tmp_path)
     client = app.test_client()
 
     resp = client.get("/compare", follow_redirects=True)
 
     assert resp.status_code == 200
-    assert resp.request.path == "/"
+    assert resp.request.path == "/compare/select"
+
+
+# --- выбор проектов для сравнения живёт на своей странице ---
+
+
+def test_compare_select_page_lists_projects_with_checkboxes(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.get("/compare/select")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert "ПроектА" in body
+    assert f'name="slug" value="{slug}"' in body
+
+
+def test_compare_select_page_offers_comparison_and_excel(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/compare/select").data.decode("utf-8")
+
+    assert "Сравнить проекты" in body
+    assert 'action="/compare"' in body
+    assert "/report/excel" in body
+
+
+def test_compare_select_page_narrows_the_list_by_filter(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Старый", year_signed="2024")
+    _make_project_with_passport(tmp_path, "Новый", year_signed="2026")
+
+    body = client.get("/compare/select?year=2026").data.decode("utf-8")
+
+    assert "Новый" in body
+    assert 'value="Старый"' not in body
+
+
+def test_index_page_leaves_comparison_to_its_own_page(tmp_path):
+    # Две задачи — заведение проектов и их сравнение — разведены по разным
+    # страницам. Галочки и кнопка сравнения на общем списке означали бы, что
+    # разделения не случилось.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/").data.decode("utf-8")
+
+    assert "ПроектА" in body
+    assert "Сравнить проекты" not in body
+    assert f'name="slug" value="{slug}"' not in body
+
+
+def test_sidebar_leads_to_both_adding_and_comparing(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/").data.decode("utf-8")
+
+    assert "Добавить проект" in body
+    assert "Сравнить объекты" in body
+    assert 'href="/projects/new"' in body
+    assert 'href="/compare/select"' in body
+
+
+def test_project_page_shows_a_long_value_in_full_on_hover(tmp_path):
+    # Условия из протокола приходят строкой длиной с абзац, а поле узкое:
+    # видно только начало. Окошко с полным текстом и его обработчик страница
+    # обязана нести — иначе подсказка тихо исчезнет при правке шаблона.
+    long_value = (
+        "Срок выполнения работ, мес.: 33 (тридцать три месяца) до момента "
+        "получения разрешения на ввод объекта в эксплуатацию"
+    )
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА", smr_term=long_value)
+    # Паспорт договора показывается только там, где протокол загружен.
+    storage.contract_terms_path(tmp_path, slug).write_bytes(b"%PDF-fake")
+
+    body = client.get(f"/projects/{slug}").data.decode("utf-8")
+
+    assert 'class="value-hint"' in body
+    assert "mouseenter" in body
+    assert long_value in body
 
 
 def test_project_page_flags_ocr_filled_field(tmp_path):

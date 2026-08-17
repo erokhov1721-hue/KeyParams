@@ -91,6 +91,27 @@ def inject_sidebar_projects():
     }
 
 
+def _project_list_context(root):
+    """Список проектов и фильтр к нему.
+
+    Одно и то же нужно двум страницам — общему списку проектов и выбору
+    проектов для сравнения. Собирается здесь, чтобы фильтр на них работал
+    ровно одинаково и не мог разойтись.
+    """
+    slugs = storage.list_project_slugs(root)
+    passports = {slug: _safe_passport(root, slug) for slug in slugs}
+    filters = project_filter.build(passports, request.args)
+    return {
+        "slugs": filters["slugs"],
+        "project_names": {
+            slug: passport.get("project_name") or slug
+            for slug, passport in passports.items()
+        },
+        "filters": filters,
+        "has_projects": bool(slugs),
+    }
+
+
 @bp.route("/")
 def index():
     root = _projects_root()
@@ -98,19 +119,19 @@ def index():
     # is where the user lands after deleting and every time they come back,
     # so it's the one place a retry is guaranteed to get its chance.
     storage.purge_deleted(root)
-    slugs = storage.list_project_slugs(root)
-    passports = {slug: _safe_passport(root, slug) for slug in slugs}
-    filters = project_filter.build(passports, request.args)
-    return render_template(
-        "index.html",
-        slugs=filters["slugs"],
-        project_names={
-            slug: passport.get("project_name") or slug
-            for slug, passport in passports.items()
-        },
-        filters=filters,
-        has_projects=bool(slugs),
-    )
+    return render_template("index.html", **_project_list_context(root))
+
+
+@bp.route("/compare/select", methods=["GET"])
+def compare_select():
+    """Выбор проектов для сравнения — на своей странице.
+
+    Список и фильтр здесь те же, что на главной; разница в том, что у строк
+    стоят галочки, а наверху — «Сравнить проекты» и «Выгрузить в Excel».
+    Заведение проектов и их сравнение начинаются с разных ссылок в боковом
+    меню, и ни одна страница не делает обе работы сразу.
+    """
+    return render_template("compare_select.html", **_project_list_context(_projects_root()))
 
 
 @bp.route("/compare", methods=["GET"])
@@ -118,7 +139,9 @@ def compare_projects():
     root = _projects_root()
     slugs = _selected_compare_slugs(root)
     if not slugs:
-        return redirect(url_for("main.index"))
+        # Сравнивать нечего — значит, человеку нужно выбрать проекты, и вести
+        # его следует туда, где выбирают, а не на общий список.
+        return redirect(url_for("main.compare_select"))
 
     passports = {
         slug: passport_module.load_passport(storage.passport_path(root, slug))
@@ -175,7 +198,7 @@ def compare_projects_pdf():
     root = _projects_root()
     slugs = _selected_compare_slugs(root)
     if not slugs:
-        return redirect(url_for("main.index"))
+        return redirect(url_for("main.compare_select"))
 
     passports = {
         slug: passport_module.load_passport(storage.passport_path(root, slug))

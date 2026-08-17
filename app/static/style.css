@@ -162,37 +162,6 @@ a {
   width: auto;
 }
 
-.sidebar-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px 20px;
-  overflow: hidden;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-dim);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  flex-shrink: 0;
-  box-shadow: 0 0 16px var(--accent-glow);
-}
-
-.brand-text {
-  font-weight: 700;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
@@ -206,6 +175,12 @@ a {
   letter-spacing: 0.06em;
   color: var(--text-600);
   white-space: nowrap;
+}
+
+/* Две главные ссылки — «Добавить проект» и «Сравнить объекты» — отделены от
+   списка проектов: это не проекты, а то, что с ними делают. */
+.sidebar-actions {
+  margin-bottom: 18px;
 }
 
 .sidebar-list {
@@ -305,7 +280,6 @@ a {
 }
 
 .sidebar.is-collapsed .sidebar-logo,
-.sidebar.is-collapsed .brand-text,
 .sidebar.is-collapsed .sidebar-section-title,
 .sidebar.is-collapsed .sidebar-link-text,
 .sidebar.is-collapsed .sidebar-toggle-text {
@@ -1074,6 +1048,35 @@ select option {
   background: var(--amber-dim);
 }
 
+/* Полный текст значения, которое в поле не поместилось.
+
+   Условия из протокола приходят строкой длиной с абзац, а поле узкое: видно
+   начало, а дальше приходится возить каретку. Всплывающее окошко показывает
+   всё сразу — и только там, где текст действительно обрезан.
+
+   Курсор оно не перехватывает: окошко всплывает прямо под полем, и без
+   pointer-events: none по этому полю нельзя было бы щёлкнуть. Выше
+   развёрнутой на весь экран сметы (60), чтобы работать и в ней. */
+.value-hint {
+  position: fixed;
+  z-index: 70;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+  color: var(--text-100);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.value-hint[hidden] {
+  display: none;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1349,7 +1352,6 @@ select option {
     --sidebar-w: 76px;
   }
 
-  .sidebar .brand-text,
   .sidebar .sidebar-section-title,
   .sidebar .sidebar-link-text,
   .sidebar .sidebar-toggle-text {

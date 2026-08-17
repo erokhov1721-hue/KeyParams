@@ -26,11 +26,35 @@
         <img src="{{ url_for('static', filename='mr-logo.png') }}" alt="MR"
              width="49" height="32">
       </a>
-      <a class="sidebar-top" href="{{ url_for('main.index') }}">
-        <span class="brand-mark">ПО</span>
-        <span class="brand-text">Паспорта объектов</span>
-      </a>
       <nav class="sidebar-nav">
+        {# Две работы программы, и у каждой свой вход: заводить проекты и
+           сравнивать их. Раньше обе начинались с одной ссылки на общий
+           список, и по ней нельзя было догадаться, что сравнение вообще
+           где-то есть. #}
+        <ul class="sidebar-list sidebar-actions">
+          <li class="sidebar-item">
+            <a class="sidebar-link {{ 'is-active' if request.endpoint == 'main.new_project_form' else '' }}"
+               href="{{ url_for('main.new_project_form') }}">
+              <span class="sidebar-link-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </span>
+              <span class="sidebar-link-text">Добавить проект</span>
+            </a>
+          </li>
+          <li class="sidebar-item">
+            <a class="sidebar-link {{ 'is-active' if request.endpoint in ('main.compare_select', 'main.compare_projects') else '' }}"
+               href="{{ url_for('main.compare_select') }}">
+              <span class="sidebar-link-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
+                </svg>
+              </span>
+              <span class="sidebar-link-text">Сравнить объекты</span>
+            </a>
+          </li>
+        </ul>
         <div class="sidebar-section-title">Проекты</div>
         {% if sidebar_slugs %}
         <ul class="sidebar-list">

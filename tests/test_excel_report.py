@@ -341,12 +341,14 @@ def test_excel_route_reports_a_broken_passport(tmp_path):
     assert "повреждён" in resp.data.decode("utf-8")
 
 
-def test_index_page_offers_the_excel_export(tmp_path):
+def test_compare_select_page_offers_the_excel_export(tmp_path):
+    # Выгрузка берёт отмеченные проекты, а отмечают их на странице выбора —
+    # там же, где и кнопка. На общем списке проектов галочек больше нет.
     app = create_app(tmp_path)
     client = app.test_client()
     _make_project_with_passport(tmp_path, "ПроектА")
 
-    body = client.get("/").data.decode("utf-8")
+    body = client.get("/compare/select").data.decode("utf-8")
 
     assert "Выгрузить в Excel" in body
     assert "/report/excel" in body

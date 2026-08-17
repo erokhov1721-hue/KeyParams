@@ -2,7 +2,9 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
+    {# Назад — к выбору проектов, а не к общему списку: сообщение просит
+       отметить проекты галочками, и галочки стоят там. #}
+    <a class="back-link" href="{{ url_for('main.compare_select') }}">&larr; Выбор проектов</a>
     <h1>Выгрузка в Excel</h1>
   </div>
 </div>

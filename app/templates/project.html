@@ -19,6 +19,9 @@
 </div>
 
 <div class="accordion-backdrop" hidden></div>
+{# Одно окошко на всю страницу: показывать нужно всегда что-то одно, и держать
+   по копии у каждого поля незачем. #}
+<div class="value-hint" hidden></div>
 <div class="object-layout">
   <div class="object-cover-col">
     <div class="cover-preview cover-preview-square">
@@ -253,6 +256,68 @@
     }
     priceInput.addEventListener('input', recompute);
     areaInput.addEventListener('input', recompute);
+  })();
+
+  (function () {
+    // Значение, которое в поле не поместилось, по наведению показывается
+    // целиком. Условия из протокола бывают длиной с абзац, и в узком поле от
+    // них видно только начало.
+    var hint = document.querySelector('.value-hint');
+    if (!hint) return;
+    var shownFor = null;
+
+    // Померить можно только открытое поле: у спрятанной гармошки все размеры
+    // нулевые. Поэтому проверяем в момент наведения, а не заранее — заодно
+    // это учитывает и то, что человек в поле только что вписал.
+    function isClipped(input) {
+      return input.scrollWidth > input.clientWidth + 1;
+    }
+
+    function place(input) {
+      var box = input.getBoundingClientRect();
+      hint.style.maxWidth = Math.min(Math.max(box.width, 320), 640) + 'px';
+      hint.style.left = '0px';
+      hint.style.top = '0px';
+
+      var width = hint.offsetWidth;
+      var height = hint.offsetHeight;
+      var left = Math.min(box.left, window.innerWidth - width - 12);
+      // Обычно под полем; если снизу места нет, а сверху есть — над ним.
+      var top = box.bottom + 8;
+      if (top + height > window.innerHeight - 8 && box.top - 8 - height > 8) {
+        top = box.top - 8 - height;
+      }
+      hint.style.left = Math.max(12, left) + 'px';
+      hint.style.top = Math.max(8, top) + 'px';
+    }
+
+    function show(input) {
+      var text = input.value.trim();
+      if (!text || !isClipped(input)) return;
+      hint.textContent = text;
+      hint.hidden = false;
+      place(input);
+      shownFor = input;
+    }
+
+    function hide() {
+      if (!shownFor) return;
+      hint.hidden = true;
+      shownFor = null;
+    }
+
+    document.querySelectorAll('.field-row input[type="text"]').forEach(function (input) {
+      input.addEventListener('mouseenter', function () { show(input); });
+      input.addEventListener('mouseleave', hide);
+      // Пока правят значение, окошко только мешает: текст в поле уже свой, а
+      // подсказка закрывает то, что под полем.
+      input.addEventListener('focus', hide);
+      input.addEventListener('input', hide);
+    });
+
+    // Страница уехала — окошко осталось бы висеть не над своим полем.
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
   })();
 
   document.querySelectorAll('.contract-upload-form .file-input').forEach(function (input) {

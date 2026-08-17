@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Сравнить объекты{% endblock %}
+{% block header_actions %}
+{% if slugs %}
+<button type="submit" form="compare-form" class="btn btn-primary">Сравнить проекты</button>
+{# Одна и та же форма, разные адреса: выгрузка берёт ровно отмеченные проекты,
+   и скачивание файла оставляет страницу выбора там, где она была. #}
+<button type="submit" form="compare-form"
+        formaction="{{ url_for('excel_report.excel_report_download') }}"
+        class="btn btn-secondary">Выгрузить в Excel</button>
+{% endif %}
+{% endblock %}
+{% block content %}
+{# Форма пустая: галочки лежат в строках списка и привязаны к ней атрибутом
+   form. Так строку можно оставить обычной ссылкой на проект — вложить ссылку
+   внутрь формы и не сломать ни то, ни другое иначе не выходит. #}
+<form id="compare-form" method="get" action="{{ url_for('main.compare_projects') }}"></form>
+<div class="page-head">
+  <div>
+    <h1>Сравнить объекты</h1>
+    <p class="page-sub">
+      Отметьте проекты, которые нужно поставить рядом, и нажмите «Сравнить
+      проекты» — или сразу выгрузите сравнение в Excel.
+    </p>
+  </div>
+</div>
+
+{% set list_url = url_for('main.compare_select') %}
+{% include "_project_filters.html" %}
+
+{% if slugs %}
+<div class="card list-card">
+  {% for slug in slugs %}
+  <div class="project-row">
+    <label class="project-checkbox">
+      <input type="checkbox" name="slug" value="{{ slug }}" form="compare-form">
+    </label>
+    <a class="project-link" href="{{ url_for('main.project_page', slug=slug) }}">
+      <span class="project-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+        </svg>
+      </span>
+      <span class="project-name">{{ project_names[slug] }}</span>
+      <span class="project-arrow">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 6l6 6-6 6"/>
+        </svg>
+      </span>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% elif not has_projects %}
+<div class="card empty-state">
+  <p class="empty-title">Сравнивать пока нечего</p>
+  <p class="empty-sub">
+    Заведите хотя бы два проекта — тогда их можно будет поставить рядом и
+    посмотреть, чем они отличаются.
+  </p>
+  <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+</div>
+{% endif %}
+{% endblock %}
