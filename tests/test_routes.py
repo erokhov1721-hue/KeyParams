@@ -882,12 +882,12 @@ def test_create_project_with_estimate_saves_and_serves_it(tmp_path):
     from app import storage
     assert storage.estimate_path(tmp_path, slug).exists()
 
-    page = client.get(f"/projects/{slug}/smeta")
+    page = client.get(f"/projects/{slug}")
     assert page.status_code == 200
     assert "Фундамент".encode("utf-8") in page.data
 
 
-def test_create_project_without_estimate_smeta_route_404s(tmp_path):
+def test_project_page_says_so_when_there_is_no_estimate(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     resp = client.post("/projects", data={
@@ -898,8 +898,10 @@ def test_create_project_without_estimate_smeta_route_404s(tmp_path):
     assert resp.status_code == 302
     slug = "Без_сметы"
 
-    page = client.get(f"/projects/{slug}/smeta")
-    assert page.status_code == 404
+    page = client.get(f"/projects/{slug}")
+
+    assert page.status_code == 200
+    assert "Смета не загружена".encode("utf-8") in page.data
 
 
 def test_create_project_rejects_non_xlsx_estimate(tmp_path):
@@ -929,7 +931,9 @@ def test_new_project_form_has_optional_estimate_field(tmp_path):
     assert 'accept=".xlsx"' in body
 
 
-def test_project_page_shows_estimate_link_when_file_present(tmp_path):
+def test_project_page_shows_the_estimate_itself_when_file_present(tmp_path):
+    # Смета живёт в гармошке на самой странице проекта — одним входом, а не
+    # ссылкой на отдельную страницу с той же таблицей.
     app = create_app(tmp_path)
     client = app.test_client()
     client.post("/projects", data={
@@ -942,17 +946,12 @@ def test_project_page_shows_estimate_link_when_file_present(tmp_path):
     page = client.get("/projects/Есть_смета")
 
     assert page.status_code == 200
-    # Flask's url_for percent-encodes non-ASCII path segments (correct,
-    # RFC 3986-compliant behavior), so the href in the rendered HTML is
-    # not the literal Cyrillic slug — build the expected href the same
-    # way the template does.
-    with app.test_request_context():
-        from flask import url_for
-        expected_href = f'href="{url_for("main.estimate_page", slug="Есть_смета")}"'
-    assert expected_href.encode("utf-8") in page.data
+    body = page.data.decode("utf-8")
+    assert 'class="estimate-table"' in body
+    assert "Фундамент" in body
 
 
-def test_project_page_hides_estimate_link_when_no_file(tmp_path):
+def test_project_page_has_no_estimate_table_without_a_file(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     client.post("/projects", data={
@@ -964,10 +963,10 @@ def test_project_page_hides_estimate_link_when_no_file(tmp_path):
     page = client.get("/projects/Нет_сметы")
 
     assert page.status_code == 200
-    assert b"/smeta" not in page.data
+    assert 'class="estimate-table"' not in page.data.decode("utf-8")
 
 
-def test_estimate_page_renders_multiple_sheets_as_tabs(tmp_path):
+def test_project_page_renders_multiple_estimate_sheets_as_tabs(tmp_path):
     wb = Workbook()
     wb.active.title = "Смета"
     wb.active["A1"] = "Итого"
@@ -984,7 +983,7 @@ def test_estimate_page_renders_multiple_sheets_as_tabs(tmp_path):
         "smeta_file": (io.BytesIO(buf.getvalue()), "smeta.xlsx"),
     }, content_type="multipart/form-data")
 
-    page = client.get("/projects/Многолистовая/smeta")
+    page = client.get("/projects/Многолистовая")
 
     assert page.status_code == 200
     body = page.data.decode("utf-8")

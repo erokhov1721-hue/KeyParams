@@ -1,10 +1,5 @@
 {% extends "base.html" %}
 {% block main_extra_class %}container-project{% endblock %}
-{% block header_actions %}
-{% if has_estimate %}
-<a class="btn btn-secondary" href="{{ url_for('main.estimate_page', slug=slug) }}">Смета</a>
-{% endif %}
-{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>

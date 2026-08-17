@@ -450,19 +450,6 @@ def update_contract_terms(slug):
     return redirect(url_for("main.project_page", slug=slug))
 
 
-@bp.route("/projects/<slug>/smeta", methods=["GET"])
-def estimate_page(slug):
-    root = _projects_root()
-    if slug not in storage.list_project_slugs(root):
-        abort(404)
-    path = storage.estimate_path(root, slug)
-    if not path.exists():
-        abort(404)
-    sheets = estimate.read_estimate(path)
-    project_name = passport_module.load_passport(storage.passport_path(root, slug)).get("project_name") or slug
-    return render_template("estimate.html", slug=slug, project_name=project_name, sheets=sheets)
-
-
 @bp.route("/projects/<slug>/delete", methods=["POST"])
 def delete_project(slug):
     root = _projects_root()
