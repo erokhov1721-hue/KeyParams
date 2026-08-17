@@ -57,6 +57,35 @@
   </table>
 </div>
 
+{% if terms %}
+<div class="card compare-card">
+  <div class="sections-head">
+    <h2 class="chart-title" id="terms-title">Условия</h2>
+    <p class="sections-sub">Из паспорта договора каждого проекта.</p>
+  </div>
+  <table class="compare-table" aria-labelledby="terms-title">
+    <thead>
+      <tr>
+        <th></th>
+        {% for slug in slugs %}
+        <th>{{ passports[slug].project_name or slug }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in terms.rows %}
+      <tr>
+        <td class="compare-field-label">{{ row.label }}</td>
+        {% for cell in row.cells %}
+        <td>{{ cell }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 {% set chart_defs = [
   ("price_by_year", "Цена работ по году подписания договора"),
   ("price_by_class", "Цена работ по классу жилья"),

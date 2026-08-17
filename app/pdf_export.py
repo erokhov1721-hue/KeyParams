@@ -301,6 +301,42 @@ def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
     return [Paragraph("Общие сведения", styles["heading"]), table]
 
 
+def _terms_block(terms, slugs, passports, styles, page_width):
+    """«Условия» — паспорт договора каждого проекта, колонка на проект."""
+    if not terms:
+        return []
+
+    header = [Paragraph("", styles["head"])]
+    for slug in slugs:
+        header.append(Paragraph(
+            passports[slug].get("project_name") or slug, styles["head"]
+        ))
+    data = [header]
+    for row in terms["rows"]:
+        line = [Paragraph(row["label"], styles["cell_label"])]
+        for cell in row["cells"]:
+            line.append(Paragraph(cell, styles["cell"]))
+        data.append(line)
+
+    label_w = min(170.0, page_width * 0.28)
+    value_w = (page_width - label_w) / max(len(slugs), 1)
+    table = Table(data, colWidths=[label_w] + [value_w] * len(slugs), repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return [
+        Paragraph("Условия", styles["heading"]),
+        Paragraph("Из паспорта договора каждого проекта.", styles["sub"]),
+        table,
+    ]
+
+
 def _charts_block(charts, styles, page_width):
     """Четыре диаграммы — подпись, полоска, значение, как в карточках."""
     story = []
@@ -533,13 +569,13 @@ def _pair_block(pair, styles, page_width):
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
-    sections=None, pair=None,
+    sections=None, pair=None, terms=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
-    ``sections`` и ``pair`` — готовые блоки из ``comparison``, те же объекты,
-    что уходят в шаблон страницы. Если их не передать, файл соберётся из
-    того, что есть: блока без данных на странице тоже не бывает.
+    ``sections``, ``pair`` и ``terms`` — готовые блоки из ``comparison``, те же
+    объекты, что уходят в шаблон страницы. Если их не передать, файл соберётся
+    из того, что есть: блока без данных на странице тоже не бывает.
     """
     _ensure_fonts()
     styles = _styles()
@@ -555,6 +591,7 @@ def build_compare_pdf(
         passports, slugs, fields, field_labels, numeric_fields,
         format_number, price_per_sqm, styles, page_width,
     )
+    story += _terms_block(terms, slugs, passports, styles, page_width)
     story += _charts_block(charts, styles, page_width)
     sections_story = _sections_block(sections, styles, page_width)
     if sections_story:

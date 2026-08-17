@@ -476,6 +476,58 @@ def test_compare_projects_shows_empty_chart_message_without_data(tmp_path):
     assert "Недостаточно данных" in body
 
 
+def test_compare_page_shows_the_terms_table(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _make_project_with_passport(
+        tmp_path, "ПроектА", smr_term="33 (тридцать три месяца)",
+        performance_bond_pct="3%",
+    )
+    b = _make_project_with_passport(tmp_path, "ПроектБ", vat="20%")
+
+    body = client.get(f"/compare?slug={a}&slug={b}").data.decode("utf-8")
+
+    assert "Условия" in body
+    assert "Срок СМР" in body
+    assert "33 (тридцать три месяца)" in body
+    assert "Performance bond, %" in body
+
+
+def test_compare_page_hides_the_terms_table_without_a_protocol(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _make_project_with_passport(tmp_path, "ПроектА")
+    b = _make_project_with_passport(tmp_path, "ПроектБ")
+
+    body = client.get(f"/compare?slug={a}&slug={b}").data.decode("utf-8")
+
+    assert "Срок СМР" not in body
+
+
+def test_compare_pdf_carries_the_terms_table(tmp_path):
+    # PDF повторяет страницу целиком, поэтому «Условия» должны дойти и до него.
+    from app import routes
+
+    seen = {}
+    original = routes.pdf_export.build_compare_pdf
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return original(*args, **kwargs)
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА", smr_term="33 мес")
+    routes.pdf_export.build_compare_pdf = spy
+    try:
+        resp = client.get(f"/compare/pdf?slug={slug}")
+    finally:
+        routes.pdf_export.build_compare_pdf = original
+
+    assert resp.status_code == 200
+    assert seen["terms"]["rows"][0]["cells"] == ["33 мес"]
+
+
 def test_compare_projects_pdf_returns_pdf_file(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

@@ -102,6 +102,45 @@ def adjustments_from_args(args) -> Adjustments:
     return Adjustments(vat_rate=vat, inflation=inflation, target_year=year)
 
 
+# Условия договора — те же пять, что стоят в паспорте договора на странице
+# проекта, и в том же порядке. Список берётся оттуда, а не пишется здесь
+# заново, чтобы новое условие появлялось в сравнении само.
+TERMS_FIELDS = passport_module.CONTRACT_FIELDS
+
+TERMS_EMPTY = "—"
+
+
+def build_terms_table(slugs, passports):
+    """Условия договора по проектам, или None, когда их ни у кого нет.
+
+    Одна и та же таблица идёт и на страницу, и в PDF: собирается здесь, чтобы
+    разойтись они не могли.
+
+    Строки — постоянный список из пяти условий: прочерк напротив проекта
+    сообщает, что этого условия у него не нашлось, и это тоже ответ. А вот
+    таблица целиком из прочерков не сообщает ничего — там, где ни у одного
+    проекта протокол не прочитан, её нет вовсе.
+    """
+    rows = []
+    for field in TERMS_FIELDS:
+        # Клетки лежат под именем cells, а не values: у словаря есть метод
+        # values(), и шаблон взял бы метод вместо данных.
+        cells = []
+        for slug in slugs:
+            value = passports[slug].get(field)
+            text = str(value).strip() if value is not None else ""
+            cells.append(text or TERMS_EMPTY)
+        rows.append({
+            "field": field,
+            "label": passport_module.CONTRACT_FIELD_LABELS.get(field, field),
+            "cells": cells,
+        })
+
+    if all(cell == TERMS_EMPTY for row in rows for cell in row["cells"]):
+        return None
+    return {"rows": rows}
+
+
 def project_factor(vat, year_signed, adjustments):
     """``(multiplier, notes)`` for one project's figures.
 

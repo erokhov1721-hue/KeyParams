@@ -164,6 +164,7 @@ def compare_projects():
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
         sections=comparison.build_section_table(slugs, passports, costs, adjustments),
+        terms=comparison.build_terms_table(slugs, passports),
         adjustments=adjustments,
     )
 
@@ -220,6 +221,7 @@ def compare_projects_pdf():
         price_per_sqm=passport_module.price_per_sqm,
         sections=comparison.build_section_table(slugs, passports, costs, adjustments),
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
+        terms=comparison.build_terms_table(slugs, passports),
     )
     return Response(
         pdf_bytes,

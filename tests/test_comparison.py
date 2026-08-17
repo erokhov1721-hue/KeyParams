@@ -12,6 +12,40 @@ def _passport(name="П", **fields):
     return data
 
 
+# --- условия договора ---
+
+def test_the_terms_table_puts_the_contract_conditions_side_by_side():
+    passports = {
+        "a": _passport("Левый", smr_term="33 (тридцать три месяца)",
+                       performance_bond_pct="3%"),
+        "b": _passport("Правый", smr_term="38 мес", vat="20%"),
+    }
+
+    terms = comparison.build_terms_table(["a", "b"], passports)
+
+    rows = {row["label"]: row["cells"] for row in terms["rows"]}
+    assert rows["Срок СМР"] == ["33 (тридцать три месяца)", "38 мес"]
+    assert rows["Performance bond, %"] == ["3%", "—"]
+    assert rows["НДС"] == ["—", "20%"]
+
+
+def test_the_terms_table_keeps_every_condition_as_a_row():
+    # Пять условий — постоянный список: прочерк напротив проекта говорит, что
+    # у него этого условия нет, и это тоже ответ.
+    passports = {"a": _passport("Левый", vat="20%")}
+
+    terms = comparison.build_terms_table(["a"], passports)
+
+    assert [row["field"] for row in terms["rows"]] == comparison.TERMS_FIELDS
+
+
+def test_there_is_no_terms_table_when_no_protocol_was_read():
+    # Пять строк прочерков занимали бы место и ничего не сообщали.
+    passports = {"a": _passport("Левый"), "b": _passport("Правый")}
+
+    assert comparison.build_terms_table(["a", "b"], passports) is None
+
+
 # --- разбор настроек ---
 
 def test_percent_is_read_however_it_is_written():
