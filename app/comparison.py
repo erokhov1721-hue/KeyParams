@@ -314,7 +314,11 @@ def _format_metric(value, unit):
     if value is None:
         return "—"
     if unit == UNIT_MONEY:
-        return f"{format_number(round(value / 1_000_000))} млн ₽"
+        # Полным числом, а не в миллионах: цену договора и итог сметы сверяют
+        # с самими документами, а «18 364 млн ₽» прячет ровно те знаки, по
+        # которым сверяют. Копейки — до целых рублей: на десяти знаках они
+        # ничего не решают, как и десятая метра на площади ниже.
+        return f"{format_number(round(value))} ₽"
     if unit == UNIT_PER_SQM:
         return f"{format_number(round(value))} ₽/м²"
     # Whole square metres: a tenth of a metre on a building of a hundred

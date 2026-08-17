@@ -291,11 +291,14 @@ def test_the_cards_put_the_two_objects_side_by_side():
         right_fields={"contract_price_rub": 2_000_000_000.0, "total_area_sqm": 10_000.0},
     )
 
+    # Деньги — полным числом, а не в миллионах: цену договора сверяют с
+    # самим договором, и «1 000 млн ₽» прячет как раз те знаки, по которым
+    # сверяют.
     price = _metric(cards, "Цена работ по договору")
-    assert price["left"] == "1 000 млн ₽"
-    assert price["right"] == "2 000 млн ₽"
+    assert price["left"] == "1 000 000 000 ₽"
+    assert price["right"] == "2 000 000 000 ₽"
     assert price["delta_display"] == "+100,0 %"
-    assert price["diff_display"] == "+1 000 млн ₽"
+    assert price["diff_display"] == "+1 000 000 000 ₽"
     assert price["dearer"] is True
 
 
@@ -329,7 +332,7 @@ def test_the_estimate_total_is_a_card_of_its_own():
         right_costs={"facade": 150_000_000.0},
     )
 
-    assert _metric(cards, "Итого СМР по смете")["right"] == "150 млн ₽"
+    assert _metric(cards, "Итого СМР по смете")["right"] == "150 000 000 ₽"
     assert _metric(cards, "Итого СМР на 1 м²")["right"] == "150 000 ₽/м²"
 
 
@@ -386,7 +389,7 @@ def test_sections_are_compared_in_roubles_when_an_area_is_missing():
         right_costs={"facade": 300_000_000.0},
     )
 
-    assert cards["sections"][0]["display"] == "+200 млн ₽"
+    assert cards["sections"][0]["display"] == "+200 000 000 ₽"
 
 
 def test_there_are_no_cards_without_two_different_objects():

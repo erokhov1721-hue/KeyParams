@@ -1497,8 +1497,8 @@ def test_compare_page_shows_the_pair_cards(tmp_path):
 
     assert "Сравнение двух объектов" in body
     assert "Цена работ по договору" in body
-    assert "1 000 млн ₽" in body
-    assert "2 000 млн ₽" in body
+    assert "1 000 000 000 ₽" in body
+    assert "2 000 000 000 ₽" in body
     assert "+100,0 %" in body
     assert "Дельта по разделам" in body
 
@@ -1515,7 +1515,7 @@ def test_the_pair_can_be_chosen_from_the_page(tmp_path):
 
     body = client.get(f"/compare?{query}&left={slugs[0]}&right={slugs[2]}").get_data(as_text=True)
 
-    assert "3 000 млн ₽" in body
+    assert "3 000 000 000 ₽" in body
     assert "+200,0 %" in body
 
 
