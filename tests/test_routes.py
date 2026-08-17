@@ -636,6 +636,91 @@ def test_sidebar_leads_to_both_adding_and_comparing(tmp_path):
     assert 'href="/compare/select"' in body
 
 
+def test_compare_select_page_offers_renaming_and_deleting(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/compare/select").data.decode("utf-8")
+
+    assert "btn-edit" in body
+    assert "btn-delete" in body
+    assert f"/rename" in body
+    assert f"/delete" in body
+
+
+def test_index_keeps_its_row_actions(tmp_path):
+    # Кнопки в строках общего списка — те же самые, и фото правится только там.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/").data.decode("utf-8")
+
+    assert "btn-edit" in body
+    assert "btn-delete" in body
+    assert "btn-cover-upload" in body
+
+
+def test_compare_select_page_has_no_cover_button(tmp_path):
+    # На выборе проектов нужны только карандаш и урна. Проверяется сама
+    # кнопка, а не имя класса: обработчик фото лежит в общем скрипте обеих
+    # страниц и упоминает его безобидно.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ПроектА")
+
+    body = client.get("/compare/select").data.decode("utf-8")
+
+    assert "btn-cover-upload" not in body
+
+
+def test_deleting_from_the_selection_returns_to_the_selection(tmp_path):
+    # Удалил проект, выбирая, что с чем сравнить, — и остался там же, а не
+    # уехал на общий список.
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.post(f"/projects/{slug}/delete", data={"back": "select"})
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/compare/select")
+    assert slug not in storage.list_project_slugs(tmp_path)
+
+
+def test_renaming_from_the_selection_returns_to_the_selection(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.post(
+        f"/projects/{slug}/rename", data={"project_name": "Новое", "back": "select"},
+    )
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/compare/select")
+
+
+def test_an_unknown_return_page_leads_to_the_project_list(tmp_path):
+    # В форму можно подставить что угодно, поэтому «куда вернуться» — это
+    # название страницы из короткого списка, а не адрес: увести человека на
+    # чужой сайт так нельзя.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.post(
+        f"/projects/{slug}/rename",
+        data={"project_name": "Новое", "back": "https://example.com/"},
+    )
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+
+
 def test_project_page_shows_a_long_value_in_full_on_hover(tmp_path):
     # Условия из протокола приходят строкой длиной с абзац, а поле узкое:
     # видно только начало. Окошко с полным текстом и его обработчик страница

@@ -48,6 +48,11 @@
         </svg>
       </span>
     </a>
+    {# Фото объекта правится на общем списке: здесь выбирают, что с чем
+       сравнить, и лишняя кнопка в строке этому только мешает. #}
+    {% with name=project_names[slug], index=loop.index0, back='select', with_cover=false %}
+    {% include "_project_row_actions.html" %}
+    {% endwith %}
   </div>
   {% endfor %}
 </div>
@@ -61,4 +66,5 @@
   <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
 </div>
 {% endif %}
+{% include "_project_row_scripts.html" %}
 {% endblock %}

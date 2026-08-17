@@ -452,17 +452,33 @@ def update_contract_terms(slug):
     return redirect(url_for("main.project_page", slug=slug))
 
 
+# Куда вернуть человека после правки в списке. Значение в форме — название
+# страницы из этого короткого списка, а не адрес: подставить в форму чужой
+# адрес и увести куда угодно так нельзя.
+RETURN_PAGES = {"select": "main.compare_select"}
+
+
+def _back_to(default="main.index"):
+    """На ту страницу, где человек и был, — или на общий список.
+
+    Переименовать и удалить проект можно из двух списков, и выбрасывать со
+    страницы выбора на главную только потому, что там правили название, не за
+    что.
+    """
+    return redirect(url_for(RETURN_PAGES.get(request.form.get("back"), default)))
+
+
 @bp.route("/projects/<slug>/delete", methods=["POST"])
 def delete_project(slug):
     root = _projects_root()
     if slug not in storage.list_project_slugs(root):
         # Nothing to delete means the user already got what they asked for,
-        # so send them back to the dashboard. Aborting here put a repeated
+        # so send them back where they were. Aborting here put a repeated
         # delete — a double-clicked button, a re-submitted form — on a bare
         # "Not Found" page with no way back.
-        return redirect(url_for("main.index"))
+        return _back_to()
     storage.delete_project(root, slug)
-    return redirect(url_for("main.index"))
+    return _back_to()
 
 
 @bp.route("/projects/<slug>/rename", methods=["POST"])
@@ -477,7 +493,7 @@ def rename_project(slug):
     data = passport_module.load_passport(path)
     data["project_name"] = new_name
     passport_module.save_passport(data, path)
-    return redirect(url_for("main.index"))
+    return _back_to()
 
 
 @bp.route("/projects/<slug>", methods=["POST"])

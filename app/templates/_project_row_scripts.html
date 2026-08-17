@@ -1,0 +1,30 @@
+{# Поведение кнопок в строках списка — одно на обе страницы, где эти строки
+   есть. Обработчик фото ничему не мешает там, где кнопки фото нет: искать
+   нечего, и он молча ничего не делает. #}
+<script>
+  document.querySelectorAll('.btn-edit').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var row = btn.closest('.project-row');
+      row.querySelector('.project-link').hidden = true;
+      var form = row.querySelector('.rename-form');
+      form.hidden = false;
+      var input = form.querySelector('input[name="project_name"]');
+      input.focus();
+      input.select();
+    });
+  });
+
+  document.querySelectorAll('.btn-rename-cancel').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var row = btn.closest('.project-row');
+      row.querySelector('.rename-form').hidden = true;
+      row.querySelector('.project-link').hidden = false;
+    });
+  });
+
+  document.querySelectorAll('.cover-upload-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      if (input.files[0]) input.closest('.cover-upload-form').submit();
+    });
+  });
+</script>
