@@ -29,6 +29,44 @@ def test_performance_bond_is_none_when_the_row_is_absent():
     assert contract_extractors.extract_performance_bond(text) is None
 
 
+# Настоящий протокол Jois, распознанный со скана. Таблица в две колонки:
+# слева «1.8. Performance bond:», справа «Банковская гарантия исполнения — 3 %
+# от цены работ». Правая клетка переносится на две строки, и распознаватель
+# кладёт её начало выше подписи, а хвост («цены работ.») приклеивает к самой
+# подписи. Строкой ниже начинается уже другое условие — гарантийное удержание.
+JOIS_BOND = """П ичинение в еда - 300 млн. б.
+Банковская исполнения З %
+гарантия — от
+1.8. Performance bond: цены работ.
+- 1,5 % после итогового акта;
+1.9. Гарантийное удержание: 1 % под банковскую гарантию;
+- 0,3 % де живаются на 24 месяца.
+"""
+
+
+def test_bond_is_read_from_its_own_row_even_when_it_wraps_above_the_label():
+    # 3 %, а не 1,5 % из следующего условия. Цифру 3 распознаватель отдал
+    # кириллической «З» — перед знаком процента одинокая буква не бывает
+    # ничем иным.
+    assert contract_extractors.extract_performance_bond(JOIS_BOND) == "3%"
+
+
+def test_bond_does_not_borrow_a_percentage_from_another_condition_above():
+    # Настоящий протокол «проспект мира»: у подписи своего процента нет, и
+    # значение находится дальше по тексту. Строка, начинающая другое условие,
+    # — граница: 30% из аванса к bond отношения не имеет.
+    text = (
+        "3 Аванс, % 30% максимальная сумма не закрытого аванса 20%\n"
+        "4 Банковская гарантия на возврат аванса Не включено\n"
+        "5 Performance bond, % (Банковская гарантия на исполнение контракта)\n"
+        "6 Страхование Включено\n"
+        "7 Согласие с условиями гарантийного удержания ГУ удерживается "
+        "с промежуточного платежа в размере 3%\n"
+    )
+
+    assert contract_extractors.extract_performance_bond(text) == "3%"
+
+
 # --- банковская гарантия ---
 
 def test_bank_guarantee_is_normalised():
@@ -60,14 +98,60 @@ def test_advance_payment_takes_the_rest_of_the_row():
     )
 
 
-def test_smr_term_joins_the_row_with_the_line_before_it():
-    # OCR sometimes puts a wrapped value on the line above its label.
+def test_smr_term_is_the_number_of_months():
+    # Срок — это число месяцев, а не абзац вокруг него. Значение из-за
+    # переноса стоит над своей подписью.
     text = "30 месяца, с даты передачи первой захватки\n1 Срок выполнения СМР, месяц"
+
+    assert contract_extractors.extract_smr_term(text) == "30 мес"
+
+
+def test_smr_term_survives_a_mangled_unit():
+    # Настоящий протокол VEER UB9: распознавание прочло «мес» как «мас».
+    # Единицу пишем сами, из документа берём только число.
+    text = (
+        "п1п Наименование Верейская UB9\n"
+        "38 мас с даты передачи первой захватки с ртом\n"
+        "Срок выполнения СМР и MR Вте до Итогого акта, месяч поэтапной "
+        "лередачи площадки под строительство\n"
+    )
+
+    assert contract_extractors.extract_smr_term(text) == "38 мес"
+
+
+def test_smr_term_is_not_taken_from_a_number_that_is_not_months():
+    # Настоящий протокол Тушино: в строку попал ИНН и номер строки таблицы.
+    # Срок — то число, рядом с которым стоит слово про месяцы.
+    text = (
+        "(инн 7701380579) 1 Срок выполнения СМР, месяц 35 мес. "
+        "с учетом поэтапной передачи котлована\n"
+    )
+
+    assert contract_extractors.extract_smr_term(text) == "35 мес"
+
+
+def test_smr_term_of_a_clause_ignores_whatever_stands_above_it():
+    # Настоящий протокол Jois, распознанный со скана: пункт сам несёт срок
+    # после двоеточия, а над ним стоит строка из таблицы стоимости работ.
+    # Приклеивать её незачем — к сроку она отношения не имеет. Слово «месяца»
+    # здесь написано словами, а единицу назвала сама подпись условия.
+    text = (
+        "14. Рабочая документация 278 156 068,22 Р\n"
+        "15. Отделка MR Base 1 256 837 680,96 Р\n"
+        "1.2. Срок выполнения работ, мес.: 33 (тридцать три месяца) до момента\n"
+    )
+
+    assert contract_extractors.extract_smr_term(text) == "33 мес"
+
+
+def test_smr_term_keeps_the_text_when_no_number_can_be_made_out():
+    # Ничего не разобрав, лучше отдать как есть: человек прочтёт сам, а
+    # выдуманного числа в паспорте не появится.
+    text = "по графику производства работ\n1 Срок выполнения СМР, месяц"
 
     term = contract_extractors.extract_smr_term(text)
 
-    assert "30 месяца" in term
-    assert "Срок выполнения" in term
+    assert "по графику" in term
 
 
 def test_smr_term_is_none_when_the_row_is_absent():
