@@ -43,6 +43,10 @@
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -20px rgba(0, 0, 0, 0.55);
   --sidebar-w: 264px;
   --sidebar-w-collapsed: 76px;
+  /* Геометрия оболочки: высота верхней панели задана один раз и от темы не
+     зависит. Полоса одна на все страницы, и высота у неё одна — от того,
+     сколько на странице кнопок, она не считается. */
+  --header-height: 64px;
 }
 
 /* Light theme.
@@ -297,34 +301,52 @@ a {
   flex-direction: column;
 }
 
+/* Высота — ровная и заданная, а не собранная из содержимого: с min-height
+   полоса поднималась от кнопок и гуляла от страницы к странице, а на
+   странице без кнопок садилась. Вертикальных отступов нет вовсе,
+   выравнивание по центру делает flex.
+
+   Ширину панель берёт от .app-main, поэтому нижняя рамка идёт через всю
+   контентную область и упирается в рамку сайдбара; свернётся сайдбар —
+   .app-main пересчитается сам, жёстких ширин здесь нет. */
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 16px;
+  height: var(--header-height);
   background: var(--surface-topbar);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
-  padding: 16px 32px;
-  position: relative;
+  padding-inline: 24px;
 }
 
+/* Вправо — обычным потоком, а не absolute: только так кнопки участвуют в
+   высоте панели и центрируются вместе с нею. */
 .topbar-actions {
-  position: absolute;
-  right: 32px;
-  top: 50%;
-  transform: translateY(-50%);
+  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+
+/* Кнопки в панели ниже, чем в содержимом страниц: при полосе 64px и кнопке
+   36px остаётся по 14px воздуха сверху и снизу. Правило именно на панель —
+   те же .btn стоят на страницах («Применить», «Сохранить изменения»), и
+   трогать их размер незачем. */
+.topbar .btn {
+  height: 36px;
+  padding-block: 0;
+  padding-inline: 16px;
+  font-size: 14px;
 }
 
 .theme-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  /* Круг того же роста, что и кнопки рядом. */
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 999px;

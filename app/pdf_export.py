@@ -592,6 +592,10 @@ def build_compare_pdf(
         format_number, price_per_sqm, styles, page_width,
     )
     story += _terms_block(terms, slugs, passports, styles, page_width)
+    # Диаграммы — с новой страницы. Иначе первая из них ютится под таблицами
+    # внизу листа, а остальные уезжают на следующий, и читать их приходится
+    # вразбивку.
+    story.append(PageBreak())
     story += _charts_block(charts, styles, page_width)
     sections_story = _sections_block(sections, styles, page_width)
     if sections_story:

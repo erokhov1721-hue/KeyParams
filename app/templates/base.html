@@ -92,9 +92,6 @@
     </aside>
     <div class="app-main">
       <header class="topbar">
-        {% if request.endpoint != 'main.new_project_form' %}
-        <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
-        {% endif %}
         <div class="topbar-actions">
           {% block header_actions %}{% endblock %}
           <button type="button" class="theme-toggle" id="theme-toggle"

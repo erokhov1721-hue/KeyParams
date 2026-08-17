@@ -40,6 +40,22 @@ def test_new_project_form_loads(tmp_path):
     assert resp.status_code == 200
 
 
+def test_the_top_bar_does_not_duplicate_the_sidebar_link(tmp_path):
+    # Заводить проект — одна ссылка, в левом меню. Кнопка посреди верхней
+    # панели повторяла её и больше ничего не делала.
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Тест")
+    storage.passport_path(tmp_path, slug).write_text("{}", encoding="utf-8")
+
+    for path in ("/", "/compare/select", f"/projects/{slug}"):
+        body = client.get(path).get_data(as_text=True)
+        assert "+ Создать проект" not in body, path
+        assert "Добавить проект" in body, path
+
+
 def test_every_page_offers_the_theme_toggle(tmp_path):
     # The toggle lives in the shared layout, so a page that renders its own
     # header block must not end up without it.
@@ -68,6 +84,25 @@ def test_native_dropdowns_follow_the_theme(tmp_path):
     assert "color-scheme: dark" in css
     assert "color-scheme: light" in css
     assert "select option" in css
+
+
+def test_the_header_height_is_one_value_used_once(tmp_path):
+    # Высота панели не должна зависеть от того, сколько на странице кнопок:
+    # min-height или auto поднимали её от содержимого, и полоса гуляла от
+    # страницы к странице. Кнопки в панели больше не выравниваются абсолютом —
+    # иначе они снова перестанут задавать её высоту и наедут на края.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    topbar = css.split(".topbar {", 1)[1].split("}", 1)[0]
+    actions = css.split(".topbar-actions {", 1)[1].split("}", 1)[0]
+
+    assert "--header-height: 64px" in css
+    assert "height: var(--header-height)" in topbar
+    assert "min-height" not in topbar
+    assert "position: absolute" not in actions
+    assert "gap: 12px" in actions
 
 
 def test_theme_choice_is_applied_before_the_page_paints(tmp_path):
