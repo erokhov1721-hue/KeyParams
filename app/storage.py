@@ -52,6 +52,13 @@ def contract_terms_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "contract_terms.pdf"
 
 
+def cost_increase_path(root: Path, slug: str) -> Path:
+    """The project's cost-increase workbook. One file, always the latest one:
+    it is kept cumulatively, so a newer version supersedes the previous one
+    outright and keeping the old ones would only invite adding them up."""
+    return raw_dir(root, slug) / "udorozhanie.xlsx"
+
+
 COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 

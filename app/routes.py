@@ -1,3 +1,4 @@
+import io
 import json
 import shutil
 from pathlib import Path
@@ -8,8 +9,8 @@ from flask import (
 )
 
 from . import (
-    comparison, estimate, excel_report, extractors, passport as passport_module,
-    pdf_export, project_filter, storage,
+    comparison, cost_increase, estimate, excel_report, extractors,
+    passport as passport_module, pdf_export, project_filter, storage,
 )
 from .document_reader import DocxReadError
 
@@ -21,6 +22,7 @@ ALLOWED_COVER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_COVER_SIZE = 5 * 1024 * 1024
 ALLOWED_CONTRACT_TERMS_EXTENSION = ".pdf"
 MAX_CONTRACT_TERMS_SIZE = 15 * 1024 * 1024
+MAX_COST_INCREASE_SIZE = 15 * 1024 * 1024
 
 
 def _projects_root():
@@ -335,6 +337,35 @@ def create_project():
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 
+def _estimate_totals(root, slug):
+    """Стоимость по видам работ из сметы проекта — то, с чем сверяется столбец
+    «было» файла удорожания. Пустой словарь, если сметы нет или её не удалось
+    разобрать: тогда сверять просто не с чем, и об этом честно говорится на
+    странице, а не выдаётся за сошедшуюся проверку.
+
+    Читается тем же кодом, что и сравнение проектов, — иначе одна и та же
+    смета давала бы здесь одни цифры, а там другие.
+    """
+    return excel_report.estimate_costs(root, slug)[0]
+
+
+def _cost_increase_report(root, slug):
+    """Удорожание по видам работ, или None, если читать нечего.
+
+    None и там, где файл есть, но прочитать его не удалось: файл, который
+    после загрузки успели поправить в Excel, не должен ронять всю страницу
+    проекта — на ней, кроме удорожания, есть и паспорт, и смета.
+    """
+    path = storage.cost_increase_path(root, slug)
+    if not path.exists():
+        return None
+    try:
+        return cost_increase.read_report(path, _estimate_totals(root, slug))
+    except cost_increase.CostIncreaseError as e:
+        current_app.logger.warning("Не удалось прочитать файл удорожания: %s", e)
+        return None
+
+
 @bp.route("/projects/<slug>", methods=["GET"])
 def project_page(slug):
     root = _projects_root()
@@ -346,6 +377,7 @@ def project_page(slug):
     data = passport_module.load_passport(path)
     estimate_file = storage.estimate_path(root, slug)
     has_estimate = estimate_file.exists()
+    increase_file = storage.cost_increase_path(root, slug)
     return render_template(
         "project.html",
         slug=slug,
@@ -362,6 +394,13 @@ def project_page(slug):
         sheets=estimate.read_estimate(estimate_file) if has_estimate else [],
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
+        has_cost_increase=increase_file.exists(),
+        cost_increase_report=_cost_increase_report(root, slug),
+        format_percent=cost_increase.format_percent,
+        format_delta=cost_increase.format_delta,
+        cost_increase_problem=cost_increase.PROBLEM_MESSAGES.get(
+            request.args.get("increase")
+        ),
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
         contract_auto_fields=data.get("contract_auto_fields", []),
@@ -428,6 +467,52 @@ def upload_contract_terms(slug):
     # A problem code travels back as a query parameter rather than a flash
     # message: flashing would need a SECRET_KEY, which this app doesn't set.
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
+
+
+@bp.route("/projects/<slug>/cost-increase", methods=["POST"])
+def upload_cost_increase(slug):
+    """Загрузить или заменить файл удорожания.
+
+    Файл сначала читается и только потом сохраняется. Иначе неудачная замена —
+    не тот файл, испорченный файл — стирала бы прежний, рабочий, и человек
+    оставался бы вообще без удорожания вместо того, чтобы просто повторить
+    загрузку.
+    """
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    xlsx_file = request.files.get("cost_increase_file")
+    if not xlsx_file or not xlsx_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.project_page", slug=slug, increase=code))
+
+    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return refuse("format")
+
+    data = xlsx_file.read()
+    if len(data) > MAX_COST_INCREASE_SIZE:
+        return refuse("too_big")
+    try:
+        lines = cost_increase.read_lines(io.BytesIO(data))
+    except cost_increase.CostIncreaseError as e:
+        current_app.logger.warning("Файл удорожания отклонён: %s", e)
+        return refuse("unreadable")
+
+    # Удорожание считается здесь же, при загрузке, и попадает в журнал: если
+    # цифра на странице потом вызовет вопросы, будет видно, что программа
+    # получила из этого файла в момент загрузки.
+    report = cost_increase.build_report(lines, _estimate_totals(root, slug))
+    current_app.logger.info(
+        "Проект «%s»: удорожание %.2f руб. от %s",
+        slug, report.total.delta,
+        "сметы" if report.from_estimate else "столбца «было»",
+    )
+
+    storage.cost_increase_path(root, slug).write_bytes(data)
+    return redirect(url_for("main.project_page", slug=slug))
 
 
 @bp.route("/projects/<slug>/contract", methods=["POST"])

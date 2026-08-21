@@ -1699,3 +1699,302 @@ def test_one_project_alone_gets_no_pair_cards(tmp_path):
     body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
 
     assert "Сравнение двух объектов" not in body
+
+
+# --- удорожание объекта ----------------------------------------------------
+
+def _increase_bytes(rows, *, header_row=1):
+    """Файл удорожания той же формы, что настоящий: названия работ — в столбце
+    без заголовка, деньги — под «было» и «стало»."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=header_row, column=3, value="было")
+    ws.cell(row=header_row, column=4, value="стало")
+    for offset, (name, was, now) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=1, value=offset + 1)
+        ws.cell(row=row, column=2, value=name)
+        ws.cell(row=row, column=3, value=was)
+        ws.cell(row=row, column=4, value=now)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _upload_increase(client, slug, data, filename="udorozhanie.xlsx"):
+    return client.post(
+        f"/projects/{slug}/cost-increase",
+        data={"cost_increase_file": (io.BytesIO(data), filename)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_the_project_page_offers_to_upload_a_cost_increase_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Удорожание объекта" in body
+    assert "Загрузить файл удорожания" in body
+
+
+def test_an_uploaded_cost_increase_file_shows_a_percentage_per_kind_of_work(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_increase(client, slug, _increase_bytes([
+        ("Устройство гидроизоляции подземной части здания", 110099464.84, 123439548.48),
+        ("Кровля", 145926597.99, 145926597.99),
+    ]))
+
+    assert resp.status_code == 302
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Гидроизоляция подземной части" in body
+    assert "+12,1 %" in body
+    assert "+13 340 083.64" in body
+    # Кровля не сдвинулась — и это видно как «0 %», а не как «+0,0 %».
+    assert "0 %" in body
+    assert "Заменить файл удорожания" in body
+
+
+def test_the_two_vis_rows_are_shown_as_one_line_of_engineering_systems(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    _upload_increase(client, slug, _increase_bytes([
+        ("ВИС - механические системы", 1120700487.64, 1120700487.64),
+        ("ВИС - Электрические и слаботочные системы", 819317798.55, 819317798.55),
+    ]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "1 940 018 286.19" in body
+    # Одна строка, а не две: суммы отдельных «ВИС» на странице нет.
+    assert "1 120 700 487.64" not in body
+
+
+def test_work_that_was_not_in_the_estimate_is_shown_as_new_work(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    _upload_increase(client, slug, _increase_bytes([("Благоустройство, дороги", 0, 207987892.97)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "новые работы" in body
+    assert "+207 987 892.97" in body
+
+
+def test_uploading_a_newer_cost_increase_file_replaces_the_previous_one(tmp_path):
+    # Файл накопительный: в новой версии уже учтено всё, что было в прежней,
+    # поэтому она её заменяет, а не дополняет.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 130.0)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "+30,0 %" in body
+    assert "+10,0 %" not in body
+
+
+def test_an_unreadable_cost_increase_file_is_refused_and_the_old_one_kept(tmp_path):
+    # Замена, которая не удалась, не должна оставлять человека вообще без
+    # удорожания: прежний файл на месте, а сказано ровно то, что произошло.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
+
+    resp = _upload_increase(client, slug, b"not a workbook at all")
+
+    assert resp.status_code == 302
+    assert "increase=unreadable" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?increase=unreadable").get_data(as_text=True)
+    assert "Прежний файл оставлен на месте" in body
+    assert "+10,0 %" in body
+
+
+def test_a_cost_increase_file_without_the_money_columns_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    wb = Workbook()
+    wb.active.append(["Раздел", "Сумма"])
+    wb.active.append(["Кровля", 100])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    resp = _upload_increase(client, slug, buf.getvalue())
+
+    assert "increase=unreadable" in resp.headers["Location"]
+
+
+def test_a_cost_increase_file_in_the_wrong_format_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_increase(client, slug, b"whatever", filename="udorozhanie.pdf")
+
+    assert "increase=format" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?increase=format").get_data(as_text=True)
+    assert "должен быть в формате .xlsx" in body
+
+
+def test_an_oversized_cost_increase_file_is_refused(tmp_path):
+    from app import routes
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_increase(client, slug, b"x" * (routes.MAX_COST_INCREASE_SIZE + 1))
+
+    assert "increase=too_big" in resp.headers["Location"]
+
+
+def test_uploading_a_cost_increase_file_to_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = _upload_increase(client, "нет-такого", _increase_bytes([("Кровля", 1.0, 2.0)]))
+
+    assert resp.status_code == 404
+
+
+def test_rows_of_the_cost_increase_file_with_no_line_in_the_report_are_named(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    _upload_increase(client, slug, _increase_bytes([
+        ("Кровля", 100.0, 110.0),
+        ("Аренда вертолётной площадки", 50.0, 60.0),
+    ]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Аренда вертолётной площадки" in body
+
+
+def test_a_cost_increase_file_broken_after_it_was_saved_does_not_break_the_page(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    storage.cost_increase_path(tmp_path, slug).write_bytes(b"no longer a workbook")
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 200
+    assert "прочитать его не удалось" in resp.get_data(as_text=True)
+
+
+# --- удорожание считается от сметы ------------------------------------------
+
+def test_without_an_estimate_the_page_says_the_baseline_is_the_file_itself(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Смета не загружена, поэтому удорожание считается от столбца «было»" in body
+    assert "Было, руб." in body
+
+
+def test_with_an_estimate_the_increase_is_stalo_against_the_estimate(tmp_path):
+    # Ровно то правило, ради которого всё это и делается: база — смета,
+    # «стало» — сколько работы стоят теперь.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
+
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 1_300_000.0)]))
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Удорожание считается от сметы" in body
+    assert "Смета, руб." in body
+    # 1 300 000 против 1 000 000 по смете, а не против 1 100 000 из «было».
+    assert "+300 000" in body
+    assert "+30,0 %" in body
+    assert "+200 000" not in body
+
+
+def test_an_empty_stalo_is_taken_from_was_and_said_so(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
+
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 0)]))
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "взято «было»" in body
+    assert "+100 000" in body
+
+
+def test_a_section_of_the_estimate_absent_from_the_file_is_shown_unchanged(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Тест",
+        [("8. Кровля", 100.0), ("6. Фасадные работы", 3_000_000.0)],
+    )
+
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Фасад" in body
+    assert "в файле нет данных" in body
+    # И стоимость раздела осталась на месте, а не прочиталась как экономия.
+    assert "3 000 000" in body
+    assert "−3 000 000" not in body
+
+
+def test_work_the_estimate_never_priced_reads_as_new_work(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 100.0)])
+
+    _upload_increase(client, slug, _increase_bytes([
+        ("Кровля", 100.0, 100.0),
+        ("Благоустройство, дороги", 0, 5_000_000.0),
+    ]))
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "новые работы" in body
+    assert "+5 000 000" in body
+
+
+def test_the_upload_is_never_refused_over_the_estimate(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
+
+    resp = _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 1_200_000.0)]))
+
+    assert resp.status_code == 302
+    assert "increase=" not in resp.headers["Location"]
+    assert storage.cost_increase_path(tmp_path, slug).exists()
+
+
+def test_an_estimate_of_nothing_does_not_put_the_word_none_on_the_page(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 0.0)])
+
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "+110" in body
+    assert "None" not in body

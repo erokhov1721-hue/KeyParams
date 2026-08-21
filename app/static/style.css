@@ -2108,3 +2108,74 @@ select option {
 .sections-table tr.is-minor .dev-label {
   color: var(--text-500);
 }
+
+/* Удорожание по видам работ. Таблица та же, что на странице сравнения, но
+   стоит в узкой колонке страницы проекта, а числа в ней — одиннадцатиразрядные:
+   отступы уже, шрифт мельче, а ширина задана явно, чтобы столбцы не сжимались
+   до неразборчивого, а колонка прокручивалась вбок. */
+.increase-table {
+  /* Шире колонки страницы: пять столбцов одиннадцатиразрядных чисел в 750
+     пикселей не встают. Таблица уезжает вбок внутри своей обёртки, а название
+     вида работ при этом остаётся на месте — столбец с ним прилипший. */
+  min-width: 860px;
+  font-size: 13px;
+}
+
+.increase-table th,
+.increase-table td {
+  padding: 10px;
+}
+
+.increase-table .sections-label-col {
+  width: clamp(160px, 18vw, 220px);
+}
+
+.increase-table tfoot .sections-label-col {
+  color: var(--text-100);
+}
+
+/* Дороже — красным, дешевле — цветом акцента, без изменений — приглушённо.
+   Ноль в столбце удорожания это не новость, и выделять его незачем. */
+.increase-delta.is-up {
+  color: var(--red);
+}
+
+.increase-delta.is-down {
+  color: var(--accent);
+}
+
+.increase-delta.is-flat {
+  color: var(--text-500);
+}
+
+/* Работы, которых в смете не было: процент считать не от чего, и вместо
+   цифры здесь стоит объяснение. */
+.increase-new {
+  color: var(--amber);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* От чего считается удорожание — над таблицей. Не предупреждение: сказать
+   нужно не «что-то не так», а «сравнивали вот с этим». */
+.increase-basis {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-500);
+}
+
+.increase-basis.is-unknown {
+  color: var(--amber);
+}
+
+/* Откуда взята цифра, если не из «стало» — второй строкой под ней. Мельче и
+   другим цветом: это оговорка к числу, а не число. */
+.increase-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--amber);
+}

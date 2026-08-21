@@ -132,13 +132,13 @@
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>
         </form>
-        <form class="contract-upload-form" method="post"
+        <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
           <label class="contract-replace-link" for="contract-terms-input">Заменить файл протокола (PDF)</label>
           <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
         </form>
         {% else %}
-        <form class="contract-upload-form" method="post"
+        <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
           <label class="file-drop" for="contract-terms-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -206,6 +206,127 @@
           {% endfor %}
         {% else %}
         <p class="accordion-empty">Смета не загружена для этого проекта.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Как и предупреждение по протоколу — снаружи гармошки: внутри закрытой
+       панели его бы никто не прочитал, а сказать нужно именно то, что замена
+       не состоялась. #}
+    {% if cost_increase_problem %}
+    <div class="alert alert-error">Удорожание: {{ cost_increase_problem }}</div>
+    {% endif %}
+
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Удорожание объекта</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if cost_increase_report %}
+        {% set report = cost_increase_report %}
+        {# От чего считается удорожание — первой строкой, до цифр: иначе по
+           таблице не понять, с чем сравнивали. #}
+        {% if report.from_estimate %}
+        <p class="increase-basis">
+          Удорожание считается от сметы: столбец «стало» против стоимости раздела
+          в смете. К «было» программа обращается только там, где «стало» пустое.
+        </p>
+        {% else %}
+        <p class="increase-basis is-unknown">
+          Смета не загружена, поэтому удорожание считается от столбца «было»
+          самого файла. Загрузите смету в проект, чтобы считать от неё.
+        </p>
+        {% endif %}
+        <div class="sections-table-wrap">
+          <table class="sections-table increase-table">
+            <thead>
+              <tr>
+                <th class="sections-label-col">Вид работ</th>
+                <th>{{ 'Смета, руб.' if report.from_estimate else 'Было, руб.' }}</th>
+                <th>Стало, руб.</th>
+                <th>Удорожание, руб.</th>
+                <th>Удорожание, %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in report.rows %}
+              <tr>
+                <td class="sections-label-col">
+                  {# В подсказке — как этот вид работ назван в самом файле: строк
+                     ВИС там две, и без этого не видно, из чего сложилась одна. #}
+                  <span class="sections-label" title="{{ row.sources | join('; ') }}">{{ row.label }}</span>
+                </td>
+                <td>{{ format_number(row.baseline) }}</td>
+                <td>
+                  {{ format_number(row.current) }}
+                  {# Откуда взята цифра — только там, где это не «стало».
+                     Молча подставить «было» вместо «стало» нельзя: разница
+                     между «работы не пересчитывали» и «работы стоят столько»
+                     как раз и есть то, что человек должен видеть. #}
+                  {% if row.source == 'was' %}
+                  <span class="increase-note">в «стало» пусто — взято «было»</span>
+                  {% elif row.source == 'none' %}
+                  <span class="increase-note">в файле нет данных</span>
+                  {% endif %}
+                </td>
+                <td class="increase-delta {{ 'is-up' if row.delta > 0 else ('is-down' if row.delta < 0 else 'is-flat') }}">{{ format_delta(row.delta) }}</td>
+                <td class="increase-delta {{ 'is-up' if row.delta > 0 else ('is-down' if row.delta < 0 else 'is-flat') }}">
+                  {% if row.percent is none %}
+                  <span class="increase-new" title="{{ 'В смете этих работ не было — считать процент не от чего' if report.from_estimate else 'В столбце «было» ноль — считать процент не от чего' }}">новые работы</span>
+                  {% else %}
+                  {{ format_percent(row.percent) }}
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              {% set total = report.total %}
+              <tr>
+                <td class="sections-label-col">{{ total.label }}</td>
+                <td>{{ format_number(total.baseline) }}</td>
+                <td>{{ format_number(total.current) }}</td>
+                <td class="increase-delta {{ 'is-up' if total.delta > 0 else ('is-down' if total.delta < 0 else 'is-flat') }}">{{ format_delta(total.delta) }}</td>
+                <td class="increase-delta {{ 'is-up' if total.delta > 0 else ('is-down' if total.delta < 0 else 'is-flat') }}">{{ format_percent(total.percent) or '—' }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        {% if cost_increase_report.unmatched %}
+        <p class="field-hint">
+          Строки файла, для которых в отчёте нет вида работ, в таблицу не попали:
+          {{ cost_increase_report.unmatched | join('; ') }}.
+        </p>
+        {% endif %}
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_cost_increase', slug=slug) }}" enctype="multipart/form-data">
+          <label class="contract-replace-link" for="cost-increase-input">Заменить файл удорожания (Excel)</label>
+          <input class="file-input" type="file" id="cost-increase-input" name="cost_increase_file" accept=".xlsx">
+        </form>
+        {% else %}
+        {% if has_cost_increase %}
+        <p class="accordion-empty">
+          Файл удорожания загружен, но прочитать его не удалось — загрузите файл заново.
+        </p>
+        {% endif %}
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_cost_increase', slug=slug) }}" enctype="multipart/form-data">
+          <label class="file-drop" for="cost-increase-input">
+            <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+              <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+            </svg>
+            <span class="file-drop-text">Загрузить файл удорожания (Excel)</span>
+          </label>
+          <input class="file-input" type="file" id="cost-increase-input" name="cost_increase_file" accept=".xlsx">
+          <span class="field-hint">
+            Нужна таблица со столбцами «было» и «стало» по видам работ. Файл
+            накопительный: загружайте его последнюю версию, она заменит прежнюю.
+          </span>
+        </form>
         {% endif %}
       </div>
     </div>
@@ -315,9 +436,9 @@
     window.addEventListener('resize', hide);
   })();
 
-  document.querySelectorAll('.contract-upload-form .file-input').forEach(function (input) {
+  document.querySelectorAll('.file-upload-form .file-input').forEach(function (input) {
     input.addEventListener('change', function () {
-      if (input.files[0]) input.closest('.contract-upload-form').submit();
+      if (input.files[0]) input.closest('.file-upload-form').submit();
     });
   });
 
