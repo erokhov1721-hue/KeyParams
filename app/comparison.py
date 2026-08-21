@@ -11,7 +11,7 @@ today's money.
 import re
 from dataclasses import dataclass
 
-from . import estimate_sections, extractors, passport as passport_module
+from . import cost_increase, estimate_sections, extractors, passport as passport_module
 from .passport import format_number
 
 DEFAULT_VAT_RATE = 22.0
@@ -517,3 +517,158 @@ def _add_weights(rows, base_total):
         )
         row["share_display"] = _share_text(row["share"])
         row["minor"] = row["share"] is not None and row["share"] < MINOR_SHARE
+
+
+# --- удорожание по проектам ------------------------------------------------
+
+# Порог, ниже которого движение считается округлением, а не удорожанием. Тот
+# же рубль, что и в чтении файла удорожания: считать раздел «подорожавшим»
+# из-за копейки нельзя, иначе частота «дорожает в 5 из 5» перестанет что-то
+# значить.
+INCREASE_EPSILON = 1.0
+
+
+def _project_increase(slug, passport, report, adjustments):
+    """Удорожание одного проекта — одной строкой для диаграммы.
+
+    Деньги приводятся тем же множителем, что и всё остальное на странице: без
+    этого проекты разных лет складывались бы в общий итог как есть. Процент
+    множитель не задевает — он отношение внутри одного проекта, и поправка
+    сокращается.
+    """
+    factor, notes = project_factor(
+        _source_vat(passport), passport.get("year_signed"), adjustments,
+    )
+    total = report.total
+    return {
+        "slug": slug,
+        "name": passport.get("project_name") or slug,
+        "baseline": total.baseline * factor,
+        "delta": total.delta * factor,
+        "percent": total.percent,
+        "percent_display": cost_increase.format_percent(total.percent) or "—",
+        "money_display": _signed(total.delta * factor, UNIT_MONEY),
+        "dearer": total.delta > INCREASE_EPSILON,
+        "from_estimate": report.from_estimate,
+        "notes": notes,
+    }
+
+
+def _work_rows(slugs, reports, factors):
+    """Виды работ по всем проектам сразу: как часто дорожают и на сколько.
+
+    Частота считается от числа проектов, у которых этот вид работ вообще есть,
+    а не от всех выбранных: раздела, которого у проекта нет, он не удорожал и
+    не удержал, и записывать его в знаменатель нечестно.
+    """
+    gathered = {}
+    for slug in slugs:
+        report = reports.get(slug)
+        if report is None:
+            continue
+        for row in report.rows:
+            entry = gathered.setdefault(row.key, {
+                "key": row.key,
+                "label": estimate_sections.CATEGORY_LABELS.get(row.key, row.key),
+                "delta": 0.0,
+                "projects_total": 0,
+                "projects_up": 0,
+                "percents": [],
+            })
+            entry["delta"] += row.delta * factors[slug]
+            entry["projects_total"] += 1
+            if row.delta > INCREASE_EPSILON:
+                entry["projects_up"] += 1
+            if row.percent is not None:
+                entry["percents"].append(row.percent)
+
+    rows = list(gathered.values())
+    for row in rows:
+        percents = row.pop("percents")
+        row["avg_percent"] = sum(percents) / len(percents) if percents else None
+        if row["avg_percent"] is not None:
+            row["avg_percent_display"] = cost_increase.format_percent(row["avg_percent"])
+        elif row["delta"] > INCREASE_EPSILON:
+            # Работ, которых в сметах не было, ни у одного проекта: процента нет
+            # ни у одной строки, и прочерк рядом с суммой в четыреста миллионов
+            # читался бы как «неизвестно», а известно как раз всё.
+            row["avg_percent_display"] = "новые работы"
+        else:
+            row["avg_percent_display"] = "—"
+        row["frequency"] = row["projects_up"] / row["projects_total"]
+        row["frequency_display"] = f'{row["projects_up"]} из {row["projects_total"]}'
+        row["frequency_pct"] = round(row["frequency"] * 100, 1)
+        row["delta_display"] = _signed(row["delta"], UNIT_MONEY)
+        row["dearer"] = row["delta"] > INCREASE_EPSILON
+
+    peak = max((abs(row["delta"]) for row in rows), default=0.0)
+    for row in rows:
+        row["width_pct"] = round(abs(row["delta"]) / peak * 100, 1) if peak else 0
+    # Сначала то, что дороже всего обошлось, — это и есть ответ на «какие работы
+    # максимально ведут к удорожанию». Частота стоит рядом отдельным столбцом, и
+    # по ней таблицу можно переупорядочить на месте.
+    rows.sort(key=lambda row: row["delta"], reverse=True)
+    return rows
+
+
+def build_increase_summary(slugs, passports, reports, adjustments):
+    """Удорожание по выбранным проектам, или None, когда его не с чего считать.
+
+    ``reports`` — ``{slug: cost_increase.Report | None}``: у проекта без файла
+    удорожания его нет, и в расчёт он не идёт. Ни одного файла на всю выборку —
+    блока на странице нет вовсе: таблица из прочерков не сообщает ничего.
+    """
+    reports = reports or {}
+    with_data = [slug for slug in slugs if reports.get(slug) is not None]
+    if not with_data:
+        return None
+
+    factors = {
+        slug: project_factor(
+            _source_vat(passports[slug]), passports[slug].get("year_signed"),
+            adjustments,
+        )[0]
+        for slug in with_data
+    }
+    projects = [
+        _project_increase(slug, passports[slug], reports[slug], adjustments)
+        for slug in with_data
+    ]
+
+    # Шкала — по крупнейшему проценту в выборке: самый подорожавший проект
+    # занимает свою половину трека целиком, остальные — сколько приходится на
+    # них. Фиксированная шкала здесь не годится, потому что удорожание бывает и
+    # в один процент, и в сорок.
+    peak = max(
+        (abs(p["percent"]) for p in projects if p["percent"] is not None), default=0.0
+    )
+    for project in projects:
+        project["width_pct"] = (
+            round(abs(project["percent"]) / peak * 100, 1)
+            if project["percent"] is not None and peak else 0
+        )
+
+    percents = [p["percent"] for p in projects if p["percent"] is not None]
+    average_percent = sum(percents) / len(percents) if percents else None
+    total_delta = sum(p["delta"] for p in projects)
+    total_baseline = sum(p["baseline"] for p in projects)
+    weighted = (total_delta / total_baseline * 100) if total_baseline else None
+
+    return {
+        "projects": projects,
+        "works": _work_rows(with_data, reports, factors),
+        "average_percent": average_percent,
+        "average_percent_display": cost_increase.format_percent(average_percent) or "—",
+        "total_delta": total_delta,
+        "total_delta_display": _signed(total_delta, UNIT_MONEY),
+        # Средний процент и процент по сумме — разные числа, и разойтись они
+        # могут сильно: маленький проект, подорожавший вдвое, тянет средний
+        # вверх, а на сумму почти не влияет. Поэтому оба, и каждый подписан.
+        "weighted_percent": weighted,
+        "weighted_percent_display": cost_increase.format_percent(weighted) or "—",
+        "projects_with_data": len(with_data),
+        "projects_total": len(slugs),
+        "without_estimate": [
+            p["name"] for p in projects if not p["from_estimate"]
+        ],
+    }

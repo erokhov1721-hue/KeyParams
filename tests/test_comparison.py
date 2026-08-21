@@ -1,3 +1,5 @@
+import pytest
+
 from app import comparison
 from app.comparison import Adjustments
 
@@ -483,3 +485,189 @@ def test_a_share_under_ten_per_cent_keeps_one_decimal():
 
     roof = next(row for row in table["rows"] if row["key"] == "roof")
     assert roof["share_display"] == "1,6%"
+
+
+# --- удорожание по проектам ---
+
+def _report(rows, estimate=None):
+    """Отчёт по удорожанию из готовых строк ``(название, было, стало)``.
+
+    Собирается настоящим ``cost_increase.build_report``, а не подделкой: если
+    правило расчёта удорожания изменится, сводка по проектам должна поехать
+    вместе с ним, а не остаться верной по отношению к выдуманным данным.
+    """
+    from app import cost_increase
+
+    lines = [cost_increase.Line(name, was, now) for name, was, now in rows]
+    return cost_increase.build_report(lines, estimate)
+
+
+def test_no_project_with_a_cost_increase_file_means_no_block():
+    summary = comparison.build_increase_summary(
+        ["a", "b"], {"a": _passport(), "b": _passport()}, {"a": None, "b": None}, NONE,
+    )
+
+    assert summary is None
+
+
+def test_each_project_gets_its_total_increase():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("Левый"), "b": _passport("Правый")},
+        {
+            "a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0}),
+            "b": _report([("Кровля", 100.0, 90.0)], {"roof": 100.0}),
+        },
+        NONE,
+    )
+
+    left, right = summary["projects"]
+    assert left["name"] == "Левый"
+    assert left["percent"] == pytest.approx(30.0)
+    assert left["percent_display"] == "+30,0 %"
+    assert left["money_display"] == "+30 ₽"
+    assert left["dearer"] is True
+    assert right["percent"] == pytest.approx(-10.0)
+    assert right["dearer"] is False
+
+
+def test_a_project_without_a_file_is_left_out_and_counted():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("Есть"), "b": _passport("Нет")},
+        {"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0}), "b": None},
+        NONE,
+    )
+
+    assert [p["name"] for p in summary["projects"]] == ["Есть"]
+    assert summary["projects_with_data"] == 1
+    assert summary["projects_total"] == 2
+
+
+def test_the_average_percentage_is_the_mean_over_projects():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport(), "b": _passport()},
+        {
+            "a": _report([("Кровля", 100.0, 110.0)], {"roof": 100.0}),
+            "b": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0}),
+        },
+        NONE,
+    )
+
+    assert summary["average_percent"] == pytest.approx(20.0)
+    assert summary["average_percent_display"] == "+20,0 %"
+
+
+def test_the_percentage_by_sum_is_kept_apart_from_the_average():
+    # Маленький проект, подорожавший вдвое, тянет средний процент вверх, а на
+    # сумму почти не влияет. Одно число вместо двух здесь врёт.
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport(), "b": _passport()},
+        {
+            "a": _report([("Кровля", 10.0, 20.0)], {"roof": 10.0}),
+            "b": _report([("Кровля", 1000.0, 1000.0)], {"roof": 1000.0}),
+        },
+        NONE,
+    )
+
+    assert summary["average_percent"] == pytest.approx(50.0)
+    assert round(summary["weighted_percent"], 4) == round(10 / 1010 * 100, 4)
+    assert summary["total_delta"] == pytest.approx(10.0)
+
+
+def test_works_count_how_often_each_kind_of_work_gets_dearer():
+    summary = comparison.build_increase_summary(
+        ["a", "b", "c"],
+        {slug: _passport() for slug in ("a", "b", "c")},
+        {
+            "a": _report([("Фасадные работы", 100.0, 110.0), ("Кровля", 100.0, 110.0)],
+                         {"facade": 100.0, "roof": 100.0}),
+            "b": _report([("Фасадные работы", 100.0, 120.0), ("Кровля", 100.0, 100.0)],
+                         {"facade": 100.0, "roof": 100.0}),
+            "c": _report([("Фасадные работы", 100.0, 130.0)], {"facade": 100.0}),
+        },
+        NONE,
+    )
+    works = {row["key"]: row for row in summary["works"]}
+
+    assert works["facade"]["frequency_display"] == "3 из 3"
+    # Кровля есть только у двух проектов, и знаменатель — два, а не три:
+    # раздела, которого у проекта нет, он не удорожал.
+    assert works["roof"]["frequency_display"] == "1 из 2"
+
+
+def test_works_come_biggest_increase_first():
+    summary = comparison.build_increase_summary(
+        ["a"],
+        {"a": _passport()},
+        {"a": _report(
+            [("Кровля", 100.0, 110.0), ("Фасадные работы", 100.0, 200.0),
+             ("Котлован", 100.0, 90.0)],
+            {"roof": 100.0, "facade": 100.0, "excavation": 100.0},
+        )},
+        NONE,
+    )
+
+    assert [row["key"] for row in summary["works"]] == ["facade", "roof", "excavation"]
+    assert summary["works"][-1]["dearer"] is False
+    assert summary["works"][-1]["frequency_display"] == "0 из 1"
+
+
+def test_the_widest_bar_belongs_to_the_biggest_increase():
+    summary = comparison.build_increase_summary(
+        ["a"],
+        {"a": _passport()},
+        {"a": _report(
+            [("Фасадные работы", 100.0, 200.0), ("Кровля", 100.0, 125.0)],
+            {"facade": 100.0, "roof": 100.0},
+        )},
+        NONE,
+    )
+    works = {row["key"]: row for row in summary["works"]}
+
+    assert works["facade"]["width_pct"] == 100.0
+    assert works["roof"]["width_pct"] == 25.0
+
+
+def test_work_no_estimate_ever_priced_is_named_new_work_not_a_dash():
+    summary = comparison.build_increase_summary(
+        ["a"],
+        {"a": _passport()},
+        {"a": _report([("Благоустройство, дороги", 0.0, 5_000_000.0)], {"roof": 1.0})},
+        NONE,
+    )
+    works = {row["key"]: row for row in summary["works"]}
+
+    assert works["landscaping"]["avg_percent"] is None
+    assert works["landscaping"]["avg_percent_display"] == "новые работы"
+
+
+def test_the_corrections_move_the_money_and_leave_the_percentage_alone():
+    # Поправка — постоянный множитель внутри проекта, и в отношении «стало» к
+    # смете она сокращается. В рублях — нет, и общий итог по проектам разных
+    # лет без неё складывать нельзя.
+    passports = {"a": _passport(year_signed="2020")}
+    reports = {"a": _report([("Кровля", 100.0, 200.0)], {"roof": 100.0})}
+
+    plain = comparison.build_increase_summary(["a"], passports, reports, NONE)
+    lifted = comparison.build_increase_summary(["a"], passports, reports, INFLATION_10)
+
+    assert plain["projects"][0]["percent"] == pytest.approx(100.0)
+    assert lifted["projects"][0]["percent"] == pytest.approx(100.0)
+    assert lifted["total_delta"] > plain["total_delta"]
+
+
+def test_a_project_without_an_estimate_is_named_so_its_baseline_is_not_taken_for_one():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("Со сметой"), "b": _passport("Без сметы")},
+        {
+            "a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0}),
+            "b": _report([("Кровля", 100.0, 130.0)]),
+        },
+        NONE,
+    )
+
+    assert summary["without_estimate"] == ["Без сметы"]

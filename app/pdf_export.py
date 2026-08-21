@@ -477,6 +477,125 @@ def _sections_block(sections, styles, page_width):
     return story
 
 
+def _increase_block(increase, styles, page_width):
+    """«Удорожание проектов» — те же плитки, диаграмма и таблица, что на экране."""
+    if not increase:
+        return []
+
+    sub = (
+        f'«Стало» против сметы, по файлам удорожания. Учтены '
+        f'{increase["projects_with_data"]} из {increase["projects_total"]} выбранных '
+        f'проектов — у остальных файла удорожания нет.'
+    )
+    if increase["without_estimate"]:
+        names = "», «".join(increase["without_estimate"])
+        sub += f' У «{names}» нет сметы, поэтому там считалось от столбца «было».'
+
+    story = [
+        Paragraph("Удорожание проектов", styles["heading"]),
+        Paragraph(sub, styles["sub"]),
+    ]
+
+    # Плитки — двумя ячейками в один ряд: крупная цифра и подпись под ней,
+    # как на экране. Диаграммой одно число не рисуют ни там, ни здесь.
+    tiles = Table(
+        [[
+            _tile(increase["average_percent_display"], "Средний % удорожания",
+                  "среднее по проектам", styles),
+            _tile(increase["total_delta_display"], "Удорожание по всем проектам",
+                  f'{increase["weighted_percent_display"]} к сумме смет', styles),
+        ]],
+        colWidths=[page_width / 2.0] * 2,
+    )
+    tiles.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(tiles)
+
+    projects = increase["projects"]
+    if len(projects) > 1:
+        story.append(Paragraph(
+            "Общее увеличение стоимости по проектам "
+            f'<font size="7" color="{_hex(MUTED)}">'
+            "влево — дешевле сметы, вправо — дороже</font>",
+            styles["subheading"],
+        ))
+        label_w = min(180.0, page_width * 0.30)
+        value_w = 120.0
+        bar_w = max(page_width - label_w - value_w - 12, 60.0)
+        data = []
+        for project in projects:
+            colour = RED if project["dearer"] else ACCENT
+            value = (
+                f'<font color="{_hex(colour)}">{project["percent_display"]}</font>'
+                f'<br/><font size="7" color="{_hex(MUTED)}">'
+                f'{project["money_display"]}</font>'
+            )
+            data.append([
+                Paragraph(project["name"], styles["cell"]),
+                _two_sided_drawing(bar_w, project["width_pct"], project["dearer"]),
+                Paragraph(value, styles["cell_right"]),
+            ])
+        table = Table(data, colWidths=[label_w, bar_w + 12, value_w])
+        table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
+        ]))
+        story.append(table)
+
+    story.append(Paragraph("Виды работ, которые делают смету дороже", styles["subheading"]))
+    label_w = min(210.0, page_width * 0.34)
+    rest = max(page_width - label_w, 180.0) / 3.0
+    data = [[
+        Paragraph("Вид работ", styles["head"]),
+        Paragraph("дорожает в", styles["head"]),
+        Paragraph("средний % удорожания", styles["head"]),
+        Paragraph("всего удорожания", styles["head"]),
+    ]]
+    for row in increase["works"]:
+        colour = RED if row["dearer"] else ACCENT
+        data.append([
+            Paragraph(row["label"], styles["cell"]),
+            Paragraph(row["frequency_display"], styles["cell_right"]),
+            Paragraph(row["avg_percent_display"], styles["cell_right"]),
+            Paragraph(
+                f'<font color="{_hex(colour)}">{row["delta_display"]}</font>',
+                styles["cell_right"],
+            ),
+        ])
+    table = Table(data, colWidths=[label_w, rest, rest, rest], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    return story
+
+
+def _tile(value, label, note, styles):
+    """Плитка со крупной цифрой — одной ячейкой таблицы."""
+    return [
+        Paragraph(
+            f'<font size="16" color="{_hex(INK)}">{value}</font>', styles["body"],
+        ),
+        Paragraph(label, styles["cell_label"]),
+        Paragraph(note, styles["cell_muted"]),
+    ]
+
+
 def _pair_block(pair, styles, page_width):
     """«Сравнение двух объектов» — карточки и дельта по разделам."""
     if not pair:
@@ -569,7 +688,7 @@ def _pair_block(pair, styles, page_width):
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
-    sections=None, pair=None, terms=None,
+    sections=None, pair=None, terms=None, increase=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
@@ -601,9 +720,13 @@ def build_compare_pdf(
     if sections_story:
         story.append(PageBreak())
         story += sections_story
+    increase_story = _increase_block(increase, styles, page_width)
+    if increase_story:
+        story.append(PageBreak())
+        story += increase_story
     pair_story = _pair_block(pair, styles, page_width)
     if pair_story:
-        story.append(Spacer(1, 10))
+        story.append(PageBreak() if increase_story else Spacer(1, 10))
         story += pair_story
 
     doc.build(story)

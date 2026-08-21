@@ -167,6 +167,9 @@ def compare_projects():
         price_per_sqm=passport_module.price_per_sqm,
         sections=comparison.build_section_table(slugs, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
+        increase=comparison.build_increase_summary(
+            slugs, passports, _increase_reports(root, slugs, costs), adjustments,
+        ),
         adjustments=adjustments,
     )
 
@@ -185,6 +188,33 @@ def _pair_choice(slugs):
     if right is None:
         right = next((slug for slug in slugs if slug != left), None)
     return left, right
+
+
+def _increase_reports(root, slugs, costs):
+    """Удорожание каждого проекта — ``{slug: отчёт | None}``.
+
+    None у проекта без файла удорожания и у проекта, чей файл прочитать не
+    удалось: сравнение из-за одного испорченного файла падать не должно, а
+    в расчёт такой проект всё равно не идёт.
+
+    Смета берётся уже прочитанная — та же, что легла в таблицу разделов, —
+    чтобы удорожание на этой странице считалось от той же базы, что и цифры
+    рядом с ним.
+    """
+    reports = {}
+    for slug in slugs:
+        path = storage.cost_increase_path(root, slug)
+        if not path.exists():
+            reports[slug] = None
+            continue
+        try:
+            reports[slug] = cost_increase.read_report(path, costs.get(slug) or {})
+        except cost_increase.CostIncreaseError as e:
+            current_app.logger.warning(
+                "Проект «%s»: файл удорожания не прочитан: %s", slug, e
+            )
+            reports[slug] = None
+    return reports
 
 
 def _section_costs(root, slugs):
@@ -224,6 +254,9 @@ def compare_projects_pdf():
         sections=comparison.build_section_table(slugs, passports, costs, adjustments),
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
+        increase=comparison.build_increase_summary(
+            slugs, passports, _increase_reports(root, slugs, costs), adjustments,
+        ),
     )
     return Response(
         pdf_bytes,

@@ -1394,9 +1394,18 @@ select option {
 /* Только в карточках с таблицей: тот же заголовок используется и в карточке
    двух объектов, а у неё боковой отступ уже есть на ней самой. Здесь его
    нет — его держат ячейки, — поэтому заголовок отодвигается сам, ровно на
-   ту же величину, что и первая колонка. */
+   ту же величину, что и первая колонка.
+
+   Перечислено всё, что лежит в такой карточке помимо таблицы: плитки с
+   числами, подзаголовки и диаграмма из блока удорожания стоят рядом с
+   таблицей и обязаны начинаться с той же линии, что и её первая колонка.
+   Без этого они прижимались к краю карточки, а таблица отступала — и блок
+   читался как два разных блока, сдвинутых друг относительно друга. */
 .sections-card > .sections-head,
 .sections-card > .adjust-form,
+.sections-card > .stat-tiles,
+.sections-card > .pair-subtitle,
+.sections-card > .delta-list,
 .compare-card > .sections-head {
   margin-inline: var(--table-edge);
 }
@@ -2178,4 +2187,90 @@ select option {
   font-weight: 600;
   line-height: 1.35;
   color: var(--amber);
+}
+
+/* Удорожание проектов: два числа плитками, диаграмма по проектам и таблица
+   видов работ. */
+
+/* Средний процент и сумма — плитками, а не диаграммой: одно число диаграммой
+   не рисуют. Цифры — пропорциональными знаками, а не табличными: табличные
+   нужны там, где числа стоят столбиком друг под другом, а на крупной одиночной
+   цифре они только растягивают её. */
+.stat-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.stat-tile {
+  flex: 1 1 240px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+}
+
+/* Размер по ширине окна, но число всегда в одну строку: «+778 837 020 ₽»
+   переносится по пробелам между разрядами, и половина суммы уезжает на вторую
+   строку — прочитать такое нельзя. */
+.stat-value {
+  font-size: clamp(19px, 2vw, 26px);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-100);
+  white-space: nowrap;
+}
+
+.stat-label {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-100);
+}
+
+.stat-note {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-500);
+}
+
+/* Сумма в рублях — второй строкой под процентом: процент рисует полоска, а
+   рубли отвечают на «сколько это денег». */
+.delta-value-abs {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-500);
+}
+
+.works-table .sections-value {
+  text-align: right;
+}
+
+/* Полоска под суммой удорожания — от крупнейшего в выборке. Тонкая и без
+   рамки: она подсказывает порядок величин, а само число стоит над ней. */
+.works-bar {
+  margin-top: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-700);
+  overflow: hidden;
+}
+
+.works-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.works-bar-fill.is-worse {
+  background: var(--red);
+}
+
+.works-bar-fill.is-better {
+  background: var(--accent);
+}
+
+.works-table .sections-number.is-worse {
+  color: var(--red);
 }

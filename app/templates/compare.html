@@ -230,39 +230,122 @@
     </table>
   </div>
 
-  <script>
-    (function () {
-      var table = document.querySelector('.sections-table');
-      if (!table) return;
-      var body = table.tBodies[0];
+</div>
+{% endif %}
 
-      // Сортировка живёт только на время просмотра: это настройка чтения, а
-      // не данные, и гонять её через адрес страницы ради перезагрузки незачем.
-      table.querySelectorAll('.sections-sort').forEach(function (button) {
-        button.addEventListener('click', function () {
-          var index = Number(button.dataset.sortIndex);
-          var numeric = button.dataset.sortType === 'number';
-          var descending = button.dataset.order !== 'desc';
+{% if increase %}
+<div class="card sections-card">
+  <div class="sections-head">
+    <h2 class="chart-title">Удорожание проектов</h2>
+    <p class="sections-sub">
+      «Стало» против сметы, по файлам удорожания.
+      Учтены {{ increase.projects_with_data }} из {{ increase.projects_total }} выбранных
+      проектов — у остальных файла удорожания нет.
+      {% if increase.without_estimate %}
+      У «{{ increase.without_estimate | join('», «') }}» нет сметы, поэтому там
+      считалось от столбца «было».
+      {% endif %}
+    </p>
+  </div>
 
-          table.querySelectorAll('.sections-sort').forEach(function (other) {
-            if (other !== button) { other.removeAttribute('data-order'); }
-          });
-          button.dataset.order = descending ? 'desc' : 'asc';
+  {# Два числа, а не диаграмма: одно число диаграммой не рисуют. Оба сразу,
+     потому что разойтись они могут сильно — небольшой проект, подорожавший
+     вдвое, тянет средний процент вверх, а на сумму почти не влияет. #}
+  <div class="stat-tiles">
+    <div class="stat-tile">
+      <div class="stat-value">{{ increase.average_percent_display }}</div>
+      <div class="stat-label">Средний % удорожания</div>
+      <div class="stat-note">среднее по проектам</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ increase.total_delta_display }}</div>
+      <div class="stat-label">Удорожание по всем проектам</div>
+      <div class="stat-note">{{ increase.weighted_percent_display }} к сумме смет</div>
+    </div>
+  </div>
 
-          Array.from(body.rows)
-            .sort(function (a, b) {
-              var left = a.cells[index].dataset.sortValue;
-              var right = b.cells[index].dataset.sortValue;
-              var result = numeric
-                ? Number(left) - Number(right)
-                : left.localeCompare(right, 'ru');
-              return descending ? -result : result;
-            })
-            .forEach(function (row) { body.appendChild(row); });
-        });
-      });
-    })();
-  </script>
+  {% if increase.projects | length > 1 %}
+  <h3 class="pair-subtitle">
+    Общее увеличение стоимости по проектам
+    <span class="sections-sub">влево — дешевле сметы, вправо — дороже</span>
+  </h3>
+  <div class="delta-list">
+    {% for project in increase.projects %}
+    <div class="delta-row">
+      <div class="delta-label">{{ project.name }}</div>
+      <div class="delta-track">
+        <div class="delta-half">
+          {% if not project.dearer %}<div class="delta-fill is-better" style="width: {{ project.width_pct }}%"></div>{% endif %}
+        </div>
+        <div class="delta-half">
+          {% if project.dearer %}<div class="delta-fill is-worse" style="width: {{ project.width_pct }}%"></div>{% endif %}
+        </div>
+      </div>
+      <div class="delta-value {{ 'is-worse' if project.dearer else 'is-better' }}">
+        {{ project.percent_display }}
+        <span class="delta-value-abs">{{ project.money_display }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <h3 class="pair-subtitle">
+    Виды работ, которые делают смету дороже
+    <span class="sections-sub">по убыванию удорожания; столбцы можно отсортировать</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table works-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">
+            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+              Вид работ<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th class="sections-weight-col">
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+              дорожает в<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
+              средний % удорожания<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
+              всего удорожания<span class="sections-arrow"></span>
+            </button>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in increase.works %}
+        <tr>
+          <td class="sections-label-col" data-sort-value="{{ row.label }}">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-weight-col" data-sort-value="{{ row.frequency }}">
+            <div class="sections-weight-cell">
+              <div class="sections-weight"><div class="sections-weight-fill" style="width: {{ row.frequency_pct }}%"></div></div>
+              <span class="sections-share">{{ row.frequency_display }}</span>
+            </div>
+          </td>
+          <td class="sections-value" data-sort-value="{{ row.avg_percent if row.avg_percent is not none else -1000000 }}">
+            <span class="sections-number">{{ row.avg_percent_display }}</span>
+          </td>
+          <td class="sections-value" data-sort-value="{{ row.delta }}">
+            <span class="sections-number {{ 'is-worse' if row.dearer }}">{{ row.delta_display }}</span>
+            <div class="works-bar">
+              <div class="works-bar-fill {{ 'is-worse' if row.dearer else 'is-better' }}" style="width: {{ row.width_pct }}%"></div>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
 
@@ -333,5 +416,42 @@
   {% endif %}
 </div>
 {% endif %}
+
+{# Сортировка таблиц — одним обработчиком на все таблицы страницы: их теперь
+   две (стоимость по разделам и виды работ), и вторая иначе осталась бы без
+   сортировки, хотя кнопки в шапке у неё те же. #}
+<script>
+  document.querySelectorAll('.sections-table').forEach(function (table) {
+    var buttons = table.querySelectorAll('.sections-sort');
+    if (!buttons.length || !table.tBodies.length) return;
+    var body = table.tBodies[0];
+
+    // Сортировка живёт только на время просмотра: это настройка чтения, а не
+    // данные, и гонять её через адрес страницы ради перезагрузки незачем.
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        var index = Number(button.dataset.sortIndex);
+        var numeric = button.dataset.sortType === 'number';
+        var descending = button.dataset.order !== 'desc';
+
+        buttons.forEach(function (other) {
+          if (other !== button) { other.removeAttribute('data-order'); }
+        });
+        button.dataset.order = descending ? 'desc' : 'asc';
+
+        Array.from(body.rows)
+          .sort(function (a, b) {
+            var left = a.cells[index].dataset.sortValue;
+            var right = b.cells[index].dataset.sortValue;
+            var result = numeric
+              ? Number(left) - Number(right)
+              : left.localeCompare(right, 'ru');
+            return descending ? -result : result;
+          })
+          .forEach(function (row) { body.appendChild(row); });
+      });
+    });
+  });
+</script>
 
 {% endblock %}

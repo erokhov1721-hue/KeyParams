@@ -1998,3 +1998,179 @@ def test_an_estimate_of_nothing_does_not_put_the_word_none_on_the_page(tmp_path)
 
     assert "+110" in body
     assert "None" not in body
+
+
+# --- удорожание на странице сравнения ---------------------------------------
+
+def _project_with_increase(root, client, name, sections, rows, **fields):
+    """Проект со сметой и загруженным файлом удорожания."""
+    slug = _project_with_offer(root, name, sections, **fields)
+    _upload_increase(client, slug, _increase_bytes(rows))
+    return slug
+
+
+def test_the_comparison_shows_the_increase_block(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_300_000.0)],
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_100_000.0)],
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert "Удорожание проектов" in body
+    # Плитки: средний процент и сумма по всем проектам.
+    assert "Средний % удорожания" in body
+    assert "+20,0 %" in body
+    assert "Удорожание по всем проектам" in body
+    assert "+400 000 ₽" in body
+    # Диаграмма по проектам и таблица видов работ.
+    assert "Общее увеличение стоимости по проектам" in body
+    assert "Виды работ, которые делают смету дороже" in body
+    assert "+30,0 %" in body
+    assert "+10,0 %" in body
+
+
+def test_the_works_table_says_how_often_a_kind_of_work_gets_dearer(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый",
+        [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
+        [("Кровля", 100.0, 110.0), ("Фасадные работы", 100.0, 100.0)],
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый",
+        [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
+        [("Кровля", 100.0, 120.0), ("Фасадные работы", 100.0, 100.0)],
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert "2 из 2" in body
+    assert "0 из 2" in body
+
+
+def test_without_any_cost_increase_file_the_comparison_has_no_such_block(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "Левый", [("8. Кровля", 100.0)])
+    b = _project_with_offer(tmp_path, "Правый", [("8. Кровля", 100.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert "Удорожание проектов" not in body
+
+
+def test_a_single_project_gets_the_figures_without_a_one_bar_chart(tmp_path):
+    # Одно число диаграммой не рисуют: плитки остаются, полоска по проектам —
+    # нет, потому что сравнивать её не с чем.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_increase(
+        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Средний % удорожания" in body
+    assert "Общее увеличение стоимости по проектам" not in body
+
+
+def test_a_broken_cost_increase_file_does_not_break_the_comparison(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Целый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+    )
+    b = _project_with_offer(tmp_path, "Битый", [("8. Кровля", 100.0)])
+    storage.cost_increase_path(tmp_path, b).write_bytes(b"not a workbook")
+
+    resp = client.get(f"/compare?slug={a}&slug={b}")
+
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Удорожание проектов" in body
+    assert "Учтены 1 из 2" in body
+
+
+def test_the_pdf_carries_the_increase_block_too(tmp_path):
+    # Файл показывает страницу целиком — иначе цифра на экране и цифра в файле
+    # расходятся, а виновата в этом выгрузка.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 130.0)],
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+    )
+
+    resp = client.get(f"/compare/pdf?slug={a}&slug={b}")
+
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"%PDF")
+
+
+def test_the_works_table_is_sortable_like_the_sections_one(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_increase(
+        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    # Обработчик сортировки один на все таблицы страницы, а не только на первую.
+    assert "document.querySelectorAll('.sections-table')" in body
+    assert "works-table" in body
+
+
+def test_everything_in_a_table_card_starts_on_the_same_line(tmp_path):
+    # У карточки с таблицей боковых отступов нет — их держат ячейки. Значит
+    # всё остальное, что в ней лежит, должно отодвинуться само и ровно на ту
+    # же величину. Иначе плитки, подзаголовки и диаграмма блока удорожания
+    # прижимаются к краю карточки, а колонки таблицы отступают, и один блок
+    # читается как два, сдвинутых друг относительно друга.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    block = css.split(".sections-card > .sections-head,", 1)[1].split("}", 1)[0]
+
+    assert "margin-inline: var(--table-edge)" in block
+    for selector in (
+        ".sections-card > .adjust-form",
+        ".sections-card > .stat-tiles",
+        ".sections-card > .pair-subtitle",
+        ".sections-card > .delta-list",
+    ):
+        assert selector in block, selector
+    # Сама таблица в этот список не входит: край она держит своими ячейками, и
+    # внешний отступ сложился бы с ними вдвое.
+    assert "sections-table-wrap" not in block
+
+
+def test_the_works_table_keeps_the_shared_cell_padding(tmp_path):
+    # Таблица удорожания стоит в сравнении рядом с таблицей стоимости по
+    # разделам, и отступы в ячейках у них должны быть одни. Поэтому своих
+    # отступов у неё нет вовсе — она берёт общие для .sections-table.
+    import re
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    shared = css.split(".sections-table th,", 1)[1].split("{", 1)[1].split("}", 1)[0]
+    works_rules = re.findall(r"\.works-table[^{]*\{([^}]*)\}", css)
+
+    assert "padding: var(--table-pad-y) var(--table-pad-x)" in shared
+    assert works_rules, "у таблицы удорожания должны быть свои правила"
+    assert not any("padding" in rule for rule in works_rules)
