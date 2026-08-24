@@ -347,3 +347,91 @@ def test_the_wordings_of_four_real_estimates_are_all_recognised():
     }
     for name, expected in cases.items():
         assert estimate_sections.classify(name) == expected, name
+
+
+# --- read_concrete_volume ---
+
+def _offer_with_quantity(rows, *, header_row=9, qty_col=10, unit_col=7):
+    """A workbook shaped like a real offer that also carries a "Предлагаемое
+    количество" column — the header spans two rows, as it does for real, with
+    the quantity heading on the second and the unit-of-measure on the first.
+
+    ``rows`` are ``(section_no, article, works_name, qty, unit)`` tuples.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=header_row, column=1, value="№ п/п")
+    ws.cell(row=header_row, column=2, value="№ раздела")
+    ws.cell(row=header_row, column=3, value="Статья СМР")
+    ws.cell(row=header_row, column=4, value="Наименование работ")
+    ws.cell(row=header_row, column=unit_col, value="Ед. изм")
+    ws.cell(row=header_row + 1, column=qty_col, value="Предлагаемое количество")
+    ws.cell(row=header_row, column=12, value="Стоимость всего")
+    ws.cell(row=header_row + 1, column=12, value="Всего")
+
+    for offset, (section, article, works, qty, unit) in enumerate(rows):
+        row = header_row + 2 + offset
+        ws.cell(row=row, column=1, value=offset + 1)
+        ws.cell(row=row, column=2, value=section)
+        ws.cell(row=row, column=3, value=article)
+        ws.cell(row=row, column=4, value=works)
+        ws.cell(row=row, column=unit_col, value=unit)
+        ws.cell(row=row, column=qty_col, value=qty)
+        ws.cell(row=row, column=12, value=1)
+    return wb
+
+
+def test_concrete_volume_sums_the_leaf_quantities_under_the_section(tmp_path):
+    # The section's own row and its sub-section headers never carry a
+    # quantity in a real offer — only the priced line items underneath do.
+    path = _save(_offer_with_quantity([
+        (4, "4. Конструктивные решения", "Возведение несущих конструкций здания", None, "м3"),
+        ("4.1", "4.1. Подземная часть", "Ж/Б конструкции подземной части", None, "м3"),
+        (None, None, "Фундаментная плита", 100.0, "м3"),
+        (None, None, "Плиты перекрытия", 50.5, "м3"),
+        (5, "5. Общестроительные работы", "Перегородки и стены", None, "м3"),
+        (None, None, "Перегородка типовая", 999.0, "м3"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_concrete_volume(path) == 150.5
+
+
+def test_concrete_volume_ignores_lines_measured_in_other_units(tmp_path):
+    # Metalwork sometimes sits inside the same section, priced by the tonne
+    # rather than the cubic metre — it must not inflate a concrete volume.
+    path = _save(_offer_with_quantity([
+        (4, "4. Конструктивные решения", "Возведение несущих конструкций здания", None, "м3"),
+        (None, None, "Монолит", 200.0, "м3"),
+        (None, None, "Металлоконструкции", 10.0, "т"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_concrete_volume(path) == 200.0
+
+
+def test_concrete_volume_is_none_without_a_matching_section(tmp_path):
+    path = _save(_offer_with_quantity([
+        (1, "1. Котлован", "Устройство котлована", 50.0, "м3"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_concrete_volume(path) is None
+
+
+def test_concrete_volume_is_none_without_a_quantity_column(tmp_path):
+    # The plain offer fixture has no "Предлагаемое количество" heading at all.
+    path = _save(_offer([
+        (1, 4, "4. Конструктивные решения", "Возведение несущих конструкций здания", 200.0),
+    ]), tmp_path)
+
+    assert estimate_sections.read_concrete_volume(path) is None
+
+
+def test_concrete_volume_of_an_unreadable_file_is_reported_rather_than_crashing(tmp_path):
+    path = tmp_path / "broken.xlsx"
+    path.write_bytes(b"not a workbook at all")
+
+    try:
+        estimate_sections.read_concrete_volume(path)
+    except estimate_sections.EstimateSectionsError:
+        pass
+    else:
+        raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")

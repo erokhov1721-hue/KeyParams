@@ -54,6 +54,11 @@ CONTRACT_FIELD_LABELS = {
     "vat": "НДС",
 }
 
+# Живёт в аккордеоне «Коэффициент бетона» рядом с объёмом монолита, но
+# считать его пока не из чего — до появления своего источника данных значение
+# вписывается вручную, как когда-то и площади объекта.
+REBAR_COEFFICIENT_FIELD = "rebar_coefficient_avg"
+
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
     "aboveground_area_sqm": (
@@ -392,6 +397,19 @@ def price_per_sqm(data: dict):
     return price / area
 
 
+def concrete_coefficient(data: dict, concrete_volume):
+    """The concrete volume (m³) over the object's total area — the same
+    figure as the "Коэффициент бетона" accordion on the project page. The
+    volume is a parameter rather than read here from an estimate file, so
+    this stays reusable wherever it's already at hand (the project page,
+    the projects comparison).
+    """
+    area = data.get("total_area_sqm")
+    if concrete_volume is None or not area:
+        return None
+    return concrete_volume / area
+
+
 def format_number(value):
     """Space-group a number's thousands for readability (10067050887.72 ->
     "10 067 050 887.72"), dropping ".00" for whole numbers. Passes through
@@ -479,6 +497,6 @@ def load_passport(path: Path) -> dict:
     # A passport saved before a field existed (e.g. contract_price_rub)
     # won't have that key — backfill it as unset rather than making every
     # caller (templates included) handle a missing key.
-    for field in PASSPORT_FIELDS + CONTRACT_FIELDS:
+    for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [REBAR_COEFFICIENT_FIELD]:
         data.setdefault(field, None)
     return data

@@ -534,32 +534,42 @@ def _project_increase(slug, passport, report, adjustments):
     Деньги приводятся тем же множителем, что и всё остальное на странице: без
     этого проекты разных лет складывались бы в общий итог как есть. Процент
     множитель не задевает — он отношение внутри одного проекта, и поправка
-    сокращается.
+    сокращается. Площадь — тоже: квадратный метр 2020 года это квадратный метр
+    2026-го, поправляется только то, что в рублях.
     """
     factor, notes = project_factor(
         _source_vat(passport), passport.get("year_signed"), adjustments,
     )
     total = report.total
+    delta = total.delta * factor
+    area = passport.get("total_area_sqm") or None
     return {
         "slug": slug,
         "name": passport.get("project_name") or slug,
         "baseline": total.baseline * factor,
-        "delta": total.delta * factor,
+        "delta": delta,
+        "area": area,
+        "per_sqm": delta / area if area else None,
+        "per_sqm_display": _signed(delta / area, UNIT_PER_SQM) if area else "—",
         "percent": total.percent,
         "percent_display": cost_increase.format_percent(total.percent) or "—",
-        "money_display": _signed(total.delta * factor, UNIT_MONEY),
+        "money_display": _signed(delta, UNIT_MONEY),
         "dearer": total.delta > INCREASE_EPSILON,
         "from_estimate": report.from_estimate,
         "notes": notes,
     }
 
 
-def _work_rows(slugs, reports, factors):
+def _work_rows(slugs, reports, factors, areas):
     """Виды работ по всем проектам сразу: как часто дорожают и на сколько.
 
     Частота считается от числа проектов, у которых этот вид работ вообще есть,
     а не от всех выбранных: раздела, которого у проекта нет, он не удорожал и
     не удержал, и записывать его в знаменатель нечестно.
+
+    ₽/м² — по той же причине от площади только тех проектов, где этот вид
+    работ есть. Делить на площадь всей выборки значило бы размазывать
+    удорожание одного проекта по метрам остальных.
     """
     gathered = {}
     for slug in slugs:
@@ -571,11 +581,19 @@ def _work_rows(slugs, reports, factors):
                 "key": row.key,
                 "label": estimate_sections.CATEGORY_LABELS.get(row.key, row.key),
                 "delta": 0.0,
+                "area": 0.0,
+                # Площадь известна у всех проектов, где этот вид работ есть.
+                # Стоит хоть одному её не иметь — ₽/м² не считается вовсе:
+                # сумма удорожания по всем проектам, поделённая на площадь
+                # части из них, это не рубли на метр, а просто большое число.
+                "areas_known": True,
                 "projects_total": 0,
                 "projects_up": 0,
                 "percents": [],
             })
             entry["delta"] += row.delta * factors[slug]
+            entry["area"] += areas.get(slug) or 0.0
+            entry["areas_known"] = entry["areas_known"] and bool(areas.get(slug))
             entry["projects_total"] += 1
             if row.delta > INCREASE_EPSILON:
                 entry["projects_up"] += 1
@@ -599,6 +617,11 @@ def _work_rows(slugs, reports, factors):
         row["frequency_display"] = f'{row["projects_up"]} из {row["projects_total"]}'
         row["frequency_pct"] = round(row["frequency"] * 100, 1)
         row["delta_display"] = _signed(row["delta"], UNIT_MONEY)
+        area = row.pop("area") if row.pop("areas_known") else None
+        row["per_sqm"] = row["delta"] / area if area else None
+        row["per_sqm_display"] = (
+            _signed(row["per_sqm"], UNIT_PER_SQM) if row["per_sqm"] is not None else "—"
+        )
         row["dearer"] = row["delta"] > INCREASE_EPSILON
 
     peak = max((abs(row["delta"]) for row in rows), default=0.0)
@@ -609,6 +632,19 @@ def _work_rows(slugs, reports, factors):
     # по ней таблицу можно переупорядочить на месте.
     rows.sort(key=lambda row: row["delta"], reverse=True)
     return rows
+
+
+def _scale(rows, value_key, width_key):
+    """Ширины полосок по крупнейшему значению в выборке."""
+    peak = max(
+        (abs(row[value_key]) for row in rows if row[value_key] is not None),
+        default=0.0,
+    )
+    for row in rows:
+        row[width_key] = (
+            round(abs(row[value_key]) / peak * 100, 1)
+            if row[value_key] is not None and peak else 0
+        )
 
 
 def build_increase_summary(slugs, passports, reports, adjustments):
@@ -635,18 +671,13 @@ def build_increase_summary(slugs, passports, reports, adjustments):
         for slug in with_data
     ]
 
-    # Шкала — по крупнейшему проценту в выборке: самый подорожавший проект
+    # Шкала — по крупнейшему значению в выборке: самый подорожавший проект
     # занимает свою половину трека целиком, остальные — сколько приходится на
     # них. Фиксированная шкала здесь не годится, потому что удорожание бывает и
-    # в один процент, и в сорок.
-    peak = max(
-        (abs(p["percent"]) for p in projects if p["percent"] is not None), default=0.0
-    )
-    for project in projects:
-        project["width_pct"] = (
-            round(abs(project["percent"]) / peak * 100, 1)
-            if project["percent"] is not None and peak else 0
-        )
+    # в один процент, и в сорок. У процента и у ₽/м² шкалы свои: это разные
+    # величины, и мерить их одной линейкой нечем.
+    _scale(projects, "percent", "width_pct")
+    _scale(projects, "per_sqm", "per_sqm_width_pct")
 
     percents = [p["percent"] for p in projects if p["percent"] is not None]
     average_percent = sum(percents) / len(percents) if percents else None
@@ -654,9 +685,23 @@ def build_increase_summary(slugs, passports, reports, adjustments):
     total_baseline = sum(p["baseline"] for p in projects)
     weighted = (total_delta / total_baseline * 100) if total_baseline else None
 
+    # ₽/м² — только когда площадь известна у всех учтённых проектов. Иначе в
+    # одном столбце стояли бы рубли на метр и рубли просто, а итог считался бы
+    # по части выборки и выглядел бы как по всей.
+    areas = {slug: passports[slug].get("total_area_sqm") or None for slug in with_data}
+    per_sqm = all(areas.values())
+    total_area = sum(areas.values()) if per_sqm else None
+    total_per_sqm = total_delta / total_area if total_area else None
+
     return {
         "projects": projects,
-        "works": _work_rows(with_data, reports, factors),
+        "works": _work_rows(with_data, reports, factors, areas),
+        "per_sqm": per_sqm,
+        "total_per_sqm": total_per_sqm,
+        "total_per_sqm_display": (
+            _signed(total_per_sqm, UNIT_PER_SQM) if total_per_sqm is not None else "—"
+        ),
+        "total_area": total_area,
         "average_percent": average_percent,
         "average_percent_display": cost_increase.format_percent(average_percent) or "—",
         "total_delta": total_delta,

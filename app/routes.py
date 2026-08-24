@@ -9,7 +9,7 @@ from flask import (
 )
 
 from . import (
-    comparison, cost_increase, estimate, excel_report, extractors,
+    comparison, cost_increase, estimate, estimate_sections, excel_report, extractors,
     passport as passport_module, pdf_export, project_filter, storage,
 )
 from .document_reader import DocxReadError
@@ -171,6 +171,7 @@ def compare_projects():
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
         ),
         adjustments=adjustments,
+        concrete_coefficients=_concrete_coefficients(root, slugs, passports),
     )
 
 
@@ -257,6 +258,7 @@ def compare_projects_pdf():
         increase=comparison.build_increase_summary(
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
         ),
+        concrete_coefficients=_concrete_coefficients(root, slugs, passports),
     )
     return Response(
         pdf_bytes,
@@ -382,6 +384,35 @@ def _estimate_totals(root, slug):
     return excel_report.estimate_costs(root, slug)[0]
 
 
+def _concrete_volume(root, slug):
+    """Объём монолита по смете проекта, в м³ — «Предлагаемое количество» из
+    раздела «Возведение несущих конструкций здания». None, если сметы нет, её
+    не удалось разобрать, или в ней нет такого раздела: коэффициент бетона
+    тогда посчитать не из чего, и страница должна честно об этом сказать, а
+    не подставлять ноль.
+    """
+    path = storage.estimate_path(root, slug)
+    if not path.exists():
+        return None
+    try:
+        return estimate_sections.read_concrete_volume(path)
+    except estimate_sections.EstimateSectionsError as e:
+        current_app.logger.warning("Не удалось прочитать смету: %s", e)
+        return None
+
+
+def _concrete_coefficients(root, slugs, passports):
+    """``{slug: коэффициент}`` для таблицы сравнения — та же формула, что и в
+    «Коэффициенте бетона» на странице проекта, посчитанная для каждого
+    выбранного проекта."""
+    return {
+        slug: passport_module.concrete_coefficient(
+            passports[slug], _concrete_volume(root, slug)
+        )
+        for slug in slugs
+    }
+
+
 def _cost_increase_report(root, slug):
     """Удорожание по видам работ, или None, если читать нечего.
 
@@ -411,6 +442,8 @@ def project_page(slug):
     estimate_file = storage.estimate_path(root, slug)
     has_estimate = estimate_file.exists()
     increase_file = storage.cost_increase_path(root, slug)
+    concrete_volume = _concrete_volume(root, slug)
+    concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     return render_template(
         "project.html",
         slug=slug,
@@ -425,6 +458,8 @@ def project_page(slug):
         format_number=passport_module.format_number,
         has_estimate=has_estimate,
         sheets=estimate.read_estimate(estimate_file) if has_estimate else [],
+        concrete_volume=concrete_volume,
+        concrete_coefficient=concrete_coefficient,
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
         has_cost_increase=increase_file.exists(),
@@ -566,6 +601,24 @@ def update_contract_terms(slug):
         if new_value != old_value and field in auto_fields:
             auto_fields.remove(field)
     data["contract_auto_fields"] = auto_fields
+    passport_module.save_passport(data, path)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/rebar-coefficient", methods=["POST"])
+def update_rebar_coefficient(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    path = storage.passport_path(root, slug)
+    if not path.exists():
+        abort(404)
+
+    data = passport_module.load_passport(path)
+    raw_value = request.form.get(passport_module.REBAR_COEFFICIENT_FIELD, "").strip()
+    data[passport_module.REBAR_COEFFICIENT_FIELD] = (
+        extractors.parse_number(raw_value) if raw_value else None
+    )
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))
 

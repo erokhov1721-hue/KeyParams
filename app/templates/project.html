@@ -330,6 +330,63 @@
         {% endif %}
       </div>
     </div>
+
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Коэффициент бетона</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if concrete_volume is none %}
+        <p class="accordion-empty">
+          {% if has_estimate %}
+          В смете нет раздела «Возведение несущих конструкций здания» со
+          столбцом «Предлагаемое количество» — посчитать объём монолита не
+          из чего.
+          {% else %}
+          Смета не загружена для этого проекта.
+          {% endif %}
+        </p>
+        {% else %}
+        <div class="fields-card">
+          <div class="field-row is-computed">
+            <div class="field-label-col">
+              <span class="field-label">Объём монолита по смете, м³</span>
+            </div>
+            <input type="text" value="{{ format_number(concrete_volume) }}" placeholder="—" readonly>
+          </div>
+          <div class="field-row is-computed">
+            <div class="field-label-col">
+              <span class="field-label">Коэффициент монолита за общую площадь по СП, м³/м²</span>
+            </div>
+            <input type="text" value="{{ format_number(concrete_coefficient) if concrete_coefficient is not none else '' }}" placeholder="—" readonly>
+          </div>
+        </div>
+        {% if concrete_coefficient is none %}
+        <p class="field-hint">
+          Впишите общую площадь объекта в паспорте — без неё коэффициент не посчитать.
+        </p>
+        {% endif %}
+        {% endif %}
+        <form method="post" action="{{ url_for('main.update_rebar_coefficient', slug=slug) }}">
+          <div class="fields-card">
+            <div class="field-row {{ 'is-empty' if passport.rebar_coefficient_avg is none else 'is-filled' }}">
+              <div class="field-label-col">
+                <span class="field-label">Коэффициент арматуры (средний), кг/м³</span>
+              </div>
+              <input type="text" name="rebar_coefficient_avg"
+                     value="{{ format_number(passport.rebar_coefficient_avg) if passport.rebar_coefficient_avg is not none else '' }}"
+                     placeholder="Введите значение вручную">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Сохранить изменения</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 

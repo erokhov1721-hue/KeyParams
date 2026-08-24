@@ -253,8 +253,10 @@ def _chart_bar_drawing(width, width_pct):
 # --- Блоки страницы -------------------------------------------------------
 
 def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
-                 format_number, price_per_sqm, styles, page_width):
+                 format_number, price_per_sqm, styles, page_width,
+                 concrete_coefficients=None):
     """«Общие сведения» — та же таблица фактов, что и на странице."""
+    concrete_coefficients = concrete_coefficients or {}
     header = [Paragraph("", styles["head"])]
     for slug in slugs:
         header.append(Paragraph(
@@ -285,6 +287,22 @@ def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
                     format_number(psqm) if psqm is not None else "—", styles["cell"]
                 ))
             data.append(psqm_row)
+
+    concrete_row = [Paragraph(
+        "Коэффициент монолита за общую площадь по СП, м³/м²", styles["cell_label"]
+    )]
+    rebar_row = [Paragraph("Коэффициент арматуры (средний), кг/м³", styles["cell_label"])]
+    for slug in slugs:
+        coef = concrete_coefficients.get(slug)
+        concrete_row.append(Paragraph(
+            format_number(coef) if coef is not None else "—", styles["cell"]
+        ))
+        rebar = passports[slug].get("rebar_coefficient_avg")
+        rebar_row.append(Paragraph(
+            format_number(rebar) if rebar is not None else "—", styles["cell"]
+        ))
+    data.append(concrete_row)
+    data.append(rebar_row)
 
     label_w = min(170.0, page_width * 0.28)
     value_w = (page_width - label_w) / max(len(slugs), 1)
@@ -498,15 +516,18 @@ def _increase_block(increase, styles, page_width):
 
     # Плитки — двумя ячейками в один ряд: крупная цифра и подпись под ней,
     # как на экране. Диаграммой одно число не рисуют ни там, ни здесь.
-    tiles = Table(
-        [[
-            _tile(increase["average_percent_display"], "Средний % удорожания",
-                  "среднее по проектам", styles),
-            _tile(increase["total_delta_display"], "Удорожание по всем проектам",
-                  f'{increase["weighted_percent_display"]} к сумме смет', styles),
-        ]],
-        colWidths=[page_width / 2.0] * 2,
-    )
+    tiles = [
+        _tile(increase["average_percent_display"], "Средний % удорожания",
+              "среднее по проектам", styles),
+        _tile(increase["total_delta_display"], "Удорожание по всем проектам",
+              f'{increase["weighted_percent_display"]} к сумме смет', styles),
+    ]
+    if increase["per_sqm"]:
+        tiles.append(_tile(
+            increase["total_per_sqm_display"], "Удорожание на м²",
+            "на общую площадь всех проектов", styles,
+        ))
+    tiles = Table([tiles], colWidths=[page_width / len(tiles)] * len(tiles))
     tiles.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -518,51 +539,36 @@ def _increase_block(increase, styles, page_width):
 
     projects = increase["projects"]
     if len(projects) > 1:
-        story.append(Paragraph(
-            "Общее увеличение стоимости по проектам "
-            f'<font size="7" color="{_hex(MUTED)}">'
-            "влево — дешевле сметы, вправо — дороже</font>",
-            styles["subheading"],
-        ))
-        label_w = min(180.0, page_width * 0.30)
-        value_w = 120.0
-        bar_w = max(page_width - label_w - value_w - 12, 60.0)
-        data = []
-        for project in projects:
-            colour = RED if project["dearer"] else ACCENT
-            value = (
-                f'<font color="{_hex(colour)}">{project["percent_display"]}</font>'
-                f'<br/><font size="7" color="{_hex(MUTED)}">'
-                f'{project["money_display"]}</font>'
+        story += _increase_chart(
+            "Общее увеличение стоимости по проектам", projects,
+            "width_pct", "percent_display", "money_display", styles, page_width,
+        )
+        if increase["per_sqm"]:
+            # Отдельной диаграммой, как и на экране: у процента и у ₽/м² разные
+            # шкалы, и полоска, нарисованная по проценту, про рубли на метр не
+            # говорит ничего.
+            story += _increase_chart(
+                "Удорожание на м² по проектам", projects,
+                "per_sqm_width_pct", "per_sqm_display", None, styles, page_width,
             )
-            data.append([
-                Paragraph(project["name"], styles["cell"]),
-                _two_sided_drawing(bar_w, project["width_pct"], project["dearer"]),
-                Paragraph(value, styles["cell_right"]),
-            ])
-        table = Table(data, colWidths=[label_w, bar_w + 12, value_w])
-        table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
-        ]))
-        story.append(table)
 
     story.append(Paragraph("Виды работ, которые делают смету дороже", styles["subheading"]))
+    per_sqm = increase["per_sqm"]
     label_w = min(210.0, page_width * 0.34)
-    rest = max(page_width - label_w, 180.0) / 3.0
-    data = [[
+    columns = 4 if per_sqm else 3
+    rest = max(page_width - label_w, 180.0) / columns
+    head = [
         Paragraph("Вид работ", styles["head"]),
         Paragraph("дорожает в", styles["head"]),
         Paragraph("средний % удорожания", styles["head"]),
         Paragraph("всего удорожания", styles["head"]),
-    ]]
+    ]
+    if per_sqm:
+        head.append(Paragraph("удорожание на м²", styles["head"]))
+    data = [head]
     for row in increase["works"]:
         colour = RED if row["dearer"] else ACCENT
-        data.append([
+        line = [
             Paragraph(row["label"], styles["cell"]),
             Paragraph(row["frequency_display"], styles["cell_right"]),
             Paragraph(row["avg_percent_display"], styles["cell_right"]),
@@ -570,8 +576,14 @@ def _increase_block(increase, styles, page_width):
                 f'<font color="{_hex(colour)}">{row["delta_display"]}</font>',
                 styles["cell_right"],
             ),
-        ])
-    table = Table(data, colWidths=[label_w, rest, rest, rest], repeatRows=1)
+        ]
+        if per_sqm:
+            line.append(Paragraph(
+                f'<font color="{_hex(colour)}">{row["per_sqm_display"]}</font>',
+                styles["cell_right"],
+            ))
+        data.append(line)
+    table = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, GRID),
         ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
@@ -580,6 +592,45 @@ def _increase_block(increase, styles, page_width):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    return story
+
+
+def _increase_chart(title, projects, width_key, value_key, note_key,
+                    styles, page_width):
+    """Диаграмма удорожания по проектам: подпись, двусторонняя полоска, значение."""
+    story = [Paragraph(
+        f'{title} <font size="7" color="{_hex(MUTED)}">'
+        "влево — дешевле сметы, вправо — дороже</font>",
+        styles["subheading"],
+    )]
+    label_w = min(180.0, page_width * 0.30)
+    value_w = 120.0
+    bar_w = max(page_width - label_w - value_w - 12, 60.0)
+
+    data = []
+    for project in projects:
+        colour = RED if project["dearer"] else ACCENT
+        value = f'<font color="{_hex(colour)}">{project[value_key]}</font>'
+        if note_key:
+            value += (
+                f'<br/><font size="7" color="{_hex(MUTED)}">'
+                f'{project[note_key]}</font>'
+            )
+        data.append([
+            Paragraph(project["name"], styles["cell"]),
+            _two_sided_drawing(bar_w, project[width_key], project["dearer"]),
+            Paragraph(value, styles["cell_right"]),
+        ])
+    table = Table(data, colWidths=[label_w, bar_w + 12, value_w])
+    table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
     ]))
     story.append(table)
     return story
@@ -688,7 +739,7 @@ def _pair_block(pair, styles, page_width):
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
-    sections=None, pair=None, terms=None, increase=None,
+    sections=None, pair=None, terms=None, increase=None, concrete_coefficients=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
@@ -709,6 +760,7 @@ def build_compare_pdf(
     story += _facts_block(
         passports, slugs, fields, field_labels, numeric_fields,
         format_number, price_per_sqm, styles, page_width,
+        concrete_coefficients=concrete_coefficients,
     )
     story += _terms_block(terms, slugs, passports, styles, page_width)
     # Диаграммы — с новой страницы. Иначе первая из них ютится под таблицами

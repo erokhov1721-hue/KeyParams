@@ -165,7 +165,8 @@ def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
 
 
 def test_save_and_load_passport_roundtrip(tmp_path):
-    data = {field: None for field in passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS}
+    fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [passport.REBAR_COEFFICIENT_FIELD]
+    data = {field: None for field in fields}
     data["project_name"] = "Проспект Мира"
     data["general_contractor"] = "ООО «АНТТЕК»"
     path = tmp_path / "passport.json"

@@ -671,3 +671,109 @@ def test_a_project_without_an_estimate_is_named_so_its_baseline_is_not_taken_for
     )
 
     assert summary["without_estimate"] == ["Без сметы"]
+
+
+# --- удорожание на м² ---
+
+def test_the_increase_per_square_metre_is_shown_for_every_project():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("Левый", total_area_sqm=1000.0),
+         "b": _passport("Правый", total_area_sqm=2000.0)},
+        {
+            "a": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0}),
+            "b": _report([("Кровля", 100_000.0, 150_000.0)], {"roof": 100_000.0}),
+        },
+        NONE,
+    )
+
+    assert summary["per_sqm"] is True
+    left, right = summary["projects"]
+    assert left["per_sqm"] == pytest.approx(100.0)
+    assert left["per_sqm_display"] == "+100 ₽/м²"
+    assert right["per_sqm"] == pytest.approx(25.0)
+    # Итог — по всей площади выборки, а не среднее из двух ₽/м².
+    assert summary["total_area"] == 3000.0
+    assert summary["total_per_sqm"] == pytest.approx(150_000.0 / 3000.0)
+
+
+def test_the_percentage_and_the_roubles_per_metre_are_scaled_apart():
+    # Процент считается от собственной сметы проекта, и дешёвая смета даёт
+    # большой процент на небольших деньгах. Порядок проектов по проценту и по
+    # ₽/м² может быть обратным, поэтому и шкалы у полосок свои.
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("Мелкий", total_area_sqm=1000.0),
+         "b": _passport("Крупный", total_area_sqm=1_000_000.0)},
+        {
+            # +100% на 100 тысячах — это 100 ₽/м².
+            "a": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0}),
+            # +200% на миллионе — это всего 2 ₽/м².
+            "b": _report([("Кровля", 1_000_000.0, 3_000_000.0)], {"roof": 1_000_000.0}),
+        },
+        NONE,
+    )
+    small, large = summary["projects"]
+
+    assert large["width_pct"] == 100.0        # по проценту крупнее второй
+    assert small["width_pct"] == 50.0
+    assert small["per_sqm_width_pct"] == 100.0   # а по ₽/м² — первый
+    assert large["per_sqm_width_pct"] == 2.0
+
+
+def test_without_an_area_on_every_project_there_are_no_roubles_per_metre():
+    # Смешивать в одном столбце рубли на метр и рубли просто нельзя, а итог по
+    # части выборки выглядел бы как итог по всей.
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("С площадью", total_area_sqm=1000.0),
+         "b": _passport("Без площади", total_area_sqm=None)},
+        {
+            "a": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0}),
+            "b": _report([("Кровля", 100_000.0, 150_000.0)], {"roof": 100_000.0}),
+        },
+        NONE,
+    )
+
+    assert summary["per_sqm"] is False
+    assert summary["total_per_sqm"] is None
+    assert summary["total_per_sqm_display"] == "—"
+    assert summary["projects"][1]["per_sqm_display"] == "—"
+    # И у видов работ тоже: сумма по двум проектам, поделённая на площадь
+    # одного, — не рубли на метр, а просто большое число.
+    assert all(row["per_sqm"] is None for row in summary["works"])
+
+
+def test_a_kind_of_work_is_divided_by_the_area_of_the_projects_that_have_it():
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport(total_area_sqm=1000.0), "b": _passport(total_area_sqm=1000.0)},
+        {
+            "a": _report(
+                [("Кровля", 100_000.0, 200_000.0), ("Фасадные работы", 100_000.0, 150_000.0)],
+                {"roof": 100_000.0, "facade": 100_000.0},
+            ),
+            "b": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0}),
+        },
+        NONE,
+    )
+    works = {row["key"]: row for row in summary["works"]}
+
+    # Кровля есть у обоих: 200 000 на 2000 м².
+    assert works["roof"]["per_sqm"] == pytest.approx(100.0)
+    # Фасад — только у первого, и делится на его 1000 м², а не на 2000:
+    # размазывать удорожание одного проекта по метрам второго нечестно.
+    assert works["facade"]["per_sqm"] == pytest.approx(50.0)
+
+
+def test_the_corrections_move_the_roubles_per_metre_but_not_the_area():
+    # Квадратный метр 2020 года это квадратный метр 2026-го: поправляется
+    # только то, что в рублях.
+    passports = {"a": _passport(year_signed="2020", total_area_sqm=1000.0)}
+    reports = {"a": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0})}
+
+    plain = comparison.build_increase_summary(["a"], passports, reports, NONE)
+    lifted = comparison.build_increase_summary(["a"], passports, reports, INFLATION_10)
+
+    assert plain["total_area"] == lifted["total_area"] == 1000.0
+    assert lifted["total_per_sqm"] > plain["total_per_sqm"]

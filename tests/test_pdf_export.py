@@ -53,3 +53,28 @@ def test_the_tables_stay_on_the_first_page():
     assert "Общие сведения" in pages[0]
     assert "Условия" in pages[0]
     assert "Срок СМР" in pages[0]
+
+
+def test_the_facts_table_carries_the_concrete_and_rebar_coefficients():
+    passports = {"a": {
+        "project_name": "ПроектА", "address": "г. Москва",
+        "year_signed": "2024", "building_class": "Бизнес",
+        "general_contractor": "ООО «Ромашка»", "contract_price_rub": 1_000_000_000.0,
+        "underground_area_sqm": 1_000.0, "aboveground_area_sqm": 9_000.0,
+        "total_area_sqm": 10_000.0, "rebar_coefficient_avg": 120.5,
+    }}
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts={},
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        concrete_coefficients={"a": 0.5},
+    )
+
+    text = _page_texts(pdf_bytes)[0]
+
+    assert "Коэффициент монолита" in text
+    assert "Коэффициент арматуры" in text
+    assert passport_module.format_number(0.5) in text
+    assert passport_module.format_number(120.5) in text

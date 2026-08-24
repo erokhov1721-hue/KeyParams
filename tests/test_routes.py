@@ -1138,6 +1138,129 @@ def test_project_page_has_no_estimate_table_without_a_file(tmp_path):
     assert 'class="estimate-table"' not in page.data.decode("utf-8")
 
 
+def _offer_with_concrete_quantity(volume_m3):
+    """Смета с разделом «Возведение несущих конструкций здания» и колонкой
+    «Предлагаемое количество»: как в настоящей оферте, объём монолита сидит в
+    строке-детали под разделом, а не на его собственной строке."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=9, column=1, value="№ п/п")
+    ws.cell(row=9, column=2, value="№ раздела")
+    ws.cell(row=9, column=3, value="Статья СМР")
+    ws.cell(row=9, column=4, value="Наименование работ")
+    ws.cell(row=9, column=7, value="Ед. изм")
+    ws.cell(row=10, column=10, value="Предлагаемое количество")
+    ws.cell(row=9, column=12, value="Стоимость всего")
+    ws.cell(row=10, column=12, value="Всего")
+
+    ws.cell(row=11, column=2, value=4)
+    ws.cell(row=11, column=3, value="4. Конструктивные решения")
+    ws.cell(row=11, column=4, value="Возведение несущих конструкций здания")
+    ws.cell(row=11, column=7, value="м3")
+    ws.cell(row=11, column=12, value=1)
+
+    ws.cell(row=12, column=4, value="Фундаментная плита")
+    ws.cell(row=12, column=7, value="м3")
+    ws.cell(row=12, column=10, value=volume_m3)
+    ws.cell(row=12, column=12, value=1)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_project_page_shows_the_concrete_coefficient(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СБетоном", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(500.0))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Коэффициент бетона" in body
+    assert "Коэффициент монолита за общую площадь по СП" in body
+    assert passport_module.format_number(500.0) in body   # объём монолита
+    assert passport_module.format_number(0.5) in body     # 500 м³ / 1000 м²
+
+
+def test_project_page_explains_missing_concrete_section_instead_of_a_blank(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезБетона", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_smeta_bytes())
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Коэффициент бетона" in body
+    assert "нет раздела" in body
+
+
+def test_rebar_coefficient_form_saves_a_manually_entered_value(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "САрматурой")
+
+    resp = client.post(
+        f"/projects/{slug}/rebar-coefficient", data={"rebar_coefficient_avg": "0,12"},
+    )
+
+    assert resp.status_code == 302
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["rebar_coefficient_avg"] == 0.12
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Коэффициент арматуры (средний)" in body
+    assert passport_module.format_number(0.12) in body
+
+
+def test_rebar_coefficient_clears_on_an_empty_submit(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезАрматуры", rebar_coefficient_avg=0.2)
+
+    client.post(f"/projects/{slug}/rebar-coefficient", data={"rebar_coefficient_avg": ""})
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["rebar_coefficient_avg"] is None
+
+
+def test_compare_page_shows_the_concrete_and_rebar_coefficients(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "СКоэффициентами", total_area_sqm=1000.0, rebar_coefficient_avg=120.5,
+    )
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(500.0))
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Коэффициент монолита за общую площадь по СП, м³/м²" in body
+    assert "Коэффициент арматуры (средний), кг/м³" in body
+    assert passport_module.format_number(0.5) in body      # 500 м³ / 1000 м²
+    assert passport_module.format_number(120.5) in body
+
+
+def test_compare_page_shows_a_dash_when_the_coefficients_are_unavailable(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезКоэффициентов")
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Коэффициент монолита за общую площадь по СП, м³/м²" in body
+    assert "Коэффициент арматуры (средний), кг/м³" in body
+
+
 def test_project_page_renders_multiple_estimate_sheets_as_tabs(tmp_path):
     wb = Workbook()
     wb.active.title = "Смета"
@@ -2174,3 +2297,67 @@ def test_the_works_table_keeps_the_shared_cell_padding(tmp_path):
     assert "padding: var(--table-pad-y) var(--table-pad-x)" in shared
     assert works_rules, "у таблицы удорожания должны быть свои правила"
     assert not any("padding" in rule for rule in works_rules)
+
+
+def test_the_comparison_shows_the_increase_per_square_metre(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=1000.0,
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    # Плитка, отдельная диаграмма и столбец в таблице видов работ.
+    assert "Удорожание на м²" in body
+    assert "Удорожание на м² по проектам" in body
+    assert "удорожание на м²" in body
+    # 400 000 ₽ на 2000 м² — это 200 ₽/м².
+    assert "+200 ₽/м²" in body
+    assert "+300 ₽/м²" in body
+    assert "+100 ₽/м²" in body
+
+
+def test_a_project_without_an_area_leaves_the_per_metre_figures_out(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "С площадью", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Без площади", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=None,
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert "Удорожание проектов" in body
+    assert "Удорожание на м²" not in body
+    # Только внутри самого блока: ниже идёт сравнение двух объектов, и там
+    # «₽/м²» стоит по праву — это цена работ на метр, а не удорожание.
+    block = body.split("Удорожание проектов", 1)[1].split("Сравнение двух объектов", 1)[0]
+    assert "₽/м²" not in block
+
+
+def test_the_pdf_carries_the_per_metre_figures_too(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=1000.0,
+    )
+
+    resp = client.get(f"/compare/pdf?slug={a}&slug={b}")
+
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"%PDF")

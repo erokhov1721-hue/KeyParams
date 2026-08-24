@@ -53,6 +53,20 @@
         {% endif %}
         {% endif %}
       {% endfor %}
+      <tr>
+        <td class="compare-field-label">Коэффициент монолита за общую площадь по СП, м³/м²</td>
+        {% for slug in slugs %}
+          {% set coef = concrete_coefficients.get(slug) %}
+          <td>{{ format_number(coef) if coef is not none else '—' }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <td class="compare-field-label">Коэффициент арматуры (средний), кг/м³</td>
+        {% for slug in slugs %}
+          {% set rebar = passports[slug].rebar_coefficient_avg %}
+          <td>{{ format_number(rebar) if rebar is not none else '—' }}</td>
+        {% endfor %}
+      </tr>
     </tbody>
   </table>
 </div>
@@ -262,6 +276,13 @@
       <div class="stat-label">Удорожание по всем проектам</div>
       <div class="stat-note">{{ increase.weighted_percent_display }} к сумме смет</div>
     </div>
+    {% if increase.per_sqm %}
+    <div class="stat-tile">
+      <div class="stat-value">{{ increase.total_per_sqm_display }}</div>
+      <div class="stat-label">Удорожание на м²</div>
+      <div class="stat-note">на общую площадь всех проектов</div>
+    </div>
+    {% endif %}
   </div>
 
   {% if increase.projects | length > 1 %}
@@ -288,6 +309,37 @@
     </div>
     {% endfor %}
   </div>
+
+  {# Отдельной диаграммой, а не третьей строчкой в подписи рядом: у процента и
+     у ₽/м² разные шкалы, и полоска, нарисованная по проценту, про рубли на
+     метр не говорит ничего. Процент считается от собственной сметы проекта, и
+     дешёвая смета даёт большой процент на небольших деньгах; ₽/м² — величина
+     сама по себе, и сравнивать проекты между собой можно только ею. #}
+  {% if increase.per_sqm %}
+  <h3 class="pair-subtitle">
+    Удорожание на м² по проектам
+    <span class="sections-sub">влево — дешевле сметы, вправо — дороже</span>
+  </h3>
+  <div class="delta-list">
+    {% for project in increase.projects %}
+    <div class="delta-row">
+      <div class="delta-label">{{ project.name }}</div>
+      <div class="delta-track">
+        <div class="delta-half">
+          {% if not project.dearer %}<div class="delta-fill is-better" style="width: {{ project.per_sqm_width_pct }}%"></div>{% endif %}
+        </div>
+        <div class="delta-half">
+          {% if project.dearer %}<div class="delta-fill is-worse" style="width: {{ project.per_sqm_width_pct }}%"></div>{% endif %}
+        </div>
+      </div>
+      <div class="delta-value {{ 'is-worse' if project.dearer else 'is-better' }}">
+        {{ project.per_sqm_display }}
+        <span class="delta-value-abs">{{ format_number(project.area | round | int) }} м²</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
   {% endif %}
 
   <h3 class="pair-subtitle">
@@ -318,6 +370,13 @@
               всего удорожания<span class="sections-arrow"></span>
             </button>
           </th>
+          {% if increase.per_sqm %}
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">
+              удорожание на м²<span class="sections-arrow"></span>
+            </button>
+          </th>
+          {% endif %}
         </tr>
       </thead>
       <tbody>
@@ -341,6 +400,12 @@
               <div class="works-bar-fill {{ 'is-worse' if row.dearer else 'is-better' }}" style="width: {{ row.width_pct }}%"></div>
             </div>
           </td>
+          {% if increase.per_sqm %}
+          <td class="sections-value"
+              data-sort-value="{{ row.per_sqm if row.per_sqm is not none else -1000000000 }}">
+            <span class="sections-number {{ 'is-worse' if row.dearer }}">{{ row.per_sqm_display }}</span>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

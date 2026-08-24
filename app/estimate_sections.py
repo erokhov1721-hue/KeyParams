@@ -437,3 +437,107 @@ def _sections_from_offer(ws):
 
     _report_unmatched(unmatched)
     return sections
+
+
+# --- concrete volume ("Коэффициент бетона") ---------------------------------
+
+# Unlike "Стоимость всего", this heading isn't spread across several columns
+# under a merged parent — the cell just says so directly, wherever the
+# header spans one row or two.
+QTY_HEADER = "предлагаемое количество"
+
+UNIT_HEADER_TOKENS = ("ед", "изм")
+
+
+def _find_qty_column(ws, header_row):
+    """The "Предлагаемое количество" column — the bidder's own proposed
+    quantity for a line, as opposed to "Общее кол-во" (the customer's)."""
+    for row in (header_row, header_row + 1):
+        for col in range(1, HEADER_SEARCH_COLS + 1):
+            if QTY_HEADER in _cell_text(ws, row, col):
+                return col
+    return None
+
+
+def _find_unit_column(ws, header_row):
+    for col in range(1, HEADER_SEARCH_COLS + 1):
+        text = _cell_text(ws, header_row, col)
+        if all(token in text for token in UNIT_HEADER_TOKENS):
+            return col
+    return None
+
+
+def _is_volume_unit(text):
+    """Whether a unit-of-measure cell reads as cubic metres — "м3" or "м³",
+    with or without the space Excel sometimes leaves around it."""
+    normalized = text.strip().lower().replace("³", "3").replace(" ", "")
+    return normalized in ("м3", "m3")
+
+
+def read_concrete_volume(path):
+    """The proposed volume of monolithic concrete, in m³ — the "Предлагаемое
+    количество" under the estimate's "Возведение несущих конструкций здания"
+    section, the same section whose cost is the report's "concrete" line.
+
+    Unlike cost, a quantity is never rolled up onto the section's own row —
+    only the line items underneath it carry one — so this adds up every "м³"
+    quantity between the section's row and the next top-level section, at
+    any depth below it. Other kinds of work sometimes sit inside the same
+    section (metalwork priced in tonnes, say), so a line only counts where
+    its own unit is cubic metres.
+
+    None where the workbook isn't laid out as a sectioned offer, has no
+    quantity column, or has no section that classifies as concrete at all —
+    as opposed to 0.0, which means the section is there but nothing under it
+    is measured in cubic metres.
+    """
+    path = Path(path)
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True)
+    except Exception as e:
+        raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
+
+    for ws in wb.worksheets:
+        volume = _concrete_volume_from_sheet(ws)
+        if volume is not None:
+            return volume
+    return None
+
+
+def _concrete_volume_from_sheet(ws):
+    header = _find_header(ws)
+    if header is None:
+        return None
+    qty_col = _find_qty_column(ws, header.row)
+    if qty_col is None:
+        return None
+    unit_col = _find_unit_column(ws, header.row)
+
+    # Every top-level section ("№ раздела" a bare integer), in sheet order,
+    # so a section's own block can be bounded by where the next one starts.
+    section_rows = []
+    for row in range(header.row + 2, ws.max_row + 1):
+        number = ws.cell(row=row, column=header.section_col).value
+        if number is None or not TOP_LEVEL_RE.match(str(number).strip()):
+            continue
+        name = _named(ws.cell(row=row, column=header.article_col).value) or _named(
+            ws.cell(row=row, column=header.name_col).value if header.name_col else None
+        )
+        section_rows.append((row, name))
+
+    matched = False
+    total = 0.0
+    for i, (row, name) in enumerate(section_rows):
+        if classify(name) != "concrete":
+            continue
+        matched = True
+        end = section_rows[i + 1][0] if i + 1 < len(section_rows) else ws.max_row + 1
+        for r in range(row + 1, end):
+            qty = _amount(ws.cell(row=r, column=qty_col).value)
+            if qty is None:
+                continue
+            if unit_col and not _is_volume_unit(_cell_text(ws, r, unit_col)):
+                continue
+            total += qty
+
+    return total if matched else None
