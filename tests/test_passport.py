@@ -132,7 +132,91 @@ def test_charts_price_computes_bar_width_relative_to_max():
     rows = {row["label"]: row for row in charts["price"]}
     assert rows["Проект Б"]["width_pct"] == 50.0
     assert rows["Проект А"]["width_pct"] == 100.0
-    assert rows["Проект А"]["display"] == "100.00"
+    assert rows["Проект А"]["display"] == "100.00 ₽"
+
+
+def test_charts_price_short_display_abbreviates_billions():
+    passports = {"a": _passport("Проект А", price=24157917118.54)}
+    charts = passport.build_comparison_charts(passports, ["a"])
+    assert charts["price"][0]["short_display"] == "24.16 млрд ₽"
+
+
+def test_charts_price_short_display_abbreviates_millions():
+    passports = {"a": _passport("Проект А", price=3450000.0)}
+    charts = passport.build_comparison_charts(passports, ["a"])
+    assert charts["price"][0]["short_display"] == "3.45 млн ₽"
+
+
+def test_charts_price_short_display_falls_back_to_full_below_a_thousand():
+    passports = {"a": _passport("Проект А", price=500.0)}
+    charts = passport.build_comparison_charts(passports, ["a"])
+    assert charts["price"][0]["short_display"] == "500.00 ₽"
+
+
+def test_charts_price_by_year_and_by_class_are_also_abbreviated_money():
+    passports = {"a": _passport("Проект А", price=24157917118.54, year="2024")}
+    charts = passport.build_comparison_charts(passports, ["a"])
+    assert charts["price_by_year"][0]["short_display"] == "24.16 млрд ₽"
+
+
+def test_charts_price_per_sqm_display_is_grouped_whole_roubles():
+    passports = {
+        "a": _passport("Проект А", price=138577.42 * 67413.0, area=67413.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a"])
+    assert charts["price_per_sqm"][0]["display"] == "138 577 ₽"
+
+
+def test_charts_coefficient_display_stays_two_decimals_no_currency():
+    passports = {"a": _passport("Проект А")}
+    charts = passport.build_comparison_charts(
+        passports, ["a"], concrete_coefficients={"a": 0.6},
+    )
+    assert charts["concrete_coefficient"][0]["display"] == "0.60"
+
+
+def test_charts_zero_value_row_is_flagged():
+    passports = {"a": _passport("Проект А"), "b": _passport("Проект Б")}
+    charts = passport.build_comparison_charts(
+        passports, ["a", "b"], facade_coefficients={"a": 0.0, "b": 1.2},
+    )
+    rows = {row["label"]: row for row in charts["facade_coefficient"]}
+    assert rows["Проект А"]["is_zero"] is True
+    assert rows["Проект Б"]["is_zero"] is False
+
+
+def test_charts_value_rounding_to_zero_display_is_also_flagged():
+    # В реальных данных «0.00» на экране не всегда значит точный ноль —
+    # площадь фасада может оказаться крошечной долей от общей площади и
+    # округлиться до 0.00, а полоска при этом всё равно рисуется. Именно
+    # так и выглядел баг, который правит эта карточка.
+    passports = {"a": _passport("Проект А"), "b": _passport("Проект Б")}
+    charts = passport.build_comparison_charts(
+        passports, ["a", "b"], facade_coefficients={"a": 0.0026, "b": 1.2},
+    )
+    rows = {row["label"]: row for row in charts["facade_coefficient"]}
+    assert rows["Проект А"]["display"] == "0.00"
+    assert rows["Проект А"]["is_zero"] is True
+
+
+# --- project_colors ---
+
+def test_project_colors_assigns_first_two_from_the_fixed_palette():
+    colors = passport.project_colors(["a", "b"])
+    assert colors == {"a": "#059669", "b": "#4f46e5"}
+
+
+def test_project_colors_keyed_by_position_not_alphabetical_order():
+    colors = passport.project_colors(["b", "a"])
+    assert colors["b"] == "#059669"
+    assert colors["a"] == "#4f46e5"
+
+
+def test_project_colors_rotates_the_palette_past_its_length():
+    palette_len = len(passport.PROJECT_COLOR_PALETTE)
+    slugs = [f"p{i}" for i in range(palette_len + 1)]
+    colors = passport.project_colors(slugs)
+    assert colors["p0"] == colors[f"p{palette_len}"]
 
 
 def test_charts_price_per_sqm_skips_when_not_computable():

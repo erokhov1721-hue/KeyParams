@@ -511,6 +511,57 @@ def test_compare_projects_shows_empty_chart_message_without_data(tmp_path):
     assert "Недостаточно данных" in body
 
 
+def test_compare_projects_price_charts_share_one_card_with_tabs(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=100.0, year_signed="2024",
+        building_class="Бизнес", total_area_sqm=1.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", contract_price_rub=200.0, year_signed="2023",
+        building_class="Комфорт", total_area_sqm=1.0,
+    )
+
+    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    assert 'data-chart-tab="price"' in body
+    assert 'data-chart-tab="price_by_year"' in body
+    assert 'data-chart-tab="price_by_class"' in body
+    # Полное описание переехало в подсказку вкладки, а не пропало совсем.
+    assert 'title="Цена работ по году подписания договора"' in body
+
+
+def test_compare_projects_shows_a_color_legend_for_each_project(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(tmp_path, "ПроектА")
+    slug2 = _make_project_with_passport(tmp_path, "ПроектБ")
+
+    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    assert "project-legend" in body
+    assert "#059669" in body
+    assert "#4f46e5" in body
+
+
+def test_compare_projects_price_per_sqm_renders_as_a_bar_chart_like_the_rest(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=100.0, total_area_sqm=1.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", contract_price_rub=150.0, total_area_sqm=1.0,
+    )
+
+    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    assert "kpi-tile" not in body
+    assert "150 ₽" in body
+    assert "100 ₽" in body
+
+
 def test_compare_page_shows_the_terms_table(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -1403,6 +1454,24 @@ def test_compare_page_shows_the_concrete_facade_and_rebar_coefficient_charts(tmp
     assert passport_module.format_number(120.5) in body
     # Больше не дублируется строкой в «Общих сведениях» — только график.
     assert body.count("Коэффициент монолита за общую площадь по СП, м³/м²") == 1
+
+
+def test_compare_projects_facade_coefficient_zero_shows_placeholder_not_bar(tmp_path):
+    # 0.00 — настоящее значение (площадь фасада вписана нулём), а не "нет
+    # данных": закрашенная нулевая полоска рядом с обычными выглядела бы как
+    # баг, поэтому вместо неё — пунктирная плашка.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", total_area_sqm=1000.0, facade_area_manual=0.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", total_area_sqm=1000.0, facade_area_manual=2000.0,
+    )
+
+    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    assert "bar-track is-zero" in body
 
 
 def test_compare_page_coefficient_charts_say_so_when_data_is_missing(tmp_path):

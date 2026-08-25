@@ -86,31 +86,87 @@
 </div>
 {% endif %}
 
-{% set chart_defs = [
-  ("price_by_year", "Цена работ по году подписания договора"),
-  ("price_by_class", "Цена работ по классу жилья"),
-  ("price", "Цена работ по проектам"),
-  ("price_per_sqm", "Цена за м² по проектам"),
-  ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
-  ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
-  ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
+{# Один цвет на объект, одинаковый во всех карточках ниже — так видно, где
+   чьи данные, не читая подпись каждый раз. #}
+<div class="project-legend">
+  {% for slug in slugs %}
+  <span class="project-legend-item">
+    <span class="project-legend-dot" style="background: {{ project_colors.get(slug, '') }};"></span>
+    {{ passports[slug].project_name or slug }}
+  </span>
+  {% endfor %}
+</div>
+
+{% macro bar_chart_rows(rows, project_colors) %}
+<div class="bar-chart">
+  {% for row in rows %}
+  <div class="bar-row">
+    <div class="bar-label">{{ row.label }}</div>
+    {% if row.is_zero %}
+    <div class="bar-track is-zero"><div class="bar-dashed"></div></div>
+    <div class="bar-value is-zero">{{ row.display }}</div>
+    {% else %}
+    <div class="bar-track">
+      <div class="bar-fill" style="width: {{ row.width_pct }}%; --bar-color: {{ project_colors.get(row.slug, '') }};"></div>
+    </div>
+    <div class="bar-value" {% if row.short_display %}title="{{ row.display }}"{% endif %}>{{ row.short_display or row.display }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{# «По году», «по классу» и «по проектам» — одна и та же цена работ в трёх
+   разрезах; три отдельные карточки с одинаковыми деньгами только распирали
+   страницу, а так это одна карточка с переключателем. Полное описание
+   каждого разреза осталось — подсказкой на вкладке. #}
+{% set price_tabs = [
+  ("price", "По проектам", "Цена работ по проектам"),
+  ("price_by_year", "По году", "Цена работ по году подписания договора"),
+  ("price_by_class", "По классу", "Цена работ по классу жилья"),
 ] %}
+<div class="card chart-card chart-card-tabs">
+  <div class="chart-tabs-head">
+    <h2 class="chart-title">Цена работ</h2>
+    <div class="chart-tabs" role="tablist">
+      {% for key, label, full_title in price_tabs %}
+      <button type="button" class="chart-tab{{ ' is-active' if loop.first }}"
+              role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}"
+              title="{{ full_title }}" data-chart-tab="{{ key }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+  </div>
+  {% for key, label, full_title in price_tabs %}
+  <div class="chart-tab-panel{{ '' if loop.first else ' is-hidden' }}" data-chart-panel="{{ key }}">
+    {% if charts[key] %}
+      {{ bar_chart_rows(charts[key], project_colors) }}
+    {% else %}
+    <p class="chart-empty">Недостаточно данных для этого графика.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
 <div class="charts-grid">
-  {% for key, title in chart_defs %}
+  <div class="card chart-card">
+    <h2 class="chart-title">Цена за м² по проектам</h2>
+    {% if charts.price_per_sqm %}
+      {{ bar_chart_rows(charts.price_per_sqm, project_colors) }}
+    {% else %}
+    <p class="chart-empty">Недостаточно данных для этого графика.</p>
+    {% endif %}
+  </div>
+
+  {% set coefficient_charts = [
+    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
+    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
+    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
+  ] %}
+  {% for key, title in coefficient_charts %}
   <div class="card chart-card">
     <h2 class="chart-title">{{ title }}</h2>
     {% if charts[key] %}
-    <div class="bar-chart">
-      {% for row in charts[key] %}
-      <div class="bar-row">
-        <div class="bar-label">{{ row.label }}</div>
-        <div class="bar-track">
-          <div class="bar-fill" style="width: {{ row.width_pct }}%"></div>
-        </div>
-        <div class="bar-value">{{ row.display }}</div>
-      </div>
-      {% endfor %}
-    </div>
+      {{ bar_chart_rows(charts[key], project_colors) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
@@ -503,6 +559,25 @@
             return descending ? -result : result;
           })
           .forEach(function (row) { body.appendChild(row); });
+      });
+    });
+  });
+</script>
+
+{# Вкладки карточки «Цена работ» — переключение на месте, без перезагрузки:
+   разрез, в котором смотрят цену, это тоже настройка чтения, а не данные. #}
+<script>
+  document.querySelectorAll('.chart-card-tabs').forEach(function (card) {
+    var tabs = card.querySelectorAll('.chart-tab');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        tabs.forEach(function (other) {
+          other.classList.toggle('is-active', other === tab);
+          other.setAttribute('aria-selected', other === tab ? 'true' : 'false');
+        });
+        card.querySelectorAll('.chart-tab-panel').forEach(function (panel) {
+          panel.classList.toggle('is-hidden', panel.dataset.chartPanel !== tab.dataset.chartTab);
+        });
       });
     });
   });

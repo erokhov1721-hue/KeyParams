@@ -168,6 +168,7 @@ def compare_projects():
             concrete_coefficients=concrete_coefficients,
             facade_coefficients=facade_coefficients,
         ),
+        project_colors=passport_module.project_colors(slugs),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,

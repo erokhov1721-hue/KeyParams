@@ -1251,7 +1251,10 @@ select option {
 
 .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  /* --bar-color — цвет объекта, заданный построчно из compare.html; без него
+     (страницы вне сравнения, если класс когда-нибудь понадобится там) —
+     прежний бирюзовый градиент. */
+  background: var(--bar-color, linear-gradient(90deg, var(--accent), var(--accent-2)));
   border-radius: 0 4px 4px 0;
 }
 
@@ -1265,6 +1268,25 @@ select option {
   font-variant-numeric: tabular-nums;
 }
 
+/* Нулевое значение — не закрашенная полоска на всю длину чужой (это выглядит
+   как не досчитавшийся баг), а тонкая пунктирная линия: значение есть,
+   просто оно ноль. */
+.bar-track.is-zero {
+  background: none;
+  display: flex;
+  align-items: center;
+}
+
+.bar-dashed {
+  width: 100%;
+  border-top: 2px dashed var(--border);
+}
+
+.bar-value.is-zero {
+  color: var(--text-500);
+  font-weight: 500;
+}
+
 @media (max-width: 620px) {
   .bar-label {
     flex-basis: 110px;
@@ -1272,6 +1294,77 @@ select option {
   .bar-value {
     min-width: 80px;
   }
+}
+
+/* Цвет объекта — один и тот же кружок использует и легенда сверху, и подпись
+   в KPI-карточках цены за м²; во втором случае цвет берётся из --bar-color
+   родительской карточки, а не задаётся ещё раз. */
+.project-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: -4px 2px 4px;
+}
+
+.project-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-100);
+}
+
+.project-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bar-color, var(--accent));
+  flex: 0 0 auto;
+}
+
+/* «Цена работ» — одна карточка с переключателем разрезов вместо трёх
+   одинаковых на вид карточек с одними и теми же деньгами. */
+.chart-tabs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.chart-tabs-head .chart-title {
+  margin: 0;
+}
+
+.chart-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-900);
+  border-radius: var(--radius-sm);
+}
+
+.chart-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-500);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chart-tab.is-active {
+  background: var(--surface-card);
+  color: var(--text-100);
+  box-shadow: var(--shadow-card);
+}
+
+.chart-tab-panel.is-hidden {
+  display: none;
 }
 
 /* Estimate view */

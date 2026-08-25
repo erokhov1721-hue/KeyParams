@@ -446,13 +446,89 @@ def _format_money(value):
     return integer_part.replace(',', ' ') + '.' + decimal_part
 
 
-def _finalize_chart(rows):
-    if rows:
-        max_value = max(row["value"] for row in rows) or 1
-        for row in rows:
-            row["width_pct"] = round(row["value"] / max_value * 100, 1)
+# Largest unit first, so a value picks the first (and therefore biggest) one
+# it clears rather than always bottoming out at thousands.
+_MONEY_SCALE = [(1_000_000_000, "млрд"), (1_000_000, "млн"), (1_000, "тыс")]
+
+
+def _format_money_short(value):
+    """A rouble figure abbreviated to its largest round unit, two decimals —
+    "24.16 млрд ₽" rather than every digit of "24 157 917 118.54". A bar
+    chart's label has room for one of these, not the other; the full amount
+    stays available as the row's own ``display``, meant for a tooltip.
+
+    Falls back to the plain grouped amount below a thousand roubles, where
+    abbreviating would lose the only digits that matter.
+    """
+    sign = "-" if value < 0 else ""
+    magnitude = abs(value)
+    for scale, suffix in _MONEY_SCALE:
+        if magnitude >= scale:
+            return f"{sign}{magnitude / scale:.2f} {suffix} ₽"
+    return f"{sign}{_format_money(magnitude)} ₽"
+
+
+def _format_rub_whole(value):
+    """A rouble-per-m² figure, grouped and rounded to the nearest rouble —
+    "138 577 ₽". Small enough next to a project's name that full precision
+    would just be visual noise the way it isn't on a bar chart."""
+    return f"{round(value):,}".replace(",", " ") + " ₽"
+
+
+def _finalize_chart(rows, kind="coefficient"):
+    """Adds the display-ready fields every chart row needs, in place.
+
+    ``kind`` picks the number format:
+    - "money": a rouble amount too large to show in full next to its bar —
+      ``display`` keeps full precision (a tooltip's job), ``short_display``
+      is what's actually printed ("24.16 млрд ₽").
+    - "money_per_sqm": a per-m² rouble amount small enough to show whole.
+    - "coefficient" (default): a plain 2-decimal number; the unit is the
+      chart's own title, not the row's.
+
+    Also flags a row whose value rounds to zero at the two decimals it's
+    shown with: a sliver of a bar next to a value reading "0.00" looks like
+    a rendering bug rather than "the estimate quotes almost nothing here",
+    so the template swaps it for a dashed placeholder instead of a bar.
+    """
+    if not rows:
+        return rows
+    max_value = max(row["value"] for row in rows) or 1
+    for row in rows:
+        row["width_pct"] = round(row["value"] / max_value * 100, 1)
+        row["is_zero"] = round(row["value"], 2) == 0
+        if kind == "money":
+            row["display"] = _format_money(row["value"]) + " ₽"
+            row["short_display"] = _format_money_short(row["value"])
+        elif kind == "money_per_sqm":
+            row["display"] = _format_rub_whole(row["value"])
+        else:
             row["display"] = _format_money(row["value"])
     return rows
+
+
+# Tailwind's own -600 shades, so a project reads as the same colour on every
+# chart and card on the compare page — not just a matching gradient — and a
+# reader can tell "this one" from "that one" without checking the label.
+# Rotates past its length for more than a handful of projects; distinct
+# colours for a dozen at once isn't a promise this page makes.
+PROJECT_COLOR_PALETTE = [
+    "#059669",  # emerald-600
+    "#4f46e5",  # indigo-600
+    "#d97706",  # amber-600
+    "#e11d48",  # rose-600
+    "#0891b2",  # cyan-600
+    "#7c3aed",  # violet-600
+]
+
+
+def project_colors(slugs: list) -> dict:
+    """``{slug: hex}`` — a fixed colour per project, by its position in
+    ``slugs``, stable across every chart and card on the page."""
+    return {
+        slug: PROJECT_COLOR_PALETTE[i % len(PROJECT_COLOR_PALETTE)]
+        for i, slug in enumerate(slugs)
+    }
 
 
 def _chart_rows(passports, slugs, extra_field=None):
@@ -530,10 +606,10 @@ def build_comparison_charts(
     price_per_sqm_rows.sort(key=lambda row: row["value"])
 
     return {
-        "price_by_year": _finalize_chart(price_by_year),
-        "price_by_class": _finalize_chart(price_by_class),
-        "price": _finalize_chart(price),
-        "price_per_sqm": _finalize_chart(price_per_sqm_rows),
+        "price_by_year": _finalize_chart(price_by_year, kind="money"),
+        "price_by_class": _finalize_chart(price_by_class, kind="money"),
+        "price": _finalize_chart(price, kind="money"),
+        "price_per_sqm": _finalize_chart(price_per_sqm_rows, kind="money_per_sqm"),
         "concrete_coefficient": _finalize_chart(_value_chart_rows(
             passports, slugs, lambda slug: concrete_coefficients.get(slug)
         )),
