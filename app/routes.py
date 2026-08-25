@@ -152,6 +152,8 @@ def compare_projects():
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, slugs)
     left, right = _pair_choice(slugs)
+    concrete_coefficients = _concrete_coefficients(root, slugs, passports)
+    facade_coefficients = _facade_coefficients(root, slugs, passports)
     return render_template(
         "compare.html",
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
@@ -161,7 +163,11 @@ def compare_projects():
         passports=passports,
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
-        charts=passport_module.build_comparison_charts(passports, slugs),
+        charts=passport_module.build_comparison_charts(
+            passports, slugs,
+            concrete_coefficients=concrete_coefficients,
+            facade_coefficients=facade_coefficients,
+        ),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
@@ -171,7 +177,6 @@ def compare_projects():
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
         ),
         adjustments=adjustments,
-        concrete_coefficients=_concrete_coefficients(root, slugs, passports),
     )
 
 
@@ -245,10 +250,16 @@ def compare_projects_pdf():
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, slugs)
     left, right = _pair_choice(slugs)
+    concrete_coefficients = _concrete_coefficients(root, slugs, passports)
+    facade_coefficients = _facade_coefficients(root, slugs, passports)
     pdf_bytes = pdf_export.build_compare_pdf(
         passports, slugs,
         passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
-        passport_module.build_comparison_charts(passports, slugs),
+        passport_module.build_comparison_charts(
+            passports, slugs,
+            concrete_coefficients=concrete_coefficients,
+            facade_coefficients=facade_coefficients,
+        ),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
@@ -258,7 +269,6 @@ def compare_projects_pdf():
         increase=comparison.build_increase_summary(
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
         ),
-        concrete_coefficients=_concrete_coefficients(root, slugs, passports),
     )
     return Response(
         pdf_bytes,
@@ -402,12 +412,48 @@ def _concrete_volume(root, slug):
 
 
 def _concrete_coefficients(root, slugs, passports):
-    """``{slug: коэффициент}`` для таблицы сравнения — та же формула, что и в
-    «Коэффициенте бетона» на странице проекта, посчитанная для каждого
-    выбранного проекта."""
+    """``{slug: коэффициент}`` для сравнения проектов — та же формула, что и
+    на странице проекта, посчитанная для каждого выбранного проекта."""
     return {
         slug: passport_module.concrete_coefficient(
             passports[slug], _concrete_volume(root, slug)
+        )
+        for slug in slugs
+    }
+
+
+def _facade_area_from_estimate(root, slug):
+    """Площадь фасада по смете проекта, в м² — «Предлагаемое количество» из
+    раздела сметы, в заголовке которого встречается «фасад». None, если
+    сметы нет, её не удалось разобрать, или в ней нет такого раздела."""
+    path = storage.estimate_path(root, slug)
+    if not path.exists():
+        return None
+    try:
+        return estimate_sections.read_facade_area(path)
+    except estimate_sections.EstimateSectionsError as e:
+        current_app.logger.warning("Не удалось прочитать смету: %s", e)
+        return None
+
+
+def _facade_area(root, slug, passport_data):
+    """Действующая площадь фасада: вписанная вручную в паспорте, а если там
+    пусто — та, что нашлась в смете. Ручное значение важнее смeтного: оно и
+    существует ради тех случаев, где разбор смет ошибается или смета устроена
+    не так, как он ожидает.
+    """
+    manual = passport_data.get(passport_module.FACADE_AREA_FIELD)
+    if manual is not None:
+        return manual
+    return _facade_area_from_estimate(root, slug)
+
+
+def _facade_coefficients(root, slugs, passports):
+    """``{slug: коэффициент}`` для сравнения проектов — та же формула, что и
+    на странице проекта, посчитанная для каждого выбранного проекта."""
+    return {
+        slug: passport_module.facade_coefficient(
+            passports[slug], _facade_area(root, slug, passports[slug])
         )
         for slug in slugs
     }
@@ -444,6 +490,8 @@ def project_page(slug):
     increase_file = storage.cost_increase_path(root, slug)
     concrete_volume = _concrete_volume(root, slug)
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
+    facade_area = _facade_area(root, slug, data)
+    facade_coefficient = passport_module.facade_coefficient(data, facade_area)
     return render_template(
         "project.html",
         slug=slug,
@@ -460,6 +508,8 @@ def project_page(slug):
         sheets=estimate.read_estimate(estimate_file) if has_estimate else [],
         concrete_volume=concrete_volume,
         concrete_coefficient=concrete_coefficient,
+        facade_area=facade_area,
+        facade_coefficient=facade_coefficient,
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
         has_cost_increase=increase_file.exists(),
@@ -605,8 +655,16 @@ def update_contract_terms(slug):
     return redirect(url_for("main.project_page", slug=slug))
 
 
-@bp.route("/projects/<slug>/rebar-coefficient", methods=["POST"])
-def update_rebar_coefficient(slug):
+# Оба поля вписываются вручную в одной форме внизу «Расчётных
+# коэффициентов» — арматуру считать пока не из чего вовсе, а площадь
+# фасада иногда проще поправить самому, чем чинить разбор смет.
+MANUAL_COEFFICIENT_FIELDS = (
+    passport_module.REBAR_COEFFICIENT_FIELD, passport_module.FACADE_AREA_FIELD,
+)
+
+
+@bp.route("/projects/<slug>/manual-coefficients", methods=["POST"])
+def update_manual_coefficients(slug):
     root = _projects_root()
     if slug not in storage.list_project_slugs(root):
         abort(404)
@@ -615,10 +673,9 @@ def update_rebar_coefficient(slug):
         abort(404)
 
     data = passport_module.load_passport(path)
-    raw_value = request.form.get(passport_module.REBAR_COEFFICIENT_FIELD, "").strip()
-    data[passport_module.REBAR_COEFFICIENT_FIELD] = (
-        extractors.parse_number(raw_value) if raw_value else None
-    )
+    for field in MANUAL_COEFFICIENT_FIELDS:
+        raw_value = request.form.get(field, "").strip()
+        data[field] = extractors.parse_number(raw_value) if raw_value else None
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))
 

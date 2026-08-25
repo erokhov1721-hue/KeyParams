@@ -58,12 +58,12 @@ def test_price_per_sqm_none_when_area_zero():
 
 # --- build_comparison_charts ---
 
-def _passport(name, price=None, year=None, building_class=None, area=None):
+def _passport(name, price=None, year=None, building_class=None, area=None, rebar=None):
     return {
         "project_name": name, "year_signed": year, "building_class": building_class,
         "general_contractor": None, "contract_price_rub": price,
         "underground_area_sqm": None, "aboveground_area_sqm": None,
-        "total_area_sqm": area, "ocr_fields": [],
+        "total_area_sqm": area, "rebar_coefficient_avg": rebar, "ocr_fields": [],
     }
 
 
@@ -144,6 +144,48 @@ def test_charts_price_per_sqm_skips_when_not_computable():
     assert [row["label"] for row in charts["price_per_sqm"]] == ["Проект Б"]
 
 
+def test_charts_concrete_coefficient_sorted_ascending_and_skips_missing():
+    passports = {
+        "a": _passport("Проект А"),
+        "b": _passport("Проект Б"),
+        "c": _passport("Проект В"),
+    }
+    charts = passport.build_comparison_charts(
+        passports, ["a", "b", "c"],
+        concrete_coefficients={"a": 0.6, "c": 0.3},   # "b" has none — skipped
+    )
+    assert [row["label"] for row in charts["concrete_coefficient"]] == [
+        "Проект В", "Проект А",
+    ]
+
+
+def test_charts_facade_coefficient_sorted_ascending_and_skips_missing():
+    passports = {
+        "a": _passport("Проект А"),
+        "b": _passport("Проект Б"),
+        "c": _passport("Проект В"),
+    }
+    charts = passport.build_comparison_charts(
+        passports, ["a", "b", "c"],
+        facade_coefficients={"a": 1.6, "c": 0.9},   # "b" has none — skipped
+    )
+    assert [row["label"] for row in charts["facade_coefficient"]] == [
+        "Проект В", "Проект А",
+    ]
+
+
+def test_charts_rebar_coefficient_sorted_ascending_and_skips_missing():
+    passports = {
+        "a": _passport("Проект А", rebar=150.0),
+        "b": _passport("Проект Б", rebar=None),
+        "c": _passport("Проект В", rebar=110.0),
+    }
+    charts = passport.build_comparison_charts(passports, ["a", "b", "c"])
+    assert [row["label"] for row in charts["rebar_coefficient"]] == [
+        "Проект В", "Проект А",
+    ]
+
+
 def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
     dgp_xml = document_xml(paragraphs=[
         "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
@@ -165,7 +207,9 @@ def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
 
 
 def test_save_and_load_passport_roundtrip(tmp_path):
-    fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [passport.REBAR_COEFFICIENT_FIELD]
+    fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [
+        passport.REBAR_COEFFICIENT_FIELD, passport.FACADE_AREA_FIELD,
+    ]
     data = {field: None for field in fields}
     data["project_name"] = "Проспект Мира"
     data["general_contractor"] = "ООО «АНТТЕК»"

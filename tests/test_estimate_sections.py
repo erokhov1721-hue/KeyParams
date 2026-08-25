@@ -435,3 +435,86 @@ def test_concrete_volume_of_an_unreadable_file_is_reported_rather_than_crashing(
         pass
     else:
         raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")
+
+
+# --- read_facade_area ---
+
+def test_facade_area_sums_the_panel_leaf_quantities_under_the_section(tmp_path):
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Панель фасадная типовая", 5000.0, "м2"),
+        (None, None, "Панель угловая", 1200.5, "м2"),
+        (7, "7. Кровля", "Устройство кровли", None, "м2"),
+        (None, None, "Панель кровельная", 999.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 6200.5
+
+
+def test_facade_area_recognises_facade_named_with_any_of_its_wordings(tmp_path):
+    # "фасад", "фасадные", "фасадов" — the classify() rule matches the
+    # substring, so any of these must be found the same way.
+    for name in ("Фасадные работы", "Устройство фасадов", "Фасад здания"):
+        path = _save(_offer_with_quantity([
+            (6, "6. " + name, name, None, "м2"),
+            (None, None, "Панель фасадная", 100.0, "м2"),
+        ]), tmp_path, name="facade.xlsx")
+        assert estimate_sections.read_facade_area(path) == 100.0, name
+
+
+def test_facade_area_ignores_lines_measured_in_other_units(tmp_path):
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Панель навесная", 300.0, "м2"),
+        (None, None, "Кронштейны", 50.0, "шт"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 300.0
+
+
+def test_facade_area_ignores_the_substructure_and_insulation_layers(tmp_path):
+    # A ventilated facade quotes the same square metres three times over —
+    # once for the substructure, once for the insulation, once for the
+    # cladding panels that finish it. Only the panels stand for the area;
+    # counting all three would triple it.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство навесного фасада", None, "м2"),
+        (None, None, "Подсистема", 1000.0, "м2"),
+        (None, None, "Утеплитель", 1000.0, "м2"),
+        (None, None, "Панель из стеклофибробетона", 1000.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 1000.0
+
+
+def test_facade_area_ignores_glazing_in_the_same_section(tmp_path):
+    # Light-transmitting structures share the facade section but are a
+    # different kind of facade entirely, and carry no "панель" line of
+    # their own — no special-case is needed to keep them out.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Витражное остекление", 1200.5, "м2"),
+        (None, None, "Панель фасадная", 300.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 300.0
+
+
+def test_facade_area_is_none_without_a_matching_section(tmp_path):
+    path = _save(_offer_with_quantity([
+        (1, "1. Котлован", "Устройство котлована", 50.0, "м3"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) is None
+
+
+def test_facade_area_of_an_unreadable_file_is_reported_rather_than_crashing(tmp_path):
+    path = tmp_path / "broken.xlsx"
+    path.write_bytes(b"not a workbook at all")
+
+    try:
+        estimate_sections.read_facade_area(path)
+    except estimate_sections.EstimateSectionsError:
+        pass
+    else:
+        raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")

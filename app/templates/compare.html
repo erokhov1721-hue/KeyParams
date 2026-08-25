@@ -53,20 +53,6 @@
         {% endif %}
         {% endif %}
       {% endfor %}
-      <tr>
-        <td class="compare-field-label">Коэффициент монолита за общую площадь по СП, м³/м²</td>
-        {% for slug in slugs %}
-          {% set coef = concrete_coefficients.get(slug) %}
-          <td>{{ format_number(coef) if coef is not none else '—' }}</td>
-        {% endfor %}
-      </tr>
-      <tr>
-        <td class="compare-field-label">Коэффициент арматуры (средний), кг/м³</td>
-        {% for slug in slugs %}
-          {% set rebar = passports[slug].rebar_coefficient_avg %}
-          <td>{{ format_number(rebar) if rebar is not none else '—' }}</td>
-        {% endfor %}
-      </tr>
     </tbody>
   </table>
 </div>
@@ -105,6 +91,9 @@
   ("price_by_class", "Цена работ по классу жилья"),
   ("price", "Цена работ по проектам"),
   ("price_per_sqm", "Цена за м² по проектам"),
+  ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
+  ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
+  ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
 ] %}
 <div class="charts-grid">
   {% for key, title in chart_defs %}

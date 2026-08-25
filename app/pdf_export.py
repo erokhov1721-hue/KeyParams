@@ -49,6 +49,9 @@ CHART_DEFS = [
     ("price_by_class", "Цена работ по классу жилья"),
     ("price", "Цена работ по проектам"),
     ("price_per_sqm", "Цена за м² по проектам"),
+    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
+    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
+    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
 ]
 
 PAGE_SIZE = landscape(A4)
@@ -253,10 +256,8 @@ def _chart_bar_drawing(width, width_pct):
 # --- Блоки страницы -------------------------------------------------------
 
 def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
-                 format_number, price_per_sqm, styles, page_width,
-                 concrete_coefficients=None):
+                 format_number, price_per_sqm, styles, page_width):
     """«Общие сведения» — та же таблица фактов, что и на странице."""
-    concrete_coefficients = concrete_coefficients or {}
     header = [Paragraph("", styles["head"])]
     for slug in slugs:
         header.append(Paragraph(
@@ -287,22 +288,6 @@ def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
                     format_number(psqm) if psqm is not None else "—", styles["cell"]
                 ))
             data.append(psqm_row)
-
-    concrete_row = [Paragraph(
-        "Коэффициент монолита за общую площадь по СП, м³/м²", styles["cell_label"]
-    )]
-    rebar_row = [Paragraph("Коэффициент арматуры (средний), кг/м³", styles["cell_label"])]
-    for slug in slugs:
-        coef = concrete_coefficients.get(slug)
-        concrete_row.append(Paragraph(
-            format_number(coef) if coef is not None else "—", styles["cell"]
-        ))
-        rebar = passports[slug].get("rebar_coefficient_avg")
-        rebar_row.append(Paragraph(
-            format_number(rebar) if rebar is not None else "—", styles["cell"]
-        ))
-    data.append(concrete_row)
-    data.append(rebar_row)
 
     label_w = min(170.0, page_width * 0.28)
     value_w = (page_width - label_w) / max(len(slugs), 1)
@@ -739,7 +724,7 @@ def _pair_block(pair, styles, page_width):
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
-    sections=None, pair=None, terms=None, increase=None, concrete_coefficients=None,
+    sections=None, pair=None, terms=None, increase=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
@@ -760,7 +745,6 @@ def build_compare_pdf(
     story += _facts_block(
         passports, slugs, fields, field_labels, numeric_fields,
         format_number, price_per_sqm, styles, page_width,
-        concrete_coefficients=concrete_coefficients,
     )
     story += _terms_block(terms, slugs, passports, styles, page_width)
     # Диаграммы — с новой страницы. Иначе первая из них ютится под таблицами

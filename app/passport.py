@@ -54,10 +54,17 @@ CONTRACT_FIELD_LABELS = {
     "vat": "НДС",
 }
 
-# Живёт в аккордеоне «Коэффициент бетона» рядом с объёмом монолита, но
-# считать его пока не из чего — до появления своего источника данных значение
-# вписывается вручную, как когда-то и площади объекта.
+# Живёт в аккордеоне «Расчётные коэффициенты бетонных и фасадных
+# конструкций» рядом с объёмом монолита, но считать его пока не из чего — до
+# появления своего источника данных значение вписывается вручную, как когда-то
+# и площади объекта.
 REBAR_COEFFICIENT_FIELD = "rebar_coefficient_avg"
+
+# Площадь фасада, вписанная вручную поверх того, что нашлось в смете. Смета
+# не всегда режется на панели облицовки так, как это делает разбор, и в этом
+# случае поправить цифру проще самому, чем чинить разбор под очередную новую
+# смету.
+FACADE_AREA_FIELD = "facade_area_manual"
 
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
@@ -399,15 +406,25 @@ def price_per_sqm(data: dict):
 
 def concrete_coefficient(data: dict, concrete_volume):
     """The concrete volume (m³) over the object's total area — the same
-    figure as the "Коэффициент бетона" accordion on the project page. The
-    volume is a parameter rather than read here from an estimate file, so
-    this stays reusable wherever it's already at hand (the project page,
-    the projects comparison).
+    figure as the "Расчётные коэффициенты бетонных и фасадных конструкций"
+    accordion on the project page. The volume is a parameter rather than
+    read here from an estimate file, so this stays reusable wherever it's
+    already at hand (the project page, the projects comparison).
     """
     area = data.get("total_area_sqm")
     if concrete_volume is None or not area:
         return None
     return concrete_volume / area
+
+
+def facade_coefficient(data: dict, facade_area):
+    """The estimate's proposed facade area (m²) over the object's total
+    area — same idea as ``concrete_coefficient``, for facade cladding
+    rather than monolithic concrete."""
+    area = data.get("total_area_sqm")
+    if facade_area is None or not area:
+        return None
+    return facade_area / area
 
 
 def format_number(value):
@@ -457,13 +474,41 @@ def _chart_rows(passports, slugs, extra_field=None):
     return rows
 
 
-def build_comparison_charts(passports: dict, slugs: list) -> dict:
+def _value_chart_rows(passports, slugs, value_fn):
+    """Chart rows for a per-project value not carried straight off the
+    estimate's own price — a coefficient, say, rather than a rouble figure.
+    Projects the value function returns None for are skipped, same as
+    everywhere else on this page: a missing value isn't a zero."""
+    rows = []
+    for slug in slugs:
+        value = value_fn(slug)
+        if value is None:
+            continue
+        rows.append({
+            "slug": slug, "label": passports[slug].get("project_name") or slug,
+            "value": value,
+        })
+    rows.sort(key=lambda row: row["value"])
+    return rows
+
+
+def build_comparison_charts(
+    passports: dict, slugs: list,
+    concrete_coefficients: dict = None, facade_coefficients: dict = None,
+) -> dict:
     """Bar-chart-ready rows for the compare page, one series per chart.
 
     Each row is independent magnitude data (price, or price per m²) for one
     project — projects missing the value(s) a given chart needs are skipped
     rather than shown as zero, since zero would misstate an unknown value.
+
+    ``concrete_coefficients`` and ``facade_coefficients`` are ``{slug:
+    value}`` computed from each project's estimate — unlike the rest, they
+    can't be read straight off ``passports``.
     """
+    concrete_coefficients = concrete_coefficients or {}
+    facade_coefficients = facade_coefficients or {}
+
     price_by_year = _chart_rows(passports, slugs, extra_field="year_signed")
     price_by_year.sort(key=lambda row: row["sort_key"])
 
@@ -489,6 +534,15 @@ def build_comparison_charts(passports: dict, slugs: list) -> dict:
         "price_by_class": _finalize_chart(price_by_class),
         "price": _finalize_chart(price),
         "price_per_sqm": _finalize_chart(price_per_sqm_rows),
+        "concrete_coefficient": _finalize_chart(_value_chart_rows(
+            passports, slugs, lambda slug: concrete_coefficients.get(slug)
+        )),
+        "facade_coefficient": _finalize_chart(_value_chart_rows(
+            passports, slugs, lambda slug: facade_coefficients.get(slug)
+        )),
+        "rebar_coefficient": _finalize_chart(_value_chart_rows(
+            passports, slugs, lambda slug: passports[slug].get("rebar_coefficient_avg")
+        )),
     }
 
 
@@ -497,6 +551,6 @@ def load_passport(path: Path) -> dict:
     # A passport saved before a field existed (e.g. contract_price_rub)
     # won't have that key — backfill it as unset rather than making every
     # caller (templates included) handle a missing key.
-    for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [REBAR_COEFFICIENT_FIELD]:
+    for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [REBAR_COEFFICIENT_FIELD, FACADE_AREA_FIELD]:
         data.setdefault(field, None)
     return data

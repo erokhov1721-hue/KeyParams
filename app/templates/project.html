@@ -333,21 +333,21 @@
 
     <div class="accordion" data-accordion>
       <button type="button" class="accordion-header" aria-expanded="false">
-        <span>Коэффициент бетона</span>
+        <span>Расчётные коэффициенты бетонных и фасадных конструкций</span>
         <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 9l6 6 6-6"/>
         </svg>
       </button>
       <div class="accordion-panel" hidden>
+        {% if not has_estimate %}
+        <p class="accordion-empty">Смета не загружена для этого проекта.</p>
+        {% else %}
+
         {% if concrete_volume is none %}
         <p class="accordion-empty">
-          {% if has_estimate %}
           В смете нет раздела «Возведение несущих конструкций здания» со
           столбцом «Предлагаемое количество» — посчитать объём монолита не
           из чего.
-          {% else %}
-          Смета не загружена для этого проекта.
-          {% endif %}
         </p>
         {% else %}
         <div class="fields-card">
@@ -370,7 +370,10 @@
         </p>
         {% endif %}
         {% endif %}
-        <form method="post" action="{{ url_for('main.update_rebar_coefficient', slug=slug) }}">
+
+        {% endif %}
+
+        <form method="post" action="{{ url_for('main.update_manual_coefficients', slug=slug) }}">
           <div class="fields-card">
             <div class="field-row {{ 'is-empty' if passport.rebar_coefficient_avg is none else 'is-filled' }}">
               <div class="field-label-col">
@@ -380,7 +383,32 @@
                      value="{{ format_number(passport.rebar_coefficient_avg) if passport.rebar_coefficient_avg is not none else '' }}"
                      placeholder="Введите значение вручную">
             </div>
+            <div class="field-row {{ 'is-empty' if facade_area is none else 'is-filled' }}">
+              <div class="field-label-col">
+                <span class="field-label">Площадь фасада по смете, м²</span>
+              </div>
+              <input type="text" name="facade_area_manual"
+                     value="{{ format_number(facade_area) if facade_area is not none else '' }}"
+                     placeholder="Введите значение вручную">
+            </div>
+            <div class="field-row is-computed">
+              <div class="field-label-col">
+                <span class="field-label">Коэффициент фасада за общую площадь по СП, м²(фас)/м²</span>
+              </div>
+              <input type="text" value="{{ format_number(facade_coefficient) if facade_coefficient is not none else '' }}" placeholder="—" readonly>
+            </div>
           </div>
+          {% if facade_area is none %}
+          <p class="field-hint">
+            В смете не нашлось раздела с фасадом (в заголовке которого
+            встречается «фасад», «фасадные» или «фасадов») со столбцом
+            «Предлагаемое количество» — впишите площадь вручную.
+          </p>
+          {% elif facade_coefficient is none %}
+          <p class="field-hint">
+            Впишите общую площадь объекта в паспорте — без неё коэффициент не посчитать.
+          </p>
+          {% endif %}
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>

@@ -1169,6 +1169,76 @@ def _offer_with_concrete_quantity(volume_m3):
     return buf.getvalue()
 
 
+def _offer_with_facade_quantity(area_m2):
+    """Смета с фасадным разделом и колонкой «Предлагаемое количество»,
+    построенная так же, как ``_offer_with_concrete_quantity``, но для
+    площади фасада."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=9, column=1, value="№ п/п")
+    ws.cell(row=9, column=2, value="№ раздела")
+    ws.cell(row=9, column=3, value="Статья СМР")
+    ws.cell(row=9, column=4, value="Наименование работ")
+    ws.cell(row=9, column=7, value="Ед. изм")
+    ws.cell(row=10, column=10, value="Предлагаемое количество")
+    ws.cell(row=9, column=12, value="Стоимость всего")
+    ws.cell(row=10, column=12, value="Всего")
+
+    ws.cell(row=11, column=2, value=6)
+    ws.cell(row=11, column=3, value="6. Устройство фасадов")
+    ws.cell(row=11, column=4, value="Устройство фасадов")
+    ws.cell(row=11, column=7, value="м2")
+    ws.cell(row=11, column=12, value=1)
+
+    ws.cell(row=12, column=4, value="Панель навесного фасада")
+    ws.cell(row=12, column=7, value="м2")
+    ws.cell(row=12, column=10, value=area_m2)
+    ws.cell(row=12, column=12, value=1)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _offer_with_concrete_and_facade_quantity(volume_m3, area_m2):
+    """One estimate carrying both a concrete and a facade section, so a
+    project can show every coefficient at once."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=9, column=1, value="№ п/п")
+    ws.cell(row=9, column=2, value="№ раздела")
+    ws.cell(row=9, column=3, value="Статья СМР")
+    ws.cell(row=9, column=4, value="Наименование работ")
+    ws.cell(row=9, column=7, value="Ед. изм")
+    ws.cell(row=10, column=10, value="Предлагаемое количество")
+    ws.cell(row=9, column=12, value="Стоимость всего")
+    ws.cell(row=10, column=12, value="Всего")
+
+    ws.cell(row=11, column=2, value=4)
+    ws.cell(row=11, column=3, value="4. Конструктивные решения")
+    ws.cell(row=11, column=4, value="Возведение несущих конструкций здания")
+    ws.cell(row=11, column=7, value="м3")
+    ws.cell(row=11, column=12, value=1)
+    ws.cell(row=12, column=4, value="Фундаментная плита")
+    ws.cell(row=12, column=7, value="м3")
+    ws.cell(row=12, column=10, value=volume_m3)
+    ws.cell(row=12, column=12, value=1)
+
+    ws.cell(row=13, column=2, value=6)
+    ws.cell(row=13, column=3, value="6. Устройство фасадов")
+    ws.cell(row=13, column=4, value="Устройство фасадов")
+    ws.cell(row=13, column=7, value="м2")
+    ws.cell(row=13, column=12, value=1)
+    ws.cell(row=14, column=4, value="Панель навесного фасада")
+    ws.cell(row=14, column=7, value="м2")
+    ws.cell(row=14, column=10, value=area_m2)
+    ws.cell(row=14, column=12, value=1)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def test_project_page_shows_the_concrete_coefficient(tmp_path):
     from app import passport as passport_module, storage
 
@@ -1179,7 +1249,7 @@ def test_project_page_shows_the_concrete_coefficient(tmp_path):
 
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
 
-    assert "Коэффициент бетона" in body
+    assert "Расчётные коэффициенты бетонных и фасадных конструкций" in body
     assert "Коэффициент монолита за общую площадь по СП" in body
     assert passport_module.format_number(500.0) in body   # объём монолита
     assert passport_module.format_number(0.5) in body     # 500 м³ / 1000 м²
@@ -1195,11 +1265,42 @@ def test_project_page_explains_missing_concrete_section_instead_of_a_blank(tmp_p
 
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
 
-    assert "Коэффициент бетона" in body
+    assert "Расчётные коэффициенты бетонных и фасадных конструкций" in body
     assert "нет раздела" in body
 
 
-def test_rebar_coefficient_form_saves_a_manually_entered_value(tmp_path):
+def test_project_page_shows_the_facade_coefficient(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СФасадом", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_facade_quantity(2500.0))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Расчётные коэффициенты бетонных и фасадных конструкций" in body
+    assert "Коэффициент фасада за общую площадь по СП, м²(фас)/м²" in body
+    assert passport_module.format_number(2500.0) in body   # площадь фасада
+    assert passport_module.format_number(2.5) in body      # 2500 м² / 1000 м²
+
+
+def test_project_page_explains_missing_facade_section_instead_of_a_blank(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезФасада", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_smeta_bytes())
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Расчётные коэффициенты бетонных и фасадных конструкций" in body
+    assert "Площадь фасада по смете" in body
+    assert "впишите площадь вручную" in body
+
+
+def test_manual_coefficients_form_saves_both_values(tmp_path):
     from app import passport as passport_module, storage
 
     app = create_app(tmp_path)
@@ -1207,32 +1308,80 @@ def test_rebar_coefficient_form_saves_a_manually_entered_value(tmp_path):
     slug = _make_project_with_passport(tmp_path, "САрматурой")
 
     resp = client.post(
-        f"/projects/{slug}/rebar-coefficient", data={"rebar_coefficient_avg": "0,12"},
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "0,12", "facade_area_manual": "1 500,5"},
     )
 
     assert resp.status_code == 302
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["rebar_coefficient_avg"] == 0.12
+    assert saved["facade_area_manual"] == 1500.5
 
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
     assert "Коэффициент арматуры (средний)" in body
     assert passport_module.format_number(0.12) in body
+    assert passport_module.format_number(1500.5) in body
 
 
-def test_rebar_coefficient_clears_on_an_empty_submit(tmp_path):
+def test_manual_coefficients_clear_on_an_empty_submit(tmp_path):
     from app import passport as passport_module, storage
 
     app = create_app(tmp_path)
     client = app.test_client()
-    slug = _make_project_with_passport(tmp_path, "БезАрматуры", rebar_coefficient_avg=0.2)
+    slug = _make_project_with_passport(
+        tmp_path, "БезАрматуры", rebar_coefficient_avg=0.2, facade_area_manual=1000.0,
+    )
 
-    client.post(f"/projects/{slug}/rebar-coefficient", data={"rebar_coefficient_avg": ""})
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": ""},
+    )
 
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["rebar_coefficient_avg"] is None
+    assert saved["facade_area_manual"] is None
 
 
-def test_compare_page_shows_the_concrete_and_rebar_coefficients(tmp_path):
+def test_manual_facade_area_overrides_the_one_read_from_the_estimate(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СРучнымФасадом", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_facade_quantity(2500.0))
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": "3000"},
+    )
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(3000.0) in body   # ручное значение
+    assert passport_module.format_number(3.0) in body      # 3000 м² / 1000 м²
+
+
+def test_facade_area_falls_back_to_the_estimate_once_the_manual_value_is_cleared(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "СОчищеннымФасадом", total_area_sqm=1000.0, facade_area_manual=3000.0,
+    )
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_facade_quantity(2500.0))
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": ""},
+    )
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(2500.0) in body   # снова из сметы
+
+
+def test_compare_page_shows_the_concrete_facade_and_rebar_coefficient_charts(tmp_path):
     from app import passport as passport_module, storage
 
     app = create_app(tmp_path)
@@ -1240,17 +1389,23 @@ def test_compare_page_shows_the_concrete_and_rebar_coefficients(tmp_path):
     slug = _make_project_with_passport(
         tmp_path, "СКоэффициентами", total_area_sqm=1000.0, rebar_coefficient_avg=120.5,
     )
-    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(500.0))
+    storage.estimate_path(tmp_path, slug).write_bytes(
+        _offer_with_concrete_and_facade_quantity(500.0, 2500.0)
+    )
 
     body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
 
     assert "Коэффициент монолита за общую площадь по СП, м³/м²" in body
+    assert "Коэффициент фасада за общую площадь по СП, м²(фас)/м²" in body
     assert "Коэффициент арматуры (средний), кг/м³" in body
     assert passport_module.format_number(0.5) in body      # 500 м³ / 1000 м²
+    assert passport_module.format_number(2.5) in body      # 2500 м² / 1000 м²
     assert passport_module.format_number(120.5) in body
+    # Больше не дублируется строкой в «Общих сведениях» — только график.
+    assert body.count("Коэффициент монолита за общую площадь по СП, м³/м²") == 1
 
 
-def test_compare_page_shows_a_dash_when_the_coefficients_are_unavailable(tmp_path):
+def test_compare_page_coefficient_charts_say_so_when_data_is_missing(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     slug = _make_project_with_passport(tmp_path, "БезКоэффициентов")
@@ -1258,7 +1413,9 @@ def test_compare_page_shows_a_dash_when_the_coefficients_are_unavailable(tmp_pat
     body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
 
     assert "Коэффициент монолита за общую площадь по СП, м³/м²" in body
+    assert "Коэффициент фасада за общую площадь по СП, м²(фас)/м²" in body
     assert "Коэффициент арматуры (средний), кг/м³" in body
+    assert "Недостаточно данных для этого графика." in body
 
 
 def test_project_page_renders_multiple_estimate_sheets_as_tabs(tmp_path):

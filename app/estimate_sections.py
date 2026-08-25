@@ -439,7 +439,8 @@ def _sections_from_offer(ws):
     return sections
 
 
-# --- concrete volume ("Коэффициент бетона") ---------------------------------
+# --- quantity coefficients ("Расчётные коэффициенты бетонных и фасадных
+# конструкций") --------------------------------------------------------------
 
 # Unlike "Стоимость всего", this heading isn't spread across several columns
 # under a merged parent — the cell just says so directly, wherever the
@@ -474,22 +475,34 @@ def _is_volume_unit(text):
     return normalized in ("м3", "m3")
 
 
-def read_concrete_volume(path):
-    """The proposed volume of monolithic concrete, in m³ — the "Предлагаемое
-    количество" under the estimate's "Возведение несущих конструкций здания"
-    section, the same section whose cost is the report's "concrete" line.
+def _is_area_unit(text):
+    """Whether a unit-of-measure cell reads as square metres — "м2" or "м²"."""
+    normalized = text.strip().lower().replace("²", "2").replace(" ", "")
+    return normalized in ("м2", "m2")
 
-    Unlike cost, a quantity is never rolled up onto the section's own row —
-    only the line items underneath it carry one — so this adds up every "м³"
-    quantity between the section's row and the next top-level section, at
-    any depth below it. Other kinds of work sometimes sit inside the same
-    section (metalwork priced in tonnes, say), so a line only counts where
-    its own unit is cubic metres.
+
+def _quantity_by_category(path, category_key, is_matching_unit, name_contains=None):
+    """The "Предлагаемое количество" summed under the top-level section(s)
+    that classify as ``category_key``, restricted to lines whose own unit
+    passes ``is_matching_unit`` and, if given, whose own name contains
+    ``name_contains`` (matched lowercase).
+
+    Unlike cost, a quantity is never rolled up onto a section's own row —
+    only the line items underneath it carry one — so this adds up every
+    matching quantity between the section's row and the next top-level
+    section, at any depth below it. Other kinds of work sometimes sit inside
+    the same section (metalwork priced in tonnes inside "Возведение несущих
+    конструкций", say), so a line only counts where its own unit matches —
+    and where a section quotes the same area more than once, layer by layer
+    (a facade's substructure, insulation and cladding panels are each given
+    their own line at the same square metres), ``name_contains`` narrows it
+    to the one layer that stands for the area, so the others aren't added on
+    top of it.
 
     None where the workbook isn't laid out as a sectioned offer, has no
-    quantity column, or has no section that classifies as concrete at all —
-    as opposed to 0.0, which means the section is there but nothing under it
-    is measured in cubic metres.
+    quantity column, or has no section that classifies as ``category_key``
+    at all — as opposed to 0.0, which means the section is there but nothing
+    under it matches.
     """
     path = Path(path)
     try:
@@ -498,13 +511,15 @@ def read_concrete_volume(path):
         raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
 
     for ws in wb.worksheets:
-        volume = _concrete_volume_from_sheet(ws)
-        if volume is not None:
-            return volume
+        value = _quantity_by_category_from_sheet(
+            ws, category_key, is_matching_unit, name_contains,
+        )
+        if value is not None:
+            return value
     return None
 
 
-def _concrete_volume_from_sheet(ws):
+def _quantity_by_category_from_sheet(ws, category_key, is_matching_unit, name_contains):
     header = _find_header(ws)
     if header is None:
         return None
@@ -528,7 +543,7 @@ def _concrete_volume_from_sheet(ws):
     matched = False
     total = 0.0
     for i, (row, name) in enumerate(section_rows):
-        if classify(name) != "concrete":
+        if classify(name) != category_key:
             continue
         matched = True
         end = section_rows[i + 1][0] if i + 1 < len(section_rows) else ws.max_row + 1
@@ -536,8 +551,37 @@ def _concrete_volume_from_sheet(ws):
             qty = _amount(ws.cell(row=r, column=qty_col).value)
             if qty is None:
                 continue
-            if unit_col and not _is_volume_unit(_cell_text(ws, r, unit_col)):
+            if unit_col and not is_matching_unit(_cell_text(ws, r, unit_col)):
                 continue
+            if name_contains is not None:
+                leaf_name = _named(ws.cell(row=r, column=header.article_col).value) or _named(
+                    ws.cell(row=r, column=header.name_col).value if header.name_col else None
+                )
+                if not leaf_name or name_contains not in leaf_name.lower():
+                    continue
             total += qty
 
     return total if matched else None
+
+
+def read_concrete_volume(path):
+    """The proposed volume of monolithic concrete, in m³ — the "Предлагаемое
+    количество" under the estimate's "Возведение несущих конструкций здания"
+    section, the same section whose cost is the report's "concrete" line."""
+    return _quantity_by_category(path, "concrete", _is_volume_unit)
+
+
+def read_facade_area(path):
+    """The proposed facade area, in m² — the "Предлагаемое количество" under
+    the estimate's facade section (any section whose name carries "фасад"),
+    the same section whose cost is the report's "facade" line.
+
+    Restricted to lines naming a cladding panel ("панел..."): a ventilated
+    facade quotes the same area three times over — the substructure, the
+    insulation, and the panels that finish it — and adding all three would
+    triple the real area. Light-transmitting structures (glazing, curtain
+    walls) sit in the same section but are a different kind of facade
+    entirely and carry no "панель" line of their own, so they fall out on
+    their own rather than needing a rule to exclude them.
+    """
+    return _quantity_by_category(path, "facade", _is_area_unit, name_contains="панел")
