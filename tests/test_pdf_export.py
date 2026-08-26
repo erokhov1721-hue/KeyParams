@@ -2,7 +2,10 @@ import io
 
 import pdfplumber
 
-from app import passport as passport_module, pdf_export
+from app import comparison, cost_increase, passport as passport_module, pdf_export
+from app.comparison import Adjustments
+
+NONE = Adjustments()
 
 
 def _page_texts(pdf_bytes):
@@ -90,3 +93,85 @@ def test_the_charts_include_the_concrete_facade_and_rebar_coefficients():
     assert "Коэффициент монолита" in charts_text
     assert "Коэффициент фасада" in charts_text
     assert "Коэффициент арматуры" in charts_text
+
+
+def _increase_report(rows):
+    """Отчёт по удорожанию из готовых строк (название, было, стало) — тем же
+    ``build_report``, что и в тестах ``comparison``: подделка данных здесь
+    ничего не проверяла бы, если правило расчёта увеличения изменится."""
+    lines = [cost_increase.Line(name, was, now) for name, was, now in rows]
+    return cost_increase.build_report(lines)
+
+
+def _increase_pdf():
+    """PDF с блоком «Удорожание проектов» — площадь известна, поэтому три
+    плитки (включая ₽/м²), и три вида работ гарантированно в отчёте."""
+    passports = {"a": {"project_name": "ПроектА", "year_signed": "2024",
+                       "total_area_sqm": 1_000.0}}
+    charts = {"price_by_year": [
+        {"label": "ПроектА (2024)", "value": 1_000_000_000.0,
+         "display": "1 000 000 000", "width_pct": 100.0},
+    ]}
+    increase = comparison.build_increase_summary(
+        ["a"], passports,
+        {"a": _increase_report([
+            ("Кровля", 100_000.0, 130_000.0),
+            ("Фасадные работы", 100_000.0, 250_000.0),
+            ("Котлован", 100_000.0, 90_000.0),
+        ])},
+        NONE,
+    )
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        increase=increase,
+    )
+    return pdf_bytes, increase
+
+
+def _find_increase_page(pdf):
+    for page in pdf.pages:
+        if "Удорожание проектов" in (page.extract_text() or ""):
+            return page
+    raise AssertionError("страница с блоком «Удорожание проектов» не найдена")
+
+
+def test_the_kpi_tile_number_does_not_overlap_its_caption():
+    # 16pt цифра рисовалась в абзаце с leading под 12pt: цифра наезжала на
+    # подпись под ней вместо того, чтобы кончаться выше неё.
+    pdf_bytes, _ = _increase_pdf()
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        page = _find_increase_page(pdf)
+        words = page.extract_words()
+        value = next(
+            w for w in words
+            if w["top"] < 120 and (w["text"].startswith("+") or w["text"].startswith("−"))
+        )
+        caption = next(w for w in words if w["text"] == "Средний")
+        assert value["bottom"] <= caption["top"]
+
+
+def test_the_kpi_tiles_have_borders():
+    # Таблица плиток не рисовала ни BOX, ни BACKGROUND — рамки не было вовсе.
+    pdf_bytes, increase = _increase_pdf()
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        page = _find_increase_page(pdf)
+        tile_backgrounds = [r for r in page.rects if r["top"] < 120]
+        assert len(tile_backgrounds) >= 3  # три плитки: %, сумма, ₽/м²
+
+
+def test_the_work_rows_draw_progress_bars():
+    # Строки таблицы видов работ собирались только из текста — ни «дорожает
+    # в», ни «всего удорожания» не рисовали свою полоску, хотя данные для неё
+    # уже посчитаны (frequency_pct, width_pct).
+    pdf_bytes, increase = _increase_pdf()
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        page = _find_increase_page(pdf)
+        # Трек со скруглёнными углами — путь с кривыми, а не прямоугольник:
+        # pdfplumber видит такие фигуры в ``curves``, не в ``rects``. Трек
+        # рисуется всегда, даже при нулевой доле — минимум два таких пути на
+        # строку (частота и дельта).
+        assert len(page.curves) >= 2 * len(increase["works"])

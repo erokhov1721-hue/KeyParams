@@ -18,17 +18,25 @@ from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
+from PIL import Image as PILImage
 
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
 # text is drawn, or Cyrillic characters render as blank boxes.
 _FONT_DIR = Path(r"C:\Windows\Fonts")
 _FONTS_REGISTERED = False
+
+# Тот же знак, что в шапке страницы (``static/mr-logo.png``) — не отдельная
+# картинка для файла, чтобы лого на экране и в PDF не могли разойтись.
+_LOGO_PATH = Path(__file__).resolve().parent / "static" / "mr-logo.png"
+_LOGO_HEIGHT = 20.0
+_LOGO_READER = None
 
 # Цвета — из светлой темы страницы: она и рассчитана на белый фон.
 ACCENT = colors.HexColor("#12705c")
@@ -67,6 +75,36 @@ def _ensure_fonts():
     _FONTS_REGISTERED = True
 
 
+def _logo_reader():
+    global _LOGO_READER
+    if _LOGO_READER is None:
+        # Овал под буквами в исходном файле — непрозрачный белый, рассчитан
+        # на тёмную подложку сайдбара сайта; на белой странице он и так не
+        # виден. Но альфа-маска на резкой границе этого овала при масштабе
+        # оставляет в PDF тонкий серый ободок — сведено к белому фону
+        # заранее, чтобы картинка легла уже непрозрачной, без маски вовсе.
+        rgba = PILImage.open(_LOGO_PATH).convert("RGBA")
+        flat = PILImage.new("RGB", rgba.size, "white")
+        flat.paste(rgba, mask=rgba.split()[3])
+        _LOGO_READER = ImageReader(flat)
+    return _LOGO_READER
+
+
+def _draw_logo(canvas, doc):
+    """Значок MR в правом верхнем углу — на каждой странице файла.
+
+    Рисуется поверх готовой страницы, отдельно от потока абзацев и таблиц:
+    в правом верхнем углу текста никогда не бывает, так что перекрыть
+    содержимое ему нечем ни на одной из страниц.
+    """
+    reader = _logo_reader()
+    width_px, height_px = reader.getSize()
+    width = _LOGO_HEIGHT * width_px / height_px
+    x = PAGE_SIZE[0] - MARGIN - width
+    y = PAGE_SIZE[1] - 6 - _LOGO_HEIGHT
+    canvas.drawImage(reader, x, y, width=width, height=_LOGO_HEIGHT)
+
+
 def _styles():
     return {
         "title": ParagraphStyle(
@@ -86,6 +124,12 @@ def _styles():
             textColor=MUTED, spaceAfter=6,
         ),
         "body": ParagraphStyle("body", fontName="Arial", fontSize=9, leading=12, textColor=INK),
+        # Крупная цифра KPI-плитки: leading отдельно от «body» и с запасом
+        # (16pt в строке высотой 12pt наезжает на подпись под ней).
+        "tile_value": ParagraphStyle(
+            "tile_value", fontName="Arial-Bold", fontSize=16, leading=20,
+            textColor=INK, spaceAfter=3,
+        ),
         "cell": ParagraphStyle("cell", fontName="Arial", fontSize=8, leading=10.5, textColor=INK),
         "cell_label": ParagraphStyle(
             "cell_label", fontName="Arial-Bold", fontSize=8, leading=10.5, textColor=INK,
@@ -250,6 +294,34 @@ def _chart_bar_drawing(width, width_pct):
     if filled > 0:
         drawing.add(Rect(0, 1, filled, height - 2, rx=3, ry=3,
                          fillColor=ACCENT, strokeColor=None))
+    return drawing
+
+
+def _increase_frequency_drawing(width, frequency_pct):
+    """«дорожает в»: доля проектов, где этот вид работ подорожал."""
+    height = 5.0
+    drawing = Drawing(width, height)
+    drawing.hAlign = "LEFT"
+    drawing.add(Rect(0, 0, width, height, rx=2, ry=2,
+                     fillColor=TRACK, strokeColor=None))
+    filled = width * (frequency_pct or 0) / 100.0
+    if filled > 0:
+        drawing.add(Rect(0, 0, filled, height, rx=2, ry=2,
+                         fillColor=ACCENT_2, strokeColor=None))
+    return drawing
+
+
+def _increase_delta_drawing(width, width_pct, dearer):
+    """«всего удорожания»: доля от наибольшей суммы в этой таблице."""
+    height = 4.0
+    drawing = Drawing(width, height)
+    drawing.hAlign = "LEFT"
+    drawing.add(Rect(0, 0, width, height, rx=2, ry=2,
+                     fillColor=TRACK, strokeColor=None))
+    filled = width * (width_pct or 0) / 100.0
+    if filled > 0:
+        drawing.add(Rect(0, 0, filled, height, rx=2, ry=2,
+                         fillColor=RED if dearer else ACCENT, strokeColor=None))
     return drawing
 
 
@@ -512,15 +584,33 @@ def _increase_block(increase, styles, page_width):
             increase["total_per_sqm_display"], "Удорожание на м²",
             "на общую площадь всех проектов", styles,
         ))
-    tiles = Table([tiles], colWidths=[page_width / len(tiles)] * len(tiles))
-    tiles.setStyle(TableStyle([
+    # Каждая плитка — своя рамка с зазором до соседней, а не один общий
+    # прямоугольник на все три: между плитками добавлен пустой узкий столбец
+    # без рамки, играющий роль зазора (аналог flex-gap на экране).
+    tile_gap = 10.0
+    tile_count = len(tiles)
+    tile_w = (page_width - tile_gap * (tile_count - 1)) / tile_count
+    tile_row, tile_col_widths = [], []
+    for index, cell in enumerate(tiles):
+        if index:
+            tile_row.append("")
+            tile_col_widths.append(tile_gap)
+        tile_row.append(cell)
+        tile_col_widths.append(tile_w)
+    tiles_table = Table([tile_row], colWidths=tile_col_widths)
+    tile_style = [
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story.append(tiles)
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+    ]
+    for index in range(tile_count):
+        col = index * 2
+        tile_style.append(("BOX", (col, 0), (col, 0), 0.75, GRID))
+        tile_style.append(("BACKGROUND", (col, 0), (col, 0), HEAD_BG))
+    tiles_table.setStyle(TableStyle(tile_style))
+    story.append(tiles_table)
 
     projects = increase["projects"]
     if len(projects) > 1:
@@ -551,16 +641,23 @@ def _increase_block(increase, styles, page_width):
     if per_sqm:
         head.append(Paragraph("удорожание на м²", styles["head"]))
     data = [head]
+    bar_w = max(rest - 12, 20.0)
     for row in increase["works"]:
         colour = RED if row["dearer"] else ACCENT
         line = [
             Paragraph(row["label"], styles["cell"]),
-            Paragraph(row["frequency_display"], styles["cell_right"]),
+            [
+                Paragraph(row["frequency_display"], styles["cell_right"]),
+                _increase_frequency_drawing(bar_w, row["frequency_pct"]),
+            ],
             Paragraph(row["avg_percent_display"], styles["cell_right"]),
-            Paragraph(
-                f'<font color="{_hex(colour)}">{row["delta_display"]}</font>',
-                styles["cell_right"],
-            ),
+            [
+                Paragraph(
+                    f'<font color="{_hex(colour)}">{row["delta_display"]}</font>',
+                    styles["cell_right"],
+                ),
+                _increase_delta_drawing(bar_w, row["width_pct"], row["dearer"]),
+            ],
         ]
         if per_sqm:
             line.append(Paragraph(
@@ -624,9 +721,7 @@ def _increase_chart(title, projects, width_key, value_key, note_key,
 def _tile(value, label, note, styles):
     """Плитка со крупной цифрой — одной ячейкой таблицы."""
     return [
-        Paragraph(
-            f'<font size="16" color="{_hex(INK)}">{value}</font>', styles["body"],
-        ),
+        Paragraph(value, styles["tile_value"]),
         Paragraph(label, styles["cell_label"]),
         Paragraph(note, styles["cell_muted"]),
     ]
@@ -765,5 +860,5 @@ def build_compare_pdf(
         story.append(PageBreak() if increase_story else Spacer(1, 10))
         story += pair_story
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()
