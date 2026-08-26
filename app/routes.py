@@ -520,6 +520,8 @@ def project_page(slug):
         cost_increase_problem=cost_increase.PROBLEM_MESSAGES.get(
             request.args.get("increase")
         ),
+        dgp_problem=passport_module.DGP_PROBLEM_MESSAGES.get(request.args.get("dgp")),
+        estimate_problem=estimate.PROBLEM_MESSAGES.get(request.args.get("estimate")),
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
         contract_auto_fields=data.get("contract_auto_fields", []),
@@ -528,6 +530,52 @@ def project_page(slug):
         contract_problem=passport_module.CONTRACT_PROBLEM_MESSAGES.get(
             request.args.get("problem")
         ),
+    )
+
+
+@bp.route("/projects/<slug>/pdf", methods=["GET"])
+def project_pdf(slug):
+    """Справка по объекту одним файлом — то же, что и на странице, кроме
+    самой сметы: она нужна отдельно, а тысячи её строк только раздули бы
+    файл.
+    """
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    path = storage.passport_path(root, slug)
+    if not path.exists():
+        abort(404)
+    data = passport_module.load_passport(path)
+    has_estimate = storage.estimate_path(root, slug).exists()
+    concrete_volume = _concrete_volume(root, slug)
+    concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
+    facade_area = _facade_area(root, slug, data)
+    facade_coefficient = passport_module.facade_coefficient(data, facade_area)
+    pdf_bytes = pdf_export.build_project_pdf(
+        data,
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        has_contract_terms=storage.contract_terms_path(root, slug).exists(),
+        contract_fields=passport_module.CONTRACT_FIELDS,
+        contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
+        cover_path=storage.cover_path(root, slug),
+        has_estimate=has_estimate,
+        concrete_volume=concrete_volume,
+        concrete_coefficient=concrete_coefficient,
+        facade_area=facade_area,
+        facade_coefficient=facade_coefficient,
+        cost_increase_report=_cost_increase_report(root, slug),
+        format_percent=cost_increase.format_percent,
+        format_delta=cost_increase.format_delta,
+    )
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        # Не имя слага: он бывает кириллическим, а Content-Disposition без
+        # RFC 5987 кодировки такое не переживает.
+        headers={"Content-Disposition": "attachment; filename=spravka_obekta.pdf"},
     )
 
 
@@ -631,6 +679,100 @@ def upload_cost_increase(slug):
     )
 
     storage.cost_increase_path(root, slug).write_bytes(data)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/dgp", methods=["POST"])
+def upload_dgp(slug):
+    """Заменить ДГП и пересобрать паспорт заново — из нового ДГП и уже
+    сохранённого при создании проекта ТЗ, тем же способом, что при создании.
+
+    Новый файл сначала разбирается во временном месте и только при успехе
+    занимает место старого — как и у файла удорожания: неудачная попытка
+    (не тот файл, испорченный файл) не должна оставлять проект без
+    рабочего ДГП. Перезапись полная: как и у протокола, новый файл
+    считается верным целиком, а не сверяется построчно со старыми
+    значениями — включая те, что были поправлены вручную.
+    """
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    dgp_file = request.files.get("dgp_file")
+    if not dgp_file or not dgp_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.project_page", slug=slug, dgp=code))
+
+    if not dgp_file.filename.lower().endswith(ALLOWED_EXTENSION):
+        return refuse("format")
+
+    tz = storage.tz_path(root, slug)
+    if not tz.exists():
+        abort(404)
+
+    path = storage.passport_path(root, slug)
+    data = passport_module.load_passport(path)
+
+    dest = storage.dgp_path(root, slug)
+    # Расширение настоящее — не .tmp: пока это только ДГП не заметит разницы
+    # (zipfile её не проверяет), но смета ниже читается openpyxl, а он
+    # отказывается открывать файл не по расширению, даже если содержимое
+    # ровно то же самое.
+    tmp = dest.with_stem(dest.stem + "_upload")
+    dgp_file.save(tmp)
+    try:
+        fresh = passport_module.build_passport(data.get("project_name") or slug, tmp, tz)
+    except DocxReadError as e:
+        current_app.logger.warning("ДГП отклонён: %s", e)
+        tmp.unlink(missing_ok=True)
+        return refuse("unreadable")
+
+    tmp.replace(dest)
+    data.update(fresh)
+    passport_module.save_passport(data, path)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/estimate", methods=["POST"])
+def upload_estimate(slug):
+    """Заменить смету проекта.
+
+    Файл сначала разбирается во временном месте и только при успехе
+    занимает место старой сметы — как и у файла удорожания: неудачная
+    попытка не должна оставлять проект без рабочей сметы. Само удорожание
+    отдельного пересчёта не требует: страница читает смету заново при
+    каждой загрузке (``_estimate_totals``), так что новые суммы подхватятся
+    сами на следующем же открытии страницы.
+    """
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    xlsx_file = request.files.get("estimate_file")
+    if not xlsx_file or not xlsx_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.project_page", slug=slug, estimate=code))
+
+    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return refuse("format")
+
+    dest = storage.estimate_path(root, slug)
+    # Расширение настоящее, не .tmp: openpyxl отказывается открывать файл не
+    # по расширению, даже когда содержимое — рабочая книга как рабочая книга.
+    tmp = dest.with_stem(dest.stem + "_upload")
+    xlsx_file.save(tmp)
+    try:
+        estimate.read_estimate(tmp)
+    except estimate.EstimateReadError as e:
+        current_app.logger.warning("Смета отклонена: %s", e)
+        tmp.unlink(missing_ok=True)
+        return refuse("unreadable")
+
+    tmp.replace(dest)
     return redirect(url_for("main.project_page", slug=slug))
 
 

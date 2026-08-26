@@ -2078,6 +2078,50 @@ def _upload_increase(client, slug, data, filename="udorozhanie.xlsx"):
     )
 
 
+# --- справка по объекту в PDF -----------------------------------------------
+
+def test_the_project_page_offers_to_save_the_pdf_summary(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Сохранить справку в PDF" in body
+
+
+def test_the_project_pdf_route_returns_a_pdf(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = client.get(f"/projects/{slug}/pdf")
+
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"%PDF")
+
+
+def test_the_project_pdf_for_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/projects/нет-такого/pdf")
+
+    assert resp.status_code == 404
+
+
+def test_the_project_pdf_route_works_with_estimate_and_increase(tmp_path):
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 1_300_000.0)]))
+
+    resp = client.get(f"/projects/{slug}/pdf")
+
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"%PDF")
+
+
 def test_the_project_page_offers_to_upload_a_cost_increase_file(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -2587,3 +2631,188 @@ def test_the_pdf_carries_the_per_metre_figures_too(tmp_path):
 
     assert resp.status_code == 200
     assert resp.data.startswith(b"%PDF")
+
+
+# --- заменить ДГП ------------------------------------------------------------
+
+def _dgp_bytes_alt():
+    return build_docx_bytes(document_xml(paragraphs=[
+        "Общество с ограниченной ответственностью «Вектор» (ООО «Вектор»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,"
+    ]))
+
+
+def _create_full_project(client, name):
+    resp = client.post("/projects", data={
+        "project_name": name,
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    return resp.headers["Location"].rsplit("/", 1)[-1]
+
+
+def _upload_dgp(client, slug, data, filename="dgp.docx"):
+    return client.post(
+        f"/projects/{slug}/dgp",
+        data={"dgp_file": (io.BytesIO(data), filename)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_the_passport_offers_to_replace_the_dgp(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Заменить ДГП" in body
+
+
+def test_replacing_the_dgp_rebuilds_the_passport_fields(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_dgp(client, slug, _dgp_bytes_alt())
+
+    assert resp.status_code == 302
+    assert "dgp=" not in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "ООО «Вектор»" in body
+    assert "ООО «Ромашка»" not in body
+
+
+def test_a_dgp_in_the_wrong_format_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_dgp(client, slug, b"whatever", filename="dgp.txt")
+
+    assert "dgp=format" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?dgp=format").get_data(as_text=True)
+    assert "формате .docx" in body
+
+
+def test_an_unreadable_dgp_is_refused_and_the_old_one_kept(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_dgp(client, slug, b"this has a .docx name but is not a real zip")
+
+    assert "dgp=unreadable" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?dgp=unreadable").get_data(as_text=True)
+    assert "Прежний ДГП оставлен на месте" in body
+    # Паспорт не тронут — старый генподрядчик по-прежнему на странице.
+    assert "ООО «Ромашка»" in body
+
+
+def test_replacing_the_dgp_for_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = _upload_dgp(client, "нет-такого", _dgp_bytes_alt())
+
+    assert resp.status_code == 404
+
+
+# --- заменить смету -----------------------------------------------------------
+
+def _upload_estimate(client, slug, data, filename="smeta.xlsx"):
+    return client.post(
+        f"/projects/{slug}/estimate",
+        data={"estimate_file": (io.BytesIO(data), filename)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_the_estimate_accordion_offers_to_upload_when_there_is_none(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Загрузить смету" in body
+
+
+def test_uploading_an_estimate_offers_to_replace_it_afterwards(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_000_000.0)]))
+
+    assert resp.status_code == 302
+    assert "estimate=" not in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Заменить смету" in body
+
+
+def test_uploading_a_newer_estimate_replaces_the_previous_one(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_000_000.0)]))
+
+    _upload_estimate(client, slug, _offer_bytes([("6. Фасадные работы", 3_000_000.0)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Фасадные работы" in body
+    assert "Кровля" not in body
+
+
+def test_an_estimate_in_the_wrong_format_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_estimate(client, slug, b"whatever", filename="smeta.pdf")
+
+    assert "estimate=format" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?estimate=format").get_data(as_text=True)
+    assert "формате .xlsx" in body
+
+
+def test_an_unreadable_estimate_is_refused_and_the_old_one_kept(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_000_000.0)]))
+
+    resp = _upload_estimate(client, slug, b"not a workbook at all")
+
+    assert "estimate=unreadable" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?estimate=unreadable").get_data(as_text=True)
+    assert "Прежняя смета оставлена на месте" in body
+    assert "Кровля" in body
+
+
+def test_replacing_the_estimate_for_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = _upload_estimate(client, "нет-такого", _offer_bytes([("8. Кровля", 1.0)]))
+
+    assert resp.status_code == 404
+
+
+def test_replacing_the_estimate_recalculates_the_cost_increase(tmp_path):
+    # Удорожание считается от сметы — значит, после замены сметы цифры на
+    # странице обязаны отвечать новой смете, а не той, что была при загрузке
+    # файла удорожания.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_000_000.0)]))
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 1_300_000.0)]))
+    before = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "+300 000" in before
+
+    _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_200_000.0)]))
+    after = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "+100 000" in after
+    assert "+300 000" not in after

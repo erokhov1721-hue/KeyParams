@@ -48,6 +48,14 @@ def estimate_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "smeta.xlsx"
 
 
+def dgp_path(root: Path, slug: str) -> Path:
+    return raw_dir(root, slug) / "dgp.docx"
+
+
+def tz_path(root: Path, slug: str) -> Path:
+    return raw_dir(root, slug) / "tz.docx"
+
+
 def contract_terms_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "contract_terms.pdf"
 

@@ -42,6 +42,18 @@ class EstimateReadError(Exception):
     pass
 
 
+# Why an upload was refused, in words — looked up by code the same way
+# ``cost_increase.PROBLEM_MESSAGES`` is, so an arbitrary ?estimate=... in the
+# address bar puts nothing on the page.
+PROBLEM_MESSAGES = {
+    "format": "Смета должна быть в формате .xlsx",
+    "unreadable": (
+        "Не удалось прочитать смету — убедитесь, что это корректный файл .xlsx. "
+        "Прежняя смета оставлена на месте."
+    ),
+}
+
+
 def read_estimate(path) -> list:
     """Parse an .xlsx workbook into a list of rendered sheets.
 

@@ -175,3 +175,93 @@ def test_the_work_rows_draw_progress_bars():
         # рисуется всегда, даже при нулевой доле — минимум два таких пути на
         # строку (частота и дельта).
         assert len(page.curves) >= 2 * len(increase["works"])
+
+
+# --- справка по одному объекту ----------------------------------------------
+
+def _project_passport(**fields):
+    data = {
+        "project_name": "ПроектА", "address": "г. Москва", "year_signed": "2024",
+        "building_class": "Бизнес", "general_contractor": "ООО «Ромашка»",
+        "contract_price_rub": 1_000_000_000.0, "underground_area_sqm": 1_000.0,
+        "aboveground_area_sqm": 9_000.0, "total_area_sqm": 10_000.0,
+    }
+    data.update(fields)
+    return data
+
+
+def _build_project_pdf(**kwargs):
+    return pdf_export.build_project_pdf(
+        _project_passport(**kwargs.pop("passport_fields", {})),
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        **kwargs,
+    )
+
+
+def test_the_project_pdf_has_the_passport_but_no_raw_estimate_grid():
+    pdf_bytes = _build_project_pdf()
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Паспорт объекта" in text
+    assert "ООО «Ромашка»" in text
+    # Смета сама не входит в справку — только заголовки, где это слово
+    # встречается по другому поводу («по смете», не «Смета» как раздел).
+    assert "Смета" not in text
+
+
+def test_the_project_pdf_includes_contract_terms_when_present():
+    pdf_bytes = _build_project_pdf(
+        has_contract_terms=True,
+        contract_fields=passport_module.CONTRACT_FIELDS,
+        contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
+        passport_fields={"smr_term": "33 мес"},
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Паспорт договора" in text
+    assert "33 мес" in text
+
+
+def test_the_project_pdf_omits_contract_terms_when_absent():
+    pdf_bytes = _build_project_pdf(has_contract_terms=False)
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Паспорт договора" not in text
+
+
+def test_the_project_pdf_includes_the_cost_increase_report():
+    lines = [cost_increase.Line("Кровля", 100.0, 130.0)]
+    report = cost_increase.build_report(lines)
+    pdf_bytes = _build_project_pdf(
+        cost_increase_report=report,
+        format_percent=cost_increase.format_percent,
+        format_delta=cost_increase.format_delta,
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Удорожание объекта" in text
+    assert "Кровли" in text
+    assert "+30,0 %" in text
+
+
+def test_the_project_pdf_omits_the_increase_block_without_a_report():
+    pdf_bytes = _build_project_pdf(cost_increase_report=None)
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Удорожание объекта" not in text
+
+
+def test_the_project_pdf_includes_the_coefficients():
+    pdf_bytes = _build_project_pdf(
+        has_estimate=True, concrete_volume=500.0, concrete_coefficient=0.05,
+        facade_area=2500.0, facade_coefficient=0.25,
+        passport_fields={"rebar_coefficient_avg": 140.0},
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Расчётные коэффициенты" in text
+    assert "500" in text
+    assert "140" in text

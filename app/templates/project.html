@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block main_extra_class %}container-project{% endblock %}
+{% block header_actions %}
+<a class="btn btn-secondary" href="{{ url_for('main.project_pdf', slug=slug) }}" download>Сохранить справку в PDF</a>
+{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -38,6 +41,11 @@
   </div>
 
   <div class="object-main-col">
+    {# Как и предупреждения по протоколу и удорожанию ниже — снаружи
+       гармошки: внутри закрытой панели его бы никто не прочитал. #}
+    {% if dgp_problem %}
+    <div class="alert alert-error">ДГП: {{ dgp_problem }}</div>
+    {% endif %}
     <div class="accordion" data-accordion>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Паспорт объекта</span>
@@ -93,6 +101,12 @@
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>
+        </form>
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_dgp', slug=slug) }}" enctype="multipart/form-data"
+              data-confirm="Заменить ДГП? Поля паспорта выше будут пересобраны заново из нового файла — включая те, что были поправлены вручную.">
+          <label class="contract-replace-link" for="dgp-input">Заменить ДГП</label>
+          <input class="file-input" type="file" id="dgp-input" name="dgp_file" accept=".docx">
         </form>
       </div>
     </div>
@@ -158,6 +172,12 @@
       </div>
     </div>
 
+    {# Как и предупреждение по протоколу выше — снаружи гармошки: внутри
+       закрытой панели его бы никто не прочитал. #}
+    {% if estimate_problem %}
+    <div class="alert alert-error">Смета: {{ estimate_problem }}</div>
+    {% endif %}
+
     <div class="accordion" data-accordion data-fullscreen>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Смета</span>
@@ -167,13 +187,20 @@
       </button>
       <div class="accordion-panel" hidden>
         {% if has_estimate %}
-          {% if sheets|length > 1 %}
-          <div class="sheet-tabs">
-            {% for sheet in sheets %}
-            <button type="button" class="sheet-tab {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">{{ sheet.name }}</button>
-            {% endfor %}
+          <div class="estimate-toolbar">
+            {% if sheets|length > 1 %}
+            <div class="sheet-tabs">
+              {% for sheet in sheets %}
+              <button type="button" class="sheet-tab {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">{{ sheet.name }}</button>
+              {% endfor %}
+            </div>
+            {% endif %}
+            <div class="estimate-zoom">
+              <button type="button" class="estimate-zoom-btn" data-zoom-out aria-label="Уменьшить масштаб">−</button>
+              <span class="estimate-zoom-value">100%</span>
+              <button type="button" class="estimate-zoom-btn" data-zoom-in aria-label="Увеличить масштаб">+</button>
+            </div>
           </div>
-          {% endif %}
           {% for sheet in sheets %}
           <div class="sheet-panel {{ 'is-active' if loop.first else '' }}" data-sheet-index="{{ loop.index0 }}">
             {% if sheet.truncated %}
@@ -204,8 +231,29 @@
             </div>
           </div>
           {% endfor %}
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_estimate', slug=slug) }}" enctype="multipart/form-data"
+              data-confirm="Заменить смету? Удорожание объекта на этой странице начнёт считаться от новой сметы.">
+          <label class="contract-replace-link" for="estimate-input">Заменить смету (Excel)</label>
+          <input class="file-input" type="file" id="estimate-input" name="estimate_file" accept=".xlsx">
+        </form>
         {% else %}
         <p class="accordion-empty">Смета не загружена для этого проекта.</p>
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_estimate', slug=slug) }}" enctype="multipart/form-data">
+          <label class="file-drop" for="estimate-input">
+            <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+              <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+            </svg>
+            <span class="file-drop-text">Загрузить смету (Excel)</span>
+          </label>
+          <input class="file-input" type="file" id="estimate-input" name="estimate_file" accept=".xlsx">
+          <span class="field-hint">
+            Смета также задаёт базу для удорожания объекта — с ней раздел
+            «Удорожание объекта» считает от столбца «стало», а не от «было».
+          </span>
+        </form>
         {% endif %}
       </div>
     </div>
@@ -523,7 +571,16 @@
 
   document.querySelectorAll('.file-upload-form .file-input').forEach(function (input) {
     input.addEventListener('change', function () {
-      if (input.files[0]) input.closest('.file-upload-form').submit();
+      if (!input.files[0]) return;
+      var form = input.closest('.file-upload-form');
+      // Только у форм с data-confirm (замена ДГП, замена сметы) — у файла
+      // удорожания и протокола такого подтверждения не было и не появилось.
+      var message = form.dataset.confirm;
+      if (message && !window.confirm(message)) {
+        input.value = '';
+        return;
+      }
+      form.submit();
     });
   });
 
@@ -537,6 +594,35 @@
       group.querySelectorAll('.sheet-panel').forEach(function (panel) {
         panel.classList.toggle('is-active', panel.dataset.sheetIndex === index);
       });
+    });
+  });
+
+  // Масштаб сметы — один регулятор на аккордеон, применяется сразу ко всем
+  // листам разом (переключение вкладки не должно сбрасывать масштаб).
+  document.querySelectorAll('.estimate-zoom').forEach(function (bar) {
+    var MIN = 0.5, MAX = 1.5, STEP = 0.1;
+    var scale = 1;
+    var panel = bar.closest('.accordion-panel');
+    var valueEl = bar.querySelector('.estimate-zoom-value');
+    var outBtn = bar.querySelector('[data-zoom-out]');
+    var inBtn = bar.querySelector('[data-zoom-in]');
+
+    function apply() {
+      valueEl.textContent = Math.round(scale * 100) + '%';
+      panel.querySelectorAll('.estimate-table').forEach(function (table) {
+        table.style.zoom = scale;
+      });
+      outBtn.disabled = scale <= MIN;
+      inBtn.disabled = scale >= MAX;
+    }
+
+    outBtn.addEventListener('click', function () {
+      scale = Math.max(MIN, Math.round((scale - STEP) * 100) / 100);
+      apply();
+    });
+    inBtn.addEventListener('click', function () {
+      scale = Math.min(MAX, Math.round((scale + STEP) * 100) / 100);
+      apply();
     });
   });
 

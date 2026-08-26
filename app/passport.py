@@ -246,6 +246,17 @@ CONTRACT_PROBLEM_MESSAGES = {
     ),
 }
 
+# Почему замену ДГП отклонили — тем же способом, что и у файла удорожания:
+# код в query-параметре, а не сообщение напрямую, чтобы произвольный
+# ?dgp=... в адресной строке ничего на странице не показывал.
+DGP_PROBLEM_MESSAGES = {
+    "format": "Загрузите файл ДГП в формате .docx",
+    "unreadable": (
+        "Не удалось прочитать файл — убедитесь, что это корректный .docx. "
+        "Прежний ДГП оставлен на месте."
+    ),
+}
+
 
 def _terms_from_text(text):
     """The four protocol conditions, read off whatever text we have — the

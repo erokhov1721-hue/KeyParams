@@ -840,7 +840,12 @@ h1 {
 /* Object page layout */
 
 .container-project {
-  max-width: 1080px;
+  /* Поднята под ширину таблицы «Удорожание объекта» (.increase-table,
+     min-width: 900px) — иначе она одна упирается в узкую колонку и
+     прокручивается вбок, пока остальные аккордеоны стоят в полный рост.
+     Гармошки от этого не «прыгают»: ширина у них общая и не меняется от
+     того, какая из них раскрыта. */
+  max-width: 1400px;
 }
 
 .object-layout {
@@ -1369,11 +1374,66 @@ select option {
 
 /* Estimate view */
 
+.estimate-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .sheet-tabs {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  /* Раньше отступ снизу держал сам .sheet-tabs — теперь его прижимает к
+     кнопкам масштаба общий .estimate-toolbar, а свой margin-bottom только
+     мешал бы им выровняться по одной линии. */
+  margin-bottom: 0;
+}
+
+/* Масштаб сметы — своя таблица длинная и мелкая, и то расширить её под
+   крупный текст, то сжать, чтобы охватить взглядом сразу много строк,
+   удобнее прямо на месте, чем зумом всей страницы браузера. */
+.estimate-zoom {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.estimate-zoom-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.estimate-zoom-btn:hover:not(:disabled) {
+  background: var(--bg-650);
+}
+
+.estimate-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.estimate-zoom-value {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-500);
+  font-variant-numeric: tabular-nums;
 }
 
 .sheet-tab {
@@ -1417,7 +1477,14 @@ select option {
 .estimate-table {
   border-collapse: collapse;
   font-size: 13px;
-  white-space: nowrap;
+  /* Не nowrap: изредка в смете попадается ячейка со свободным текстом на
+     тысячи символов (примечание, вписанное в Excel через Alt+Enter) —
+     nowrap рисовал её одной строкой без переноса, и вся колонка раздувалась
+     на десятки тысяч пикселей, утаскивая всю таблицу вбок так, что до
+     настоящих данных было не доскроллить. pre-line переносит длинный текст
+     по словам и уважает собственные переводы строк автора, но не
+     превращает обычные ячейки в preformatted-текст. */
+  white-space: pre-line;
   color: #1a1f1d;
 }
 
@@ -2212,14 +2279,13 @@ select option {
 }
 
 /* Удорожание по видам работ. Таблица та же, что на странице сравнения, но
-   стоит в узкой колонке страницы проекта, а числа в ней — одиннадцатиразрядные:
-   отступы уже, шрифт мельче, а ширина задана явно, чтобы столбцы не сжимались
-   до неразборчивого, а колонка прокручивалась вбок. */
+   стоит в колонке страницы проекта — та расширена под неё же (см.
+   .container-project ниже), так что пяти столбцам двенадцатиразрядных чисел
+   обычно есть где встать без прокрутки. .sections-table-wrap остаётся
+   прокручиваемой на узких экранах — но это запасной случай, а не обычное
+   состояние, и внутри неё числа не режутся, а едут строкой целиком. */
 .increase-table {
-  /* Шире колонки страницы: пять столбцов одиннадцатиразрядных чисел в 750
-     пикселей не встают. Таблица уезжает вбок внутри своей обёртки, а название
-     вида работ при этом остаётся на месте — столбец с ним прилипший. */
-  min-width: 860px;
+  min-width: 900px;
   font-size: 13px;
 }
 
@@ -2229,11 +2295,42 @@ select option {
 }
 
 .increase-table .sections-label-col {
-  width: clamp(160px, 18vw, 220px);
+  width: clamp(220px, 22vw, 280px);
+}
+
+/* Длинных названий вроде «Подготовительные работы и содержание площадки
+   (включая содержание прилегающей территории...)» на 2 строки не хватает
+   ни при какой разумной ширине колонки — сняли ограничение по числу строк
+   вовсе, а не гнались за шириной: обрезать число или ужимать другие
+   колонки ради того, чтобы редкое длинное название влезло в две строки,
+   было бы дороже, чем дать ему изредка третью. */
+.increase-table .sections-label {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  max-height: none;
 }
 
 .increase-table tfoot .sections-label-col {
   color: var(--text-100);
+}
+
+/* Четыре числовых столбца — фиксированная ширина под наибольшую сумму,
+   какая встречается в проекте (до 12 разрядов с копейками), и запрет
+   переноса: число либо целиком помещается в одну строку, либо тянет за
+   собой прокрутку всей таблицы — но никогда не переносится посередине
+   и не обрезается. */
+.increase-table th:not(.sections-label-col),
+.increase-table td:not(.sections-label-col) {
+  width: 160px;
+  white-space: nowrap;
+}
+
+/* Пояснение под цифрой («в «стало» пусто — взято «было»») — не число,
+   и вернуть ему перенос: иначе оно наследует nowrap соседних чисел и
+   вылезает за пределы столбца. */
+.increase-note {
+  white-space: normal;
 }
 
 /* Дороже — красным, дешевле — цветом акцента, без изменений — приглушённо.

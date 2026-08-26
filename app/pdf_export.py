@@ -22,7 +22,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 from PIL import Image as PILImage
 
@@ -63,6 +63,10 @@ CHART_DEFS = [
 ]
 
 PAGE_SIZE = landscape(A4)
+# Справка по одному объекту — не сравнение в несколько колонок, а лист
+# фактов друг под другом, и книжная ориентация читается для такого
+# документа привычнее альбомной.
+PROJECT_PAGE_SIZE = A4
 MARGIN = 28
 
 
@@ -100,8 +104,9 @@ def _draw_logo(canvas, doc):
     reader = _logo_reader()
     width_px, height_px = reader.getSize()
     width = _LOGO_HEIGHT * width_px / height_px
-    x = PAGE_SIZE[0] - MARGIN - width
-    y = PAGE_SIZE[1] - 6 - _LOGO_HEIGHT
+    page_width, page_height = doc.pagesize
+    x = page_width - MARGIN - width
+    y = page_height - 6 - _LOGO_HEIGHT
     canvas.drawImage(reader, x, y, width=width, height=_LOGO_HEIGHT)
 
 
@@ -859,6 +864,280 @@ def build_compare_pdf(
     if pair_story:
         story.append(PageBreak() if increase_story else Spacer(1, 10))
         story += pair_story
+
+    doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
+    return buffer.getvalue()
+
+
+# --- справка по одному объекту ----------------------------------------------
+#
+# Тот же набор карточек, что на странице проекта, минус сама смета: там,
+# где смета нужна, эту справку и печатают — смотреть в файле в саму смету
+# незачем, а с тысячами строк она ещё и раздула бы файл до неприличных
+# размеров. Удорожание в справку входит: это не смета, а отдельный, уже
+# посчитанный отчёт по видам работ.
+
+
+def _project_cover_image(cover_path, max_width, max_height):
+    """Картинка объекта, вписанная в отведённый прямоугольник — или None,
+    если обложки нет или прочитать её не удалось (битый файл, формат без
+    поддержки в Pillow). Не увеличивается сверх своего размера — маленькая
+    обложка так и остаётся маленькой, а не расплывается."""
+    if not cover_path:
+        return None
+    path = Path(cover_path)
+    if not path.exists():
+        return None
+    try:
+        with PILImage.open(path) as im:
+            width_px, height_px = im.size
+    except Exception:
+        return None
+    if not width_px or not height_px:
+        return None
+    ratio = min(max_width / width_px, max_height / height_px, 1.0)
+    image = Image(str(path), width=width_px * ratio, height=height_px * ratio)
+    image.hAlign = "LEFT"
+    return image
+
+
+def _label_value_table(rows, styles, page_width, label_ratio=0.42):
+    """Таблица label/значение в две колонки — форма, общая у «Паспорта
+    объекта», «Паспорта договора» и «Расчётных коэффициентов»."""
+    label_w = min(230.0, page_width * label_ratio)
+    value_w = page_width - label_w
+    data = [
+        [Paragraph(label, styles["cell_label"]), Paragraph(value, styles["cell"])]
+        for label, value in rows
+    ]
+    table = Table(data, colWidths=[label_w, value_w])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    return table
+
+
+def _project_facts_block(passport, fields, field_labels, numeric_fields,
+                         format_number, price_per_sqm, styles, page_width):
+    rows = []
+    for field in fields:
+        if field == "project_name":
+            continue
+        value = passport.get(field)
+        if value is None:
+            text = "—"
+        elif field in numeric_fields:
+            text = format_number(value)
+        else:
+            text = str(value)
+        rows.append((field_labels.get(field, field), text))
+        if field == "contract_price_rub":
+            psqm = price_per_sqm(passport)
+            rows.append((
+                "Цена за м², руб.",
+                format_number(psqm) if psqm is not None else "—",
+            ))
+    return [
+        Paragraph("Паспорт объекта", styles["heading"]),
+        _label_value_table(rows, styles, page_width),
+    ]
+
+
+def _project_terms_block(passport, has_contract_terms, contract_fields,
+                         contract_field_labels, styles, page_width):
+    if not has_contract_terms:
+        return []
+    rows = [
+        (contract_field_labels.get(field, field), passport.get(field) or "—")
+        for field in contract_fields
+    ]
+    return [
+        Paragraph("Паспорт договора", styles["heading"]),
+        _label_value_table(rows, styles, page_width),
+    ]
+
+
+def _project_coefficients_block(
+    has_estimate, concrete_volume, concrete_coefficient,
+    facade_area, facade_coefficient, rebar_coefficient,
+    format_number, styles, page_width,
+):
+    rows = []
+    if has_estimate and concrete_volume is not None:
+        rows.append(("Объём монолита по смете, м³", format_number(concrete_volume)))
+        rows.append((
+            "Коэффициент монолита за общую площадь по СП, м³/м²",
+            format_number(concrete_coefficient) if concrete_coefficient is not None else "—",
+        ))
+    rows.append((
+        "Коэффициент арматуры (средний), кг/м³",
+        format_number(rebar_coefficient) if rebar_coefficient is not None else "—",
+    ))
+    rows.append((
+        "Площадь фасада по смете, м²",
+        format_number(facade_area) if facade_area is not None else "—",
+    ))
+    rows.append((
+        "Коэффициент фасада за общую площадь по СП, м²(фас)/м²",
+        format_number(facade_coefficient) if facade_coefficient is not None else "—",
+    ))
+    return [
+        Paragraph("Расчётные коэффициенты бетонных и фасадных конструкций", styles["heading"]),
+        _label_value_table(rows, styles, page_width),
+    ]
+
+
+def _project_increase_block(report, format_number, format_percent, format_delta,
+                            styles, page_width):
+    """«Удорожание объекта» — тот же отчёт по видам работ, что на странице
+    проекта. Не смета: это её отдельный посчитанный результат, и в справку
+    он входит, даже когда саму смету туда класть не нужно."""
+    if not report:
+        return []
+
+    if report.from_estimate:
+        note = (
+            'Удорожание считается от сметы: столбец «стало» против стоимости '
+            'раздела в смете. К «было» программа обращается только там, где '
+            '«стало» пустое.'
+        )
+        baseline_header = "Смета, руб."
+    else:
+        note = (
+            'Смета не загружена, поэтому удорожание считается от столбца '
+            '«было» самого файла.'
+        )
+        baseline_header = "Было, руб."
+
+    story = [
+        Paragraph("Удорожание объекта", styles["heading"]),
+        Paragraph(note, styles["sub"]),
+    ]
+
+    label_w = min(150.0, page_width * 0.3)
+    columns = 4
+    rest = max(page_width - label_w, 200.0) / columns
+    head = [
+        Paragraph("Вид работ", styles["head"]),
+        Paragraph(baseline_header, styles["head"]),
+        Paragraph("Стало, руб.", styles["head"]),
+        Paragraph("Удорожание, руб.", styles["head"]),
+        Paragraph("Удорожание, %", styles["head"]),
+    ]
+    data = [head]
+    for row in report.rows:
+        colour = RED if row.delta > 0 else (ACCENT if row.delta < 0 else MUTED)
+        current_text = format_number(row.current)
+        if row.source == "was":
+            current_text += f' <font size="6" color="{_hex(AMBER)}">— в «стало» пусто, взято «было»</font>'
+        elif row.source == "none":
+            current_text += f' <font size="6" color="{_hex(AMBER)}">— в файле нет данных</font>'
+        percent_text = format_percent(row.percent) if row.percent is not None else "новые работы"
+        data.append([
+            Paragraph(row.label, styles["cell"]),
+            Paragraph(format_number(row.baseline), styles["cell_right"]),
+            Paragraph(current_text, styles["cell_right"]),
+            Paragraph(
+                f'<font color="{_hex(colour)}">{format_delta(row.delta)}</font>',
+                styles["cell_right"],
+            ),
+            Paragraph(
+                f'<font color="{_hex(colour)}">{percent_text}</font>',
+                styles["cell_right"],
+            ),
+        ])
+
+    total = report.total
+    total_colour = RED if total.delta > 0 else (ACCENT if total.delta < 0 else MUTED)
+    data.append([
+        Paragraph(total.label, styles["cell_label"]),
+        Paragraph(format_number(total.baseline), styles["cell_right"]),
+        Paragraph(format_number(total.current), styles["cell_right"]),
+        Paragraph(
+            f'<font color="{_hex(total_colour)}">{format_delta(total.delta)}</font>',
+            styles["cell_right"],
+        ),
+        Paragraph(
+            f'<font color="{_hex(total_colour)}">{format_percent(total.percent) or "—"}</font>',
+            styles["cell_right"],
+        ),
+    ])
+
+    table = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    if report.unmatched:
+        story.append(Paragraph(
+            'Строки файла, для которых в отчёте нет вида работ, в таблицу не '
+            f'попали: {"; ".join(report.unmatched)}.',
+            styles["sub"],
+        ))
+    return story
+
+
+def build_project_pdf(
+    passport: dict, fields: list, field_labels: dict, numeric_fields=(),
+    format_number=str, price_per_sqm=lambda data: None,
+    has_contract_terms=False, contract_fields=(), contract_field_labels=None,
+    cover_path=None,
+    has_estimate=False, concrete_volume=None, concrete_coefficient=None,
+    facade_area=None, facade_coefficient=None,
+    cost_increase_report=None, format_percent=None, format_delta=None,
+) -> bytes:
+    """Справка по одному объекту — паспорт, договор, коэффициенты и
+    удорожание, картинкой и одним файлом. Смета в неё не входит: кто хочет
+    сверить со сметой, откроет её отдельно — здесь только то, что нужно,
+    чтобы сослаться на объект, не заходя в приложение.
+    """
+    _ensure_fonts()
+    styles = _styles()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=PROJECT_PAGE_SIZE, title=passport.get("project_name") or "Справка по объекту",
+        leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
+    )
+    page_width = PROJECT_PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
+
+    story = [Paragraph(passport.get("project_name") or "Справка по объекту", styles["title"])]
+    cover = _project_cover_image(cover_path, min(260.0, page_width), 180.0)
+    if cover is not None:
+        story.append(cover)
+        story.append(Spacer(1, 8))
+    if passport.get("address"):
+        story.append(Paragraph(passport["address"], styles["sub"]))
+
+    story += _project_facts_block(
+        passport, fields, field_labels, numeric_fields,
+        format_number, price_per_sqm, styles, page_width,
+    )
+    story += _project_terms_block(
+        passport, has_contract_terms, contract_fields, contract_field_labels or {},
+        styles, page_width,
+    )
+    story += _project_coefficients_block(
+        has_estimate, concrete_volume, concrete_coefficient,
+        facade_area, facade_coefficient, passport.get("rebar_coefficient_avg"),
+        format_number, styles, page_width,
+    )
+    story += _project_increase_block(
+        cost_increase_report, format_number, format_percent, format_delta,
+        styles, page_width,
+    )
 
     doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()
