@@ -518,3 +518,86 @@ def test_facade_area_of_an_unreadable_file_is_reported_rather_than_crashing(tmp_
         pass
     else:
         raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")
+
+
+# --- количество в укрупнённой смете -----------------------------------------
+
+def _levels_estimate_with_quantity(rows, *, header_row=3):
+    """A levels estimate that also carries a "количество" column of its own
+    — a real one calls it that rather than "предлагаемое количество", which
+    is the offer's own wording, not this shape's.
+
+    ``rows`` are ``(level, number, name, qty, unit)`` with level 1, 2 or 3.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=5, value="Приложение № 2 к Договору")
+    ws.cell(row=header_row, column=2, value="номер 1")
+    ws.cell(row=header_row, column=3, value="уровень 1")
+    ws.cell(row=header_row, column=4, value="номер 2")
+    ws.cell(row=header_row, column=5, value="уровень 2")
+    ws.cell(row=header_row, column=6, value="номер 3")
+    ws.cell(row=header_row, column=7, value="уровень 3")
+    ws.cell(row=header_row, column=8, value="Ед. изм.")
+    ws.cell(row=header_row, column=9, value="количество")
+    ws.cell(row=header_row, column=13, value="Всего, \nруб. \nс учетом НДС")
+
+    for offset, (level, number, name, qty, unit) in enumerate(rows):
+        row = header_row + 1 + offset
+        number_col = {1: 2, 2: 4, 3: 6}[level]
+        ws.cell(row=row, column=number_col, value=number)
+        ws.cell(row=row, column=number_col + 1, value=name)
+        if qty is not None:
+            ws.cell(row=row, column=9, value=qty)
+        if unit is not None:
+            ws.cell(row=row, column=8, value=unit)
+    return wb
+
+
+def test_concrete_volume_sums_leaf_quantities_in_a_levels_estimate(tmp_path):
+    # Jois' own estimate: "Конструктивные решения" written by levels, not as
+    # an offer — the section header and sub-section rows carry no quantity
+    # of their own, only the leaf lines under them do.
+    path = _save(_levels_estimate_with_quantity([
+        (1, 4, "Конструктивные решения", None, None),
+        (2, "4.1.", "Подземная часть. Конструктивные решения", None, None),
+        (3, "4.1.1.", "Устройство фундаментной плиты", 10014.17, "м3"),
+        (3, "4.1.2.", "Горизонтальные конструкции подземной части", 3387.74, "м3"),
+        (2, "4.2.", "Надземная часть. Конструктивные решения", None, None),
+        (3, "4.2.1.", "Горизонтальные конструкции надземной части", 25666.78, "м3"),
+        (1, 5, "Общестроительные работы", None, None),
+        (3, "5.1.", "Перегородка типовая", 999.0, "м3"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_concrete_volume(path) == 10014.17 + 3387.74 + 25666.78
+
+
+def test_concrete_volume_in_a_levels_estimate_ignores_other_units(tmp_path):
+    # Metalwork sits in the same section, priced by the tonne rather than
+    # the cubic metre — it must not inflate a concrete volume here either.
+    path = _save(_levels_estimate_with_quantity([
+        (1, 4, "Конструктивные решения", None, None),
+        (3, "4.1.", "Монолит", 200.0, "м3"),
+        (3, "4.2.", "Металлоконструкции", 10.0, "т"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_concrete_volume(path) == 200.0
+
+
+def test_concrete_volume_in_a_levels_estimate_is_none_without_a_matching_section(tmp_path):
+    path = _save(_levels_estimate_with_quantity([
+        (1, 1, "Котлован", None, None),
+        (3, "1.1.", "Разработка грунта", 50.0, "м3"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_concrete_volume(path) is None
+
+
+def test_facade_area_sums_leaf_quantities_in_a_levels_estimate(tmp_path):
+    path = _save(_levels_estimate_with_quantity([
+        (1, 6, "Фасады", None, None),
+        (3, "6.1.", "Панель фасадная типовая", 5000.0, "м2"),
+        (3, "6.2.", "Панель угловая", 1200.5, "м2"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_facade_area(path) == 6200.5

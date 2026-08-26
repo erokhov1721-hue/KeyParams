@@ -271,8 +271,11 @@ def read_sections(path) -> list:
 
 LEVEL_HEADER = "уровень"
 LEVEL_TOTAL_HEADER = "всего"
+# Не «предлагаемое количество», как в оффере — в укрупнённой смете колонка
+# названа просто «количество».
+LEVELS_QTY_HEADER = "количество"
 
-Levels = namedtuple("Levels", "row first second third total_col")
+Levels = namedtuple("Levels", "row first second third total_col qty_col unit_col")
 
 
 def _find_levels_header(ws):
@@ -281,21 +284,27 @@ def _find_levels_header(ws):
     A different shape of estimate from the offer above: instead of one column
     of section numbers it gives a column pair per level of nesting — "номер 1"
     and "уровень 1", "номер 2" and "уровень 2", and so on — with the money in
-    a "Всего" column of its own.
+    a "Всего" column of its own, and (where the estimate carries one) the
+    proposed quantity in a "количество" column next to a unit-of-measure
+    column of its own.
     """
     for row in range(1, HEADER_SEARCH_ROWS + 1):
-        levels, total_col = [], None
+        levels, total_col, qty_col, unit_col = [], None, None, None
         for col in range(1, HEADER_SEARCH_COLS + 1):
             text = _cell_text(ws, row, col)
             if text.startswith(LEVEL_HEADER):
                 levels.append(col)
             elif total_col is None and text.startswith(LEVEL_TOTAL_HEADER):
                 total_col = col
+            elif qty_col is None and LEVELS_QTY_HEADER in text:
+                qty_col = col
+            elif unit_col is None and all(token in text for token in UNIT_HEADER_TOKENS):
+                unit_col = col
         if len(levels) >= 2 and total_col is not None:
             return Levels(
                 row=row, first=levels[0], second=levels[1],
                 third=levels[2] if len(levels) > 2 else None,
-                total_col=total_col,
+                total_col=total_col, qty_col=qty_col, unit_col=unit_col,
             )
     return None
 
@@ -482,10 +491,13 @@ def _is_area_unit(text):
 
 
 def _quantity_by_category(path, category_key, is_matching_unit, name_contains=None):
-    """The "Предлагаемое количество" summed under the top-level section(s)
-    that classify as ``category_key``, restricted to lines whose own unit
-    passes ``is_matching_unit`` and, if given, whose own name contains
-    ``name_contains`` (matched lowercase).
+    """The proposed quantity summed under the top-level section(s) that
+    classify as ``category_key``, restricted to lines whose own unit passes
+    ``is_matching_unit`` and, if given, whose own name contains
+    ``name_contains`` (matched lowercase). Tried as an offer first
+    ("Предлагаемое количество") and, failing that, as a levels estimate
+    ("количество") — the same two shapes ``read_sections`` already reads
+    cost from.
 
     Unlike cost, a quantity is never rolled up onto a section's own row —
     only the line items underneath it carry one — so this adds up every
@@ -499,10 +511,10 @@ def _quantity_by_category(path, category_key, is_matching_unit, name_contains=No
     to the one layer that stands for the area, so the others aren't added on
     top of it.
 
-    None where the workbook isn't laid out as a sectioned offer, has no
-    quantity column, or has no section that classifies as ``category_key``
-    at all — as opposed to 0.0, which means the section is there but nothing
-    under it matches.
+    None where the workbook isn't laid out as either shape of sectioned
+    estimate, has no quantity column, or has no section that classifies as
+    ``category_key`` at all — as opposed to 0.0, which means the section is
+    there but nothing under it matches.
     """
     path = Path(path)
     try:
@@ -514,9 +526,53 @@ def _quantity_by_category(path, category_key, is_matching_unit, name_contains=No
         value = _quantity_by_category_from_sheet(
             ws, category_key, is_matching_unit, name_contains,
         )
+        if value is None:
+            # Не смета-оффер — попробовать как укрупнённую, с колонками
+            # «номер N»/«уровень N» вместо одной колонки «№ раздела».
+            value = _quantity_from_levels_sheet(
+                ws, category_key, is_matching_unit, name_contains,
+            )
         if value is not None:
             return value
     return None
+
+
+def _quantity_from_levels_sheet(ws, category_key, is_matching_unit, name_contains):
+    """The levels-estimate counterpart of ``_quantity_by_category_from_sheet``.
+
+    Same rule as the offer: a quantity sits only on a leaf line, never on a
+    section or sub-section row, so summing every matching-unit quantity from
+    the section's first-level row to the next one double-counts nothing.
+    """
+    header = _find_levels_header(ws)
+    if header is None or header.qty_col is None:
+        return None
+
+    matched = False
+    in_section = False
+    total = 0.0
+    for row in range(header.row + 1, ws.max_row + 1):
+        first = _named(ws.cell(row=row, column=header.first).value)
+        if first:
+            in_section = classify(first) == category_key
+            matched = matched or in_section
+            continue
+        if not in_section:
+            continue
+        qty = _amount(ws.cell(row=row, column=header.qty_col).value)
+        if qty is None:
+            continue
+        if header.unit_col and not is_matching_unit(_cell_text(ws, row, header.unit_col)):
+            continue
+        if name_contains is not None:
+            leaf_name = (
+                _named(ws.cell(row=row, column=header.third).value) if header.third else None
+            ) or _named(ws.cell(row=row, column=header.second).value)
+            if not leaf_name or name_contains not in leaf_name.lower():
+                continue
+        total += qty
+
+    return total if matched else None
 
 
 def _quantity_by_category_from_sheet(ws, category_key, is_matching_unit, name_contains):
