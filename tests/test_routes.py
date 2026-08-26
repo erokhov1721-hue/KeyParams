@@ -1351,7 +1351,7 @@ def test_project_page_explains_missing_facade_section_instead_of_a_blank(tmp_pat
     assert "впишите площадь вручную" in body
 
 
-def test_manual_coefficients_form_saves_both_values(tmp_path):
+def test_manual_coefficients_form_saves_all_three_values(tmp_path):
     from app import passport as passport_module, storage
 
     app = create_app(tmp_path)
@@ -1360,18 +1360,23 @@ def test_manual_coefficients_form_saves_both_values(tmp_path):
 
     resp = client.post(
         f"/projects/{slug}/manual-coefficients",
-        data={"rebar_coefficient_avg": "0,12", "facade_area_manual": "1 500,5"},
+        data={
+            "rebar_coefficient_avg": "0,12", "facade_area_manual": "1 500,5",
+            "concrete_volume_manual": "600,25",
+        },
     )
 
     assert resp.status_code == 302
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["rebar_coefficient_avg"] == 0.12
     assert saved["facade_area_manual"] == 1500.5
+    assert saved["concrete_volume_manual"] == 600.25
 
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
     assert "Коэффициент арматуры (средний)" in body
     assert passport_module.format_number(0.12) in body
     assert passport_module.format_number(1500.5) in body
+    assert passport_module.format_number(600.25) in body
 
 
 def test_manual_coefficients_clear_on_an_empty_submit(tmp_path):
@@ -1381,16 +1386,69 @@ def test_manual_coefficients_clear_on_an_empty_submit(tmp_path):
     client = app.test_client()
     slug = _make_project_with_passport(
         tmp_path, "БезАрматуры", rebar_coefficient_avg=0.2, facade_area_manual=1000.0,
+        concrete_volume_manual=500.0,
     )
 
     client.post(
         f"/projects/{slug}/manual-coefficients",
-        data={"rebar_coefficient_avg": "", "facade_area_manual": ""},
+        data={"rebar_coefficient_avg": "", "facade_area_manual": "", "concrete_volume_manual": ""},
     )
 
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["rebar_coefficient_avg"] is None
     assert saved["facade_area_manual"] is None
+    assert saved["concrete_volume_manual"] is None
+
+
+def test_manual_concrete_volume_overrides_the_one_read_from_the_estimate(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СРучнымОбъёмом", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(500.0))
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": "", "concrete_volume_manual": "700"},
+    )
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(700.0) in body   # ручное значение
+    assert passport_module.format_number(0.7) in body     # 700 м³ / 1000 м²
+
+
+def test_concrete_volume_falls_back_to_the_estimate_once_the_manual_value_is_cleared(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "СОчищеннымОбъёмом", total_area_sqm=1000.0, concrete_volume_manual=700.0,
+    )
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(500.0))
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": "", "concrete_volume_manual": ""},
+    )
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(500.0) in body   # снова из сметы
+
+
+def test_project_page_explains_missing_concrete_estimate_instead_of_a_blank(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезСметы", total_area_sqm=1000.0)
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Расчётные коэффициенты бетонных и фасадных конструкций" in body
+    assert "Объём монолита по смете" in body
+    assert "впишите объём вручную" in body
 
 
 def test_manual_facade_area_overrides_the_one_read_from_the_estimate(tmp_path):

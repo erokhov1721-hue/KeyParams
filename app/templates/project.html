@@ -387,42 +387,22 @@
         </svg>
       </button>
       <div class="accordion-panel" hidden>
-        {% if not has_estimate %}
-        <p class="accordion-empty">Смета не загружена для этого проекта.</p>
-        {% else %}
-
-        {% if concrete_volume is none %}
-        <p class="accordion-empty">
-          В смете нет раздела «Возведение несущих конструкций здания» со
-          столбцом «Предлагаемое количество» — посчитать объём монолита не
-          из чего.
-        </p>
-        {% else %}
-        <div class="fields-card">
-          <div class="field-row is-computed">
-            <div class="field-label-col">
-              <span class="field-label">Объём монолита по смете, м³</span>
-            </div>
-            <input type="text" value="{{ format_number(concrete_volume) }}" placeholder="—" readonly>
-          </div>
-          <div class="field-row is-computed">
-            <div class="field-label-col">
-              <span class="field-label">Коэффициент монолита за общую площадь по СП, м³/м²</span>
-            </div>
-            <input type="text" value="{{ format_number(concrete_coefficient) if concrete_coefficient is not none else '' }}" placeholder="—" readonly>
-          </div>
-        </div>
-        {% if concrete_coefficient is none %}
-        <p class="field-hint">
-          Впишите общую площадь объекта в паспорте — без неё коэффициент не посчитать.
-        </p>
-        {% endif %}
-        {% endif %}
-
-        {% endif %}
-
         <form method="post" action="{{ url_for('main.update_manual_coefficients', slug=slug) }}">
           <div class="fields-card">
+            <div class="field-row {{ 'is-empty' if concrete_volume is none else 'is-filled' }}">
+              <div class="field-label-col">
+                <span class="field-label">Объём монолита по смете, м³</span>
+              </div>
+              <input type="text" name="concrete_volume_manual"
+                     value="{{ format_number(concrete_volume) if concrete_volume is not none else '' }}"
+                     placeholder="Введите значение вручную">
+            </div>
+            <div class="field-row is-computed">
+              <div class="field-label-col">
+                <span class="field-label">Коэффициент монолита за общую площадь по СП, м³/м²</span>
+              </div>
+              <input type="text" value="{{ format_number(concrete_coefficient) if concrete_coefficient is not none else '' }}" placeholder="—" readonly>
+            </div>
             <div class="field-row {{ 'is-empty' if passport.rebar_coefficient_avg is none else 'is-filled' }}">
               <div class="field-label-col">
                 <span class="field-label">Коэффициент арматуры (средний), кг/м³</span>
@@ -446,11 +426,29 @@
               <input type="text" value="{{ format_number(facade_coefficient) if facade_coefficient is not none else '' }}" placeholder="—" readonly>
             </div>
           </div>
+          {% if concrete_volume is none %}
+          <p class="field-hint">
+            {% if not has_estimate %}
+            Смета не загружена для этого проекта — впишите объём вручную.
+            {% else %}
+            В смете нет раздела «Возведение несущих конструкций здания» со
+            столбцом «Предлагаемое количество» — впишите объём вручную.
+            {% endif %}
+          </p>
+          {% elif concrete_coefficient is none %}
+          <p class="field-hint">
+            Впишите общую площадь объекта в паспорте — без неё коэффициент не посчитать.
+          </p>
+          {% endif %}
           {% if facade_area is none %}
           <p class="field-hint">
+            {% if not has_estimate %}
+            Смета не загружена для этого проекта — впишите площадь вручную.
+            {% else %}
             В смете не нашлось раздела с фасадом (в заголовке которого
             встречается «фасад», «фасадные» или «фасадов») со столбцом
             «Предлагаемое количество» — впишите площадь вручную.
+            {% endif %}
           </p>
           {% elif facade_coefficient is none %}
           <p class="field-hint">

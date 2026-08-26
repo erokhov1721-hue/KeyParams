@@ -395,7 +395,7 @@ def _estimate_totals(root, slug):
     return excel_report.estimate_costs(root, slug)[0]
 
 
-def _concrete_volume(root, slug):
+def _concrete_volume_from_estimate(root, slug):
     """Объём монолита по смете проекта, в м³ — «Предлагаемое количество» из
     раздела «Возведение несущих конструкций здания». None, если сметы нет, её
     не удалось разобрать, или в ней нет такого раздела: коэффициент бетона
@@ -412,12 +412,24 @@ def _concrete_volume(root, slug):
         return None
 
 
+def _concrete_volume(root, slug, passport_data):
+    """Действующий объём монолита: вписанный вручную в паспорте, а если там
+    пусто — тот, что нашёлся в смете. Ручное значение важнее смeтного — оно и
+    существует ради тех случаев, где разбор смет ошибается, смета устроена не
+    так, как он ожидает, или её вовсе нет.
+    """
+    manual = passport_data.get(passport_module.CONCRETE_VOLUME_FIELD)
+    if manual is not None:
+        return manual
+    return _concrete_volume_from_estimate(root, slug)
+
+
 def _concrete_coefficients(root, slugs, passports):
     """``{slug: коэффициент}`` для сравнения проектов — та же формула, что и
     на странице проекта, посчитанная для каждого выбранного проекта."""
     return {
         slug: passport_module.concrete_coefficient(
-            passports[slug], _concrete_volume(root, slug)
+            passports[slug], _concrete_volume(root, slug, passports[slug])
         )
         for slug in slugs
     }
@@ -489,7 +501,7 @@ def project_page(slug):
     estimate_file = storage.estimate_path(root, slug)
     has_estimate = estimate_file.exists()
     increase_file = storage.cost_increase_path(root, slug)
-    concrete_volume = _concrete_volume(root, slug)
+    concrete_volume = _concrete_volume(root, slug, data)
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     facade_area = _facade_area(root, slug, data)
     facade_coefficient = passport_module.facade_coefficient(data, facade_area)
@@ -547,7 +559,7 @@ def project_pdf(slug):
         abort(404)
     data = passport_module.load_passport(path)
     has_estimate = storage.estimate_path(root, slug).exists()
-    concrete_volume = _concrete_volume(root, slug)
+    concrete_volume = _concrete_volume(root, slug, data)
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     facade_area = _facade_area(root, slug, data)
     facade_coefficient = passport_module.facade_coefficient(data, facade_area)
@@ -798,11 +810,13 @@ def update_contract_terms(slug):
     return redirect(url_for("main.project_page", slug=slug))
 
 
-# Оба поля вписываются вручную в одной форме внизу «Расчётных
-# коэффициентов» — арматуру считать пока не из чего вовсе, а площадь
-# фасада иногда проще поправить самому, чем чинить разбор смет.
+# Все три поля вписываются вручную в одной форме «Расчётных коэффициентов»
+# — арматуру считать пока не из чего вовсе, а объём монолита и площадь
+# фасада иногда проще поправить самому, чем чинить разбор смет (или смету
+# вовсе не загружать ради одной цифры).
 MANUAL_COEFFICIENT_FIELDS = (
     passport_module.REBAR_COEFFICIENT_FIELD, passport_module.FACADE_AREA_FIELD,
+    passport_module.CONCRETE_VOLUME_FIELD,
 )
 
 

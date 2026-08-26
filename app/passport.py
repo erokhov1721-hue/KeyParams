@@ -66,6 +66,12 @@ REBAR_COEFFICIENT_FIELD = "rebar_coefficient_avg"
 # смету.
 FACADE_AREA_FIELD = "facade_area_manual"
 
+# То же самое для объёма монолита: смета либо не загружена, либо устроена не
+# так, как ждёт разбор («Возведение несущих конструкций здания» под другим
+# заголовком, разбивка по уровням без такого раздела вовсе) — тогда объём
+# вписывается вручную, поверх того, что нашлось в смете.
+CONCRETE_VOLUME_FIELD = "concrete_volume_manual"
+
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
     "aboveground_area_sqm": (
@@ -638,6 +644,8 @@ def load_passport(path: Path) -> dict:
     # A passport saved before a field existed (e.g. contract_price_rub)
     # won't have that key — backfill it as unset rather than making every
     # caller (templates included) handle a missing key.
-    for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [REBAR_COEFFICIENT_FIELD, FACADE_AREA_FIELD]:
+    for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [
+        REBAR_COEFFICIENT_FIELD, FACADE_AREA_FIELD, CONCRETE_VOLUME_FIELD,
+    ]:
         data.setdefault(field, None)
     return data
