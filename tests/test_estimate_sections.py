@@ -500,6 +500,78 @@ def test_facade_area_ignores_glazing_in_the_same_section(tmp_path):
     assert estimate_sections.read_facade_area(path) == 300.0
 
 
+def test_facade_area_does_not_mistake_a_plinths_protective_board_for_cladding(tmp_path):
+    # "Защитная панель" names the board under a plinth's own facing, not the
+    # facing itself, even though the word "панель" is right there in it.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство навесного фасада", None, "м2"),
+        (None, None, "Защитная панель ЦСП", 279.9, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 0.0
+
+
+def test_facade_area_falls_back_to_glazing_and_cladding_without_a_panel_word(tmp_path):
+    # A facade whose glazing and cladding both go unnamed by the plain
+    # scenario's "панел" word — the cladding is called "кассеты" here, as in
+    # a real offer this was written against — leaves that scenario with
+    # nothing (0.0, once the protective-board false match is excluded too),
+    # so the area is read the other way: every square-metre line in the
+    # section, minus a canopy and a parapet cap that aren't facade area.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Светопрозрачные конструкции", None, "м2"),
+        (None, None, "Стеклопакет", 500.0, "м2"),
+        (None, None, "Козырьки из закаленного стекла", 20.0, "м2"),
+        (None, None, "Покрытие парапета из алюминия", 15.0, "м2"),
+        (None, None, "Подсистема", 300.0, "м2"),
+        (None, None, "Утеплитель", 300.0, "м2"),
+        (None, None, "Облицовка кассетами", 300.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 800.0
+
+
+def test_facade_area_keeps_the_panel_scenario_when_it_already_finds_cladding(tmp_path):
+    # A facade estimate can price light-transmitting structures and still
+    # name its own cladding "панель" — the plain scenario already reads
+    # that correctly, and the glazing lines must not be added on top of it.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Светопрозрачные конструкции", None, "м2"),
+        (None, None, "Двухкамерный стеклопакет", 500.0, "м2"),
+        (None, None, "Подсистема", 300.0, "м2"),
+        (None, None, "Панели из стеклофибробетона", 300.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 300.0
+
+
+def test_facade_area_reads_named_subsections_when_no_line_names_the_cladding(tmp_path):
+    # A third shape doesn't name its finish on any one line at all — no
+    # "панель" word anywhere — but it does name its own components at the
+    # sub-section level: glazing, substructure, cladding, plaster, grilles.
+    # Only the sub-sections this project cares about are summed; the
+    # substructure sub-section is left out entirely, and the canopy inside
+    # the glazing sub-section is excluded by name.
+    path = _save(_offer_with_quantity([
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        ("6.1", None, "Светопрозрачные конструкции", None, "м2"),
+        (None, None, "Стеклопакет", 500.0, "м2"),
+        (None, None, "Стеклянные консольные козырьки", 20.0, "м2"),
+        ("6.2", None, "Устройство подсистемы фасада", None, "м2"),
+        (None, None, "Подсистема", 300.0, "м2"),
+        ("6.3", None, "Устройство облицовки фасада", None, "м2"),
+        (None, None, "Кассеты алюминиевые", 300.0, "м2"),
+        ("6.4", None, "Штукатурный фасад", None, "м2"),
+        (None, None, "Штукатурка", 100.0, "м2"),
+        ("6.5", None, "Вентиляционные, декоративные решетки, экраны", None, "м2"),
+        (None, None, "Решетка", 50.0, "м2"),
+    ]), tmp_path)
+
+    assert estimate_sections.read_facade_area(path) == 950.0
+
+
 def test_facade_area_is_none_without_a_matching_section(tmp_path):
     path = _save(_offer_with_quantity([
         (1, "1. Котлован", "Устройство котлована", 50.0, "м3"),
