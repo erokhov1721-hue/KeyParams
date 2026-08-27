@@ -102,6 +102,22 @@ def test_a_switch_with_an_unreadable_figure_falls_back_to_the_default():
     assert adjustments.vat_rate == comparison.DEFAULT_VAT_RATE
 
 
+def test_an_out_of_range_vat_rate_falls_back_to_the_default():
+    # ?vat=99999 parses fine as a number but isn't a tax rate — treated the
+    # same as an unreadable figure, not carried through into the maths.
+    adjustments = comparison.adjustments_from_args({"vat_on": "1", "vat": "99999"})
+
+    assert adjustments.vat_rate == comparison.DEFAULT_VAT_RATE
+
+
+def test_an_out_of_range_inflation_falls_back_to_the_default():
+    # A huge inflation figure compounded over decades overflows a float
+    # power — rejected before it ever reaches that maths.
+    adjustments = comparison.adjustments_from_args({"inflation_on": "1", "inflation": "1e308"})
+
+    assert adjustments.inflation == comparison.DEFAULT_INFLATION
+
+
 def test_zero_per_cent_is_a_correction_not_an_absence():
     # Zero still means "bring these to one year", and still marks the projects
     # whose year is unknown.
@@ -142,6 +158,16 @@ def test_the_same_vat_rate_changes_nothing():
 
 def test_an_unknown_vat_rate_is_left_alone_and_said_so():
     factor, notes = comparison.project_factor(None, "2025", VAT_22)
+
+    assert factor == 1.0
+    assert comparison.NOTE_NO_VAT in notes
+
+
+def test_an_impossible_source_vat_rate_is_treated_as_unknown():
+    # A -100% (or lower) rate stored on the object would zero or flip the
+    # sign of the denominator below — treated as unusable instead of
+    # crashing the whole page.
+    factor, notes = comparison.project_factor("-100%", "2025", VAT_22)
 
     assert factor == 1.0
     assert comparison.NOTE_NO_VAT in notes
@@ -906,9 +932,69 @@ def test_the_work_breakdown_averages_per_square_metre_across_the_whole_selection
     # a: 1000 ₽/м², b: 2000 ₽/м² — среднее 1500.
     assert works["facade"]["avg_per_sqm"] == pytest.approx(1500.0)
     assert works["facade"]["frequency_display"] == "2 из 2"
-    # Кровля есть только у "a".
+    # Кровля есть только у "a", но знаменатель — оба объекта со сметой, а не
+    # только тот, у которого раздел нашёлся: иначе «1 из 10» читалось бы как
+    # «1 из 1», то есть как стопроцентное покрытие.
     assert works["roof"]["avg_per_sqm"] == pytest.approx(200.0)
-    assert works["roof"]["frequency_display"] == "1 из 1"
+    assert works["roof"]["frequency_display"] == "1 из 2"
+
+
+def test_the_work_breakdown_denominator_counts_every_project_with_an_estimate():
+    # Раздел есть только у одного объекта из трёх — знаменатель должен
+    # показать все три, а не единицу.
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0),
+        "b": _passport("Б", total_area_sqm=1000.0),
+        "c": _passport("В", total_area_sqm=1000.0),
+    }
+    costs = {
+        "a": {"facade": 1_000_000.0},
+        "b": {"roof": 500_000.0},
+        "c": {"roof": 500_000.0},
+    }
+
+    table = comparison.build_averages_table(["a", "b", "c"], passports, costs, NONE)
+    works = {row["key"]: row for row in table["works"]}
+
+    assert works["facade"]["frequency_display"] == "1 из 3"
+    assert works["roof"]["frequency_display"] == "2 из 3"
+
+
+def test_the_averages_row_shows_its_own_count_per_metric():
+    # "a" has both figures, "b" only a price, "c" only an estimate+area.
+    # Группа целиком — 3 объекта, но в каждом среднем участвует не все три.
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0, contract_price_rub=1_000_000.0),
+        "b": _passport("Б", total_area_sqm=None, contract_price_rub=2_000_000.0),
+        "c": _passport("В", total_area_sqm=1000.0, contract_price_rub=None),
+    }
+    costs = {"a": {"facade": 500_000.0}, "b": {}, "c": {"facade": 500_000.0}}
+
+    table = comparison.build_averages_table(["a", "b", "c"], passports, costs, NONE)
+
+    row = table["rows"][0]
+    assert row["count"] == 3
+    assert row["per_sqm_count"] == 2       # a, c
+    assert row["contract_count"] == 2      # a, b
+
+
+def test_a_project_whose_correction_cannot_apply_is_excluded_from_the_average():
+    # "a" has a known signing year, "b" doesn't — with inflation switched on,
+    # "b"'s figure would stay nominal while "a"'s gets lifted, and averaging
+    # the two together would answer neither question honestly.
+    passports = {
+        "a": _passport("А", year_signed="2020", contract_price_rub=1_000_000.0),
+        "b": _passport("Б", year_signed=None, contract_price_rub=1_000_000.0),
+    }
+
+    plain = comparison.build_averages_table(["a", "b"], passports, {}, NONE)
+    lifted = comparison.build_averages_table(["a", "b"], passports, {}, INFLATION_10)
+
+    assert plain["rows"][0]["contract_count"] == 2
+    # Под инфляцией "b" исключается, а не тихо мешается с "a" в номинале.
+    assert lifted["rows"][0]["contract_count"] == 1
+    assert "Б" in lifted["excluded"]
+    assert plain["excluded"] == []
 
 
 def test_the_work_breakdown_is_not_affected_by_the_group_switch():

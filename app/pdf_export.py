@@ -13,6 +13,7 @@
 
 from io import BytesIO
 from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
 from reportlab.lib import colors
@@ -163,6 +164,24 @@ def _hex(color):
     """Цвет для разметки внутри абзаца — в том виде, в каком её читает
     reportlab: без решётки он принимает строку за десятичное число."""
     return "#" + color.hexval()[2:]
+
+
+def _esc(text):
+    """External text, made safe to sit inside a reportlab ``Paragraph``.
+
+    A ``Paragraph`` parses its whole string as markup, not just the tags
+    this module writes on purpose — a project name, an address, a contract
+    term, or a line straight out of an uploaded workbook can carry "<", ">"
+    or "&" with nothing to stop them being read as tags. Escaped here, once,
+    at every point such text is about to become a paragraph, rather than
+    trusted because it "just came from a form field".
+
+    ``None`` passes through unchanged: several callers hand this a value
+    that may or may not be there and decide the placeholder text themselves.
+    """
+    if text is None:
+        return None
+    return _xml_escape(str(text))
 
 
 def _fade(color, amount=0.62):
@@ -338,7 +357,7 @@ def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
     header = [Paragraph("", styles["head"])]
     for slug in slugs:
         header.append(Paragraph(
-            passports[slug].get("project_name") or slug, styles["head"]
+            _esc(passports[slug].get("project_name") or slug), styles["head"]
         ))
     data = [header]
 
@@ -353,7 +372,7 @@ def _facts_block(passports, slugs, fields, field_labels, numeric_fields,
             elif field in numeric_fields:
                 text = format_number(value)
             else:
-                text = str(value)
+                text = _esc(value)
             row.append(Paragraph(text, styles["cell"]))
         data.append(row)
 
@@ -389,13 +408,13 @@ def _terms_block(terms, slugs, passports, styles, page_width):
     header = [Paragraph("", styles["head"])]
     for slug in slugs:
         header.append(Paragraph(
-            passports[slug].get("project_name") or slug, styles["head"]
+            _esc(passports[slug].get("project_name") or slug), styles["head"]
         ))
     data = [header]
     for row in terms["rows"]:
         line = [Paragraph(row["label"], styles["cell_label"])]
         for cell in row["cells"]:
-            line.append(Paragraph(cell, styles["cell"]))
+            line.append(Paragraph(_esc(cell), styles["cell"]))
         data.append(line)
 
     label_w = min(170.0, page_width * 0.28)
@@ -433,7 +452,7 @@ def _charts_block(charts, styles, page_width):
             continue
         data = [
             [
-                Paragraph(row["label"], styles["cell"]),
+                Paragraph(_esc(row["label"]), styles["cell"]),
                 _chart_bar_drawing(bar_w, row.get("width_pct")),
                 Paragraph(row.get("display") or "", styles["cell_right"]),
             ]
@@ -483,7 +502,7 @@ def _sections_block(sections, styles, page_width):
         Paragraph(f"Стоимость по разделам{suffix}", styles["heading"]),
         Paragraph(
             "Доля — от итога базового проекта. Отклонение — к базовому проекту, "
-            f"шкала ±50%. Базовый — «{columns[0]['name']}». "
+            f"шкала ±50%. Базовый — «{_esc(columns[0]['name'])}». "
             + _adjustments_line(sections.get("adjustments")),
             styles["sub"],
         ),
@@ -498,7 +517,7 @@ def _sections_block(sections, styles, page_width):
         Paragraph("доля в смете", styles["head"]),
     ]
     for column in columns:
-        cell = [Paragraph(column["name"], styles["head"])]
+        cell = [Paragraph(_esc(column["name"]), styles["head"])]
         for note in column["notes"]:
             cell.append(Paragraph(note, styles["note"]))
         header.append(cell)
@@ -570,26 +589,41 @@ def _averages_block(averages, styles, page_width):
         Paragraph("Средние показатели по объектам", styles["heading"]),
         Paragraph(
             f"Простое среднее по {total_count} выбранным объектам, с поправками "
-            "на НДС и инфляцию, если они включены.",
+            "на НДС и инфляцию, если они включены. У каждого среднего свой "
+            "знаменатель — под цифрой указано, по скольким объектам из группы "
+            "оно посчитано.",
             styles["sub"],
         ),
     ]
+    if averages["excluded"]:
+        names = "», «".join(_esc(name) for name in averages["excluded"])
+        story.append(Paragraph(
+            f'Не учтены в средних из-за включённой поправки — год подписания '
+            f'или ставка НДС неизвестны: «{names}».',
+            styles["sub"],
+        ))
 
     label = "Группа" if averages["group_by"] else "Объекты"
     label_w = min(200.0, page_width * 0.34)
     rest_w = (page_width - label_w) / 3
     data = [[
         Paragraph(label, styles["head"]),
-        Paragraph("объектов", styles["head"]),
+        Paragraph("объектов в группе", styles["head"]),
         Paragraph("средняя стоимость за м²", styles["head"]),
         Paragraph("средняя цена по договору", styles["head"]),
     ]]
     for row in averages["rows"]:
         data.append([
-            Paragraph(row["label"], styles["cell"]),
+            Paragraph(_esc(row["label"]), styles["cell"]),
             Paragraph(str(row["count"]), styles["cell_right"]),
-            Paragraph(row["per_sqm_display"], styles["cell_right"]),
-            Paragraph(row["contract_display"], styles["cell_right"]),
+            [
+                Paragraph(row["per_sqm_display"], styles["cell_right"]),
+                Paragraph(f'{row["per_sqm_count"]} из {row["count"]}', styles["note"]),
+            ],
+            [
+                Paragraph(row["contract_display"], styles["cell_right"]),
+                Paragraph(f'{row["contract_count"]} из {row["count"]}', styles["note"]),
+            ],
         ])
     table = Table(data, colWidths=[label_w, rest_w, rest_w, rest_w])
     table.setStyle(TableStyle([
@@ -644,7 +678,7 @@ def _increase_block(increase, styles, page_width):
         f'проектов — у остальных файла удорожания нет.'
     )
     if increase["without_estimate"]:
-        names = "», «".join(increase["without_estimate"])
+        names = "», «".join(_esc(name) for name in increase["without_estimate"])
         sub += f' У «{names}» нет сметы, поэтому там считалось от столбца «было».'
 
     story = [
@@ -782,7 +816,7 @@ def _increase_chart(title, projects, width_key, value_key, note_key,
                 f'{project[note_key]}</font>'
             )
         data.append([
-            Paragraph(project["name"], styles["cell"]),
+            Paragraph(_esc(project["name"]), styles["cell"]),
             _two_sided_drawing(bar_w, project[width_key], project["dearer"]),
             Paragraph(value, styles["cell_right"]),
         ])
@@ -826,9 +860,9 @@ def _pair_block(pair, styles, page_width):
 
     head = [
         Paragraph("", styles["head"]),
-        Paragraph(pair["left"]["name"], styles["head"]),
+        Paragraph(_esc(pair["left"]["name"]), styles["head"]),
         Paragraph("разница", styles["head"]),
-        Paragraph(pair["right"]["name"], styles["head"]),
+        Paragraph(_esc(pair["right"]["name"]), styles["head"]),
     ]
     data = [head]
     for metric in pair["metrics"]:
@@ -983,11 +1017,17 @@ def _project_cover_image(cover_path, max_width, max_height):
 
 def _label_value_table(rows, styles, page_width, label_ratio=0.42):
     """Таблица label/значение в две колонки — форма, общая у «Паспорта
-    объекта», «Паспорта договора» и «Расчётных коэффициентов»."""
+    объекта», «Паспорта договора» и «Расчётных коэффициентов».
+
+    ``label`` — всегда подпись поля из фиксированного словаря labels; сам
+    экран экранировать не нужно. ``value`` — со стороны данных: то, что
+    человек вписал или программа извлекла из документа, и оно экранируется
+    здесь одним местом на все три вызывающих блока.
+    """
     label_w = min(230.0, page_width * label_ratio)
     value_w = page_width - label_w
     data = [
-        [Paragraph(label, styles["cell_label"]), Paragraph(value, styles["cell"])]
+        [Paragraph(label, styles["cell_label"]), Paragraph(_esc(value), styles["cell"])]
         for label, value in rows
     ]
     table = Table(data, colWidths=[label_w, value_w])
@@ -1119,7 +1159,7 @@ def _project_increase_block(report, format_number, format_percent, format_delta,
             current_text += f' <font size="6" color="{_hex(AMBER)}">— в файле нет данных</font>'
         percent_text = format_percent(row.percent) if row.percent is not None else "новые работы"
         data.append([
-            Paragraph(row.label, styles["cell"]),
+            Paragraph(_esc(row.label), styles["cell"]),
             Paragraph(format_number(row.baseline), styles["cell_right"]),
             Paragraph(current_text, styles["cell_right"]),
             Paragraph(
@@ -1162,9 +1202,10 @@ def _project_increase_block(report, format_number, format_percent, format_delta,
     story.append(table)
 
     if report.unmatched:
+        names = "; ".join(_esc(name) for name in report.unmatched)
         story.append(Paragraph(
             'Строки файла, для которых в отчёте нет вида работ, в таблицу не '
-            f'попали: {"; ".join(report.unmatched)}.',
+            f'попали: {names}.',
             styles["sub"],
         ))
     return story
@@ -1193,13 +1234,13 @@ def build_project_pdf(
     )
     page_width = PROJECT_PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
 
-    story = [Paragraph(passport.get("project_name") or "Справка по объекту", styles["title"])]
+    story = [Paragraph(_esc(passport.get("project_name")) or "Справка по объекту", styles["title"])]
     cover = _project_cover_image(cover_path, min(260.0, page_width), 180.0)
     if cover is not None:
         story.append(cover)
         story.append(Spacer(1, 8))
     if passport.get("address"):
-        story.append(Paragraph(passport["address"], styles["sub"]))
+        story.append(Paragraph(_esc(passport["address"]), styles["sub"]))
 
     story += _project_facts_block(
         passport, fields, field_labels, numeric_fields,

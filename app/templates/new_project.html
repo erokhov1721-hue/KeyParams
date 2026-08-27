@@ -16,6 +16,7 @@
   <div class="alert alert-error">{{ error }}</div>
   {% endif %}
   <form method="post" action="{{ url_for('main.create_project') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="field">
       <label for="project_name">Название проекта</label>
       <input type="text" id="project_name" name="project_name" placeholder="Например, Проспект Мира" autocomplete="off">

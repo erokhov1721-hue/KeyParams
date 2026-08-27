@@ -115,20 +115,29 @@ def _purge(directory: Path) -> bool:
     empty. Sweeping it away with everything else would erase the only
     record that this project was ever deleted, leaving the leftovers to sit
     there forever with nothing coming back for them.
+
+    ``purge_deleted`` runs on every dashboard load, so two of them can land
+    on the same marked folder at once. Whichever finishes first removes the
+    directory out from under the other, and the other's own ``iterdir()``
+    then raises ``FileNotFoundError`` — treated here as success, since the
+    folder being gone is exactly what this function is trying to achieve.
     """
     marker = directory / DELETED_MARKER
-    for entry in directory.iterdir():
-        if entry == marker:
-            continue
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-        else:
-            try:
-                entry.unlink()
-            except OSError:
-                pass
-    if any(entry != marker for entry in directory.iterdir()):
-        return False
+    try:
+        for entry in directory.iterdir():
+            if entry == marker:
+                continue
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                try:
+                    entry.unlink()
+                except OSError:
+                    pass
+        if any(entry != marker for entry in directory.iterdir()):
+            return False
+    except FileNotFoundError:
+        return True
     try:
         marker.unlink(missing_ok=True)
         directory.rmdir()

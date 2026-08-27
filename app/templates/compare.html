@@ -298,8 +298,17 @@
     <h2 class="chart-title">Средние показатели по объектам</h2>
     <p class="sections-sub">
       Простое среднее по {{ slugs | length }} выбранным объектам, с поправками
-      на НДС и инфляцию, если они включены выше.
+      на НДС и инфляцию, если они включены выше. У каждого среднего свой
+      знаменатель — сколько объектов в него реально попало, а не размер
+      группы: посчитать за м² можно только там, где есть смета и площадь, а
+      цену по договору — только там, где она вписана.
     </p>
+    {% if averages.excluded %}
+    <p class="sections-sub">
+      Не учтены в средних из-за включённой поправки — год подписания или
+      ставка НДС неизвестны: «{{ averages.excluded | join('», «') }}».
+    </p>
+    {% endif %}
   </div>
 
   {# slug переопределяется проверенным списком, а не тем, что в адресе: там
@@ -319,7 +328,7 @@
       <thead>
         <tr>
           <th class="sections-label-col">{{ 'Группа' if averages_group_by else 'Объекты' }}</th>
-          <th>Объектов</th>
+          <th>Объектов в группе</th>
           <th>Средняя стоимость за м²</th>
           <th>Средняя цена по договору</th>
         </tr>
@@ -331,8 +340,14 @@
             <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
           </td>
           <td class="sections-value"><span class="sections-number">{{ row.count }}</span></td>
-          <td class="sections-value"><span class="sections-number">{{ row.per_sqm_display }}</span></td>
-          <td class="sections-value"><span class="sections-number">{{ row.contract_display }}</span></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ row.per_sqm_display }}</span>
+            <span class="avg-count-note">{{ row.per_sqm_count }} из {{ row.count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ row.contract_display }}</span>
+            <span class="avg-count-note">{{ row.contract_count }} из {{ row.count }}</span>
+          </td>
         </tr>
         {% endfor %}
       </tbody>

@@ -57,6 +57,48 @@ class CostIncreaseError(Exception):
     """The file isn't a cost-increase workbook this reader can make sense of."""
 
 
+class FormulaWithoutCacheError(CostIncreaseError):
+    """A "было"/"стало" cell holds a formula Excel never saved a computed
+    result for. Read with ``data_only=True`` that cell is ``None`` — the
+    same as one with nothing in it — and the two must not be treated alike:
+    a line where both columns are genuinely blank is quietly skipped, which
+    is right; a line where a formula just never got a cached value would be
+    skipped the same way, silently dropping it from the increase report, or
+    (if only one of the pair is affected) turning a missing figure into a
+    false 100% swing once ``was or 0.0`` / ``now or 0.0`` fills it in.
+    """
+
+
+class _CheckedSheet:
+    """A worksheet paired with its own formula-only twin (the same file
+    loaded a second time with ``data_only=False``), so ``amount_at`` can
+    tell "genuinely empty" apart from "a formula with no cached value" —
+    everything else about the sheet passes straight through unchanged.
+    """
+
+    def __init__(self, ws, ws_formulas):
+        self._ws = ws
+        self._ws_formulas = ws_formulas
+
+    def __getattr__(self, name):
+        return getattr(self._ws, name)
+
+    def amount_at(self, row, column):
+        value = self._ws.cell(row=row, column=column).value
+        if value is not None:
+            return _amount(value)
+        raw = self._ws_formulas.cell(row=row, column=column).value
+        if isinstance(raw, str) and raw.startswith("="):
+            coord = self._ws.cell(row=row, column=column).coordinate
+            raise FormulaWithoutCacheError(
+                f'Ячейка {coord} на листе «{self._ws.title}» — формула без '
+                'сохранённого значения. Откройте файл в Excel, дайте ему '
+                'пересчитаться (или просто сохраните заново) и загрузите его '
+                'ещё раз.'
+            )
+        return None
+
+
 # Why an upload was refused, in words. Looked up by code rather than passed as
 # text, so an arbitrary ?increase=... in the address bar puts nothing on the page.
 PROBLEM_MESSAGES = {
@@ -198,14 +240,21 @@ def read_lines(source) -> list:
         # this reader looks columns up by number rather than walking rows in
         # order. The workbook is a page and a half long anyway.
         wb = openpyxl.load_workbook(source, data_only=True)
+        # ``source`` is sometimes a path (reopening it is free) and sometimes
+        # an already-open stream (a BytesIO the upload was buffered into) —
+        # the first load consumed it, so it has to be rewound before the
+        # second one can read it again.
+        if hasattr(source, "seek"):
+            source.seek(0)
+        wb_formulas = openpyxl.load_workbook(source, data_only=False)
     except Exception as e:
         raise CostIncreaseError(f"файл не читается как .xlsx: {e}") from e
 
-    for ws in wb.worksheets:
+    for ws, ws_formulas in zip(wb.worksheets, wb_formulas.worksheets):
         header = _find_header(ws)
         if header is None:
             continue
-        lines = _lines_from_sheet(ws, header)
+        lines = _lines_from_sheet(_CheckedSheet(ws, ws_formulas), header)
         if lines:
             return lines
 
@@ -220,8 +269,8 @@ def _lines_from_sheet(ws, header) -> list:
         name = _named(ws.cell(row=row, column=header.name_col).value)
         if not name or TOTAL_ROW_RE.match(name.lower()):
             continue
-        was = _amount(ws.cell(row=row, column=header.was_col).value)
-        now = _amount(ws.cell(row=row, column=header.now_col).value)
+        was = ws.amount_at(row, header.was_col)
+        now = ws.amount_at(row, header.now_col)
         if was is None and now is None:
             continue
         lines.append(Line(name, was or 0.0, now or 0.0))

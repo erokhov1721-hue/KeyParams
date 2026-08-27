@@ -10,6 +10,7 @@ today's money.
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from . import cost_increase, estimate_sections, extractors, passport as passport_module
 from . import project_filter
@@ -17,7 +18,9 @@ from .passport import format_number
 
 DEFAULT_VAT_RATE = 22.0
 DEFAULT_INFLATION = 12.0
-DEFAULT_TARGET_YEAR = 2026
+# The year money gets brought to when no other year is chosen — today's, not
+# a number that goes stale the moment the calendar turns.
+DEFAULT_TARGET_YEAR = date.today().year
 
 NOTE_NO_ESTIMATE = "смета не загружена"
 NOTE_NO_AREA = "рубли, не ₽/м²: общая площадь неизвестна"
@@ -75,6 +78,29 @@ def parse_year(value):
     return int(match.group()) if match else None
 
 
+# A VAT rate outside this range isn't a tax rate a person meant to type —
+# it's a stray digit or an adversarial query string — and would otherwise
+# sit in ``project_factor``'s numerator undisturbed.
+VAT_RATE_RANGE = (0.0, 100.0)
+
+# An inflation rate outside this range compounds, over decades, into a
+# number a 64-bit float can't hold — ``(1 + rate/100) ** years`` overflows
+# for an old enough signing year long before the rate itself looks absurd.
+# The floor sits above -100%: at exactly -100% the base of that power goes
+# to zero, and every year past the target collapses the multiplier to it.
+INFLATION_RANGE = (-99.0, 500.0)
+
+
+def _percent_in_range(text, low, high):
+    """The figure, or None if it can't be read or doesn't land in
+    ``[low, high]`` — out of range is treated exactly like unreadable: both
+    are "not a usable answer to this question", not "a value to act on"."""
+    value = parse_percent(text)
+    if value is None or not (low <= value <= high):
+        return None
+    return value
+
+
 def adjustments_from_args(args) -> Adjustments:
     """Read the settings off the page's own address.
 
@@ -84,18 +110,20 @@ def adjustments_from_args(args) -> Adjustments:
     keeps zero per cent — "bring these to one year, and tell me which ones
     have no year" — distinguishable from no correction at all.
 
-    A switch that is on with an unreadable figure beside it falls back to the
-    default rather than silently doing nothing.
+    A switch that is on with an unreadable figure beside it — or one outside
+    a sane range for what it claims to be — falls back to the default rather
+    than silently doing nothing, or worse, feeding the maths a number it
+    can't survive.
     """
     vat = None
     if args.get("vat_on"):
-        vat = parse_percent(args.get("vat"))
+        vat = _percent_in_range(args.get("vat"), *VAT_RATE_RANGE)
         if vat is None:
             vat = DEFAULT_VAT_RATE
 
     inflation = None
     if args.get("inflation_on"):
-        inflation = parse_percent(args.get("inflation"))
+        inflation = _percent_in_range(args.get("inflation"), *INFLATION_RANGE)
         if inflation is None:
             inflation = DEFAULT_INFLATION
 
@@ -154,7 +182,10 @@ def project_factor(vat, year_signed, adjustments):
 
     if adjustments.vat_rate is not None:
         source = parse_percent(vat)
-        if source is None:
+        # A rate at or below -100% would zero or flip the sign of this
+        # divisor — not a real VAT rate, so treated the same as an unread
+        # one rather than handed to the division.
+        if source is None or source <= -100.0:
             notes.append(NOTE_NO_VAT)
         else:
             factor *= (100.0 + adjustments.vat_rate) / (100.0 + source)
@@ -759,21 +790,46 @@ def _average(values):
     return sum(values) / len(values) if values else None
 
 
+def _project_factor_or_exclude(passport, adjustments):
+    """The project's factor, or None if a correction is switched on but
+    can't actually be applied to this object.
+
+    ``project_factor`` itself never refuses — a project with no known
+    signing year still gets a factor back, just 1.0, with the reason
+    recorded as a note rather than acted on. That is right for a single
+    project's own column, where the note sits right next to its own figure.
+    An average mixes several projects into one number, and a 1.0 sitting
+    quietly among genuinely adjusted factors doesn't read as "not adjusted"
+    — it reads as "adjusted to no change", which is a different, wrong,
+    claim. So here the note is not decoration: it means the object cannot
+    honestly stand next to the others in this particular average, and the
+    caller drops it — visibly, not silently — instead of blending it in.
+    """
+    factor, notes = project_factor(
+        _source_vat(passport), passport.get("year_signed"), adjustments,
+    )
+    return None if notes else factor
+
+
 def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
     """Среднее за м² по смете и среднее по цене договора для одной строки
     таблицы — простое среднее по объектам, у которых нужная цифра есть.
 
     Объект без сметы или без площади не участвует в среднем за м², но не
     выпадает из среднего по договору, если цена там есть, — и наоборот: это
-    два разных вопроса, и у каждого свой знаменатель.
+    два разных вопроса, и у каждого свой знаменатель, отдельный от размера
+    группы (``count``) — он остаётся её паспортом, а не подменяет собой ни
+    один из знаменателей.
     """
     per_sqm_values = []
     contract_values = []
+    excluded = []
     for slug in group_slugs:
         passport = passports[slug]
-        factor, _notes = project_factor(
-            _source_vat(passport), passport.get("year_signed"), adjustments,
-        )
+        factor = _project_factor_or_exclude(passport, adjustments)
+        if factor is None:
+            excluded.append(passport.get("project_name") or slug)
+            continue
         costs = costs_by_slug.get(slug) or {}
         area = passport.get("total_area_sqm") or None
         if costs and area:
@@ -789,8 +845,11 @@ def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
         "count": len(group_slugs),
         "per_sqm_avg": per_sqm_avg,
         "per_sqm_display": _format_metric(per_sqm_avg, UNIT_PER_SQM),
+        "per_sqm_count": len(per_sqm_values),
         "contract_avg": contract_avg,
         "contract_display": _format_metric(contract_avg, UNIT_MONEY),
+        "contract_count": len(contract_values),
+        "excluded": excluded,
     }
 
 
@@ -798,23 +857,31 @@ def _average_work_rows(slugs, passports, costs_by_slug, adjustments):
     """Средний ₽/м² по каждому виду работ, по всей выборке целиком — не
     зависит от переключателя группировки, который делит только строки выше.
 
-    «N из M»: M — у скольких выбранных объектов смета вообще содержит этот
-    вид работ, N — у скольких из них к тому же известна площадь и цифра
-    попала в среднее. Так видно, на скольких объектах в итоге основано число.
+    «N из M»: M — у скольких выбранных объектов вообще есть смета (и, если
+    поправки включены, применимая к ним), N — у скольких из них этот вид
+    работ в смете нашёлся. M одно и то же для каждой строки — знаменатель
+    не сокращается сам собой до строк, где вид работ и так уже нашёлся,
+    иначе единственный объект с этим разделом читался бы как «1 из 1», то
+    есть как стопроцентное покрытие вместо «1 из 10».
     """
-    gathered = {}
+    considered = []
     for slug in slugs:
         costs = costs_by_slug.get(slug)
         if not costs:
             continue
         passport = passports[slug]
-        factor, _notes = project_factor(
-            _source_vat(passport), passport.get("year_signed"), adjustments,
-        )
+        factor = _project_factor_or_exclude(passport, adjustments)
+        if factor is None:
+            continue
+        considered.append((passport, costs, factor))
+
+    total = len(considered)
+    gathered = {}
+    for passport, costs, factor in considered:
         area = passport.get("total_area_sqm") or None
         for key, amount in costs.items():
-            entry = gathered.setdefault(key, {"key": key, "values": [], "total": 0})
-            entry["total"] += 1
+            entry = gathered.setdefault(key, {"key": key, "values": [], "with_section": 0})
+            entry["with_section"] += 1
             if area:
                 entry["values"].append(amount * factor / area)
 
@@ -826,7 +893,7 @@ def _average_work_rows(slugs, passports, costs_by_slug, adjustments):
             "label": estimate_sections.CATEGORY_LABELS[entry["key"]],
             "avg_per_sqm": avg,
             "avg_per_sqm_display": _format_metric(avg, UNIT_PER_SQM),
-            "frequency_display": f'{len(entry["values"])} из {entry["total"]}',
+            "frequency_display": f'{entry["with_section"]} из {total}',
         })
 
     # Сначала то, что в среднем обходится дороже всего — как и в остальных
@@ -846,6 +913,12 @@ def build_averages_table(slugs, passports, costs_by_slug, adjustments, group_by=
     "class", "year"), чтобы разбить строки по генподрядчику, классу или году
     подписания вместо одной строки на всю выборку; None — одна строка.
 
+    ``excluded`` — имена объектов, для которых включённая поправка (НДС или
+    инфляция) неприменима: год подписания или ставка неизвестны. Такой
+    объект убран из каждого среднего на этой странице, а не оставлен в нём
+    со множителем 1.0 — иначе номинальная цифра тихо встала бы рядом с
+    приведёнными, и среднее перестало бы отвечать на какой-либо один вопрос.
+
     None вместо таблицы, когда сравнивать нечего — список проектов пуст.
     """
     if not slugs:
@@ -857,9 +930,11 @@ def build_averages_table(slugs, passports, costs_by_slug, adjustments, group_by=
         _averages_row(label, group_slugs, passports, costs_by_slug, adjustments)
         for label, group_slugs in groups
     ]
+    excluded = sorted({name for row in rows for name in row["excluded"]})
 
     return {
         "group_by": group_by,
         "rows": rows,
         "works": _average_work_rows(slugs, passports, costs_by_slug, adjustments),
+        "excluded": excluded,
     }

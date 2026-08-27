@@ -301,6 +301,30 @@ def test_two_levels_sections_on_one_report_line_are_added_up(tmp_path):
     assert estimate_sections.read_section_totals(path) == {"utilities": 300.0}
 
 
+# --- формула без сохранённого значения ---
+
+def test_an_uncached_formula_in_a_section_total_is_reported_not_silently_zero(tmp_path):
+    # A total written as a formula (as a real offer's own subtotal rows are)
+    # carries no cached result until Excel has actually opened and saved the
+    # file — openpyxl reads that the same way it reads a genuinely empty
+    # cell. The two must not be treated alike: one means "nothing here", the
+    # other means "the file was never actually recalculated".
+    wb = _offer([
+        (1, 1, "1. Котлован", "Котлован", 200.0),
+        (2, 2, "2. Кровля", "Кровля", "=100+100"),
+    ])
+    path = _save(wb, tmp_path, "uncached.xlsx")
+
+    try:
+        estimate_sections.read_section_totals(path)
+    except estimate_sections.FormulaWithoutCacheError:
+        pass
+    else:
+        raise AssertionError(
+            "формула без кэша должна быть замечена, а не прочитана как пустая ячейка"
+        )
+
+
 # --- разбор шапки в разных написаниях ---
 
 def test_the_totals_column_is_found_even_when_its_heading_is_not_merged(tmp_path):
@@ -379,6 +403,22 @@ def _offer_with_quantity(rows, *, header_row=9, qty_col=10, unit_col=7):
         ws.cell(row=row, column=qty_col, value=qty)
         ws.cell(row=row, column=12, value=1)
     return wb
+
+
+def test_an_uncached_formula_in_a_quantity_cell_is_reported(tmp_path):
+    path = _save(_offer_with_quantity([
+        (4, "4. Конструктивные решения", "Возведение несущих конструкций здания", None, "м3"),
+        (None, None, "Фундаментная плита", "=50+50", "м3"),
+    ]), tmp_path)
+
+    try:
+        estimate_sections.read_concrete_volume(path)
+    except estimate_sections.FormulaWithoutCacheError:
+        pass
+    else:
+        raise AssertionError(
+            "формула без кэша в колонке количества должна быть замечена"
+        )
 
 
 def test_concrete_volume_sums_the_leaf_quantities_under_the_section(tmp_path):

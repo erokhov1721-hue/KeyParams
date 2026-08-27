@@ -106,6 +106,35 @@ def test_formulas_are_saved_as_formulas(tmp_path):
     assert ws[f"E{ROW_CONTRACT_TOTAL}"].value.startswith("=")
 
 
+def test_a_project_name_starting_with_a_formula_trigger_stays_plain_text(tmp_path):
+    # A project name is free text from a person, not a formula this module
+    # wrote — even one that starts with "=" must not become a live formula
+    # that runs in whoever's spreadsheet opens the export.
+    ws = _build([_passport('=HYPERLINK("http://evil.example")')], tmp_path)
+
+    cell = ws["E3"]
+    assert cell.value == '=HYPERLINK("http://evil.example")'
+    assert cell.data_type == "s"
+
+
+def test_a_contract_term_starting_with_a_formula_trigger_stays_plain_text(tmp_path):
+    ws = _build([_passport("П", smr_term="=1+1")], tmp_path)
+
+    cell = ws["E37"]
+    assert cell.value == "=1+1"
+    assert cell.data_type == "s"
+
+
+def test_the_reports_own_formulas_still_compute(tmp_path):
+    # The fix must not turn every formula in the sheet into text along with
+    # the free-text fields — only the report's own generated formulas may
+    # stay live.
+    ws = _build([_passport("П", total_area_sqm=1000.0, contract_price_rub=2_000_000.0)], tmp_path)
+
+    assert ws["E30"].data_type == "f"
+    assert ws[f"F{ROW_CONTRACT_TOTAL}"].data_type == "f"
+
+
 def test_contract_price_shows_in_the_totals_while_the_cost_lines_are_empty(tmp_path):
     ws = _build([_passport(
         "П", total_area_sqm=1000.0, contract_price_rub=2000000.0,

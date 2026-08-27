@@ -341,6 +341,14 @@ def _money_col(index):
     return COL_FIRST_PROJECT + index * COLS_PER_PROJECT
 
 
+class _Formula(str):
+    """Marks a string this module built itself as a formula — as opposed to
+    a project name, a contract term, or any other text that came from a
+    document or a person and happens to start with the same character. Only
+    a ``_Formula`` is ever allowed to become a live formula in the sheet;
+    every other string is pinned to plain text below, in ``_write``."""
+
+
 def _write(ws, row, col, value=None, *, span=1, fmt=None, font=None, fill=None,
            align=None, top=None, bottom=None, left=None, right=None):
     """Write one cell, optionally merged across ``span`` columns.
@@ -348,9 +356,18 @@ def _write(ws, row, col, value=None, *, span=1, fmt=None, font=None, fill=None,
     A merged range only takes its value and font from the top-left cell, but
     every cell in it has to carry the fill and the outer border or Excel draws
     the block with gaps in it.
+
+    A plain string is pinned to text (``data_type = 's'``) after being set,
+    regardless of what it starts with: openpyxl infers a leading "=" as a
+    formula on its own, and a project name or a contract term is free text
+    from a document or a person, not something this module wrote itself. A
+    ``_Formula`` is the one exception — the report's own generated formulas
+    (running totals, ₽/м², deviations) still need to compute.
     """
     cell = ws.cell(row=row, column=col)
     cell.value = value
+    if isinstance(value, str) and not isinstance(value, _Formula):
+        cell.data_type = 's'
     if fmt is not None:
         cell.number_format = fmt
     if font is not None:
@@ -522,7 +539,7 @@ def _project_column(ws, index, project, cover, costs=None, sources=None):
     if total_area is None and any(a is not None for a in areas):
         # The customer's own sheet derives it this way, and keeping it a
         # formula means correcting either part fixes the total too.
-        total_value = f"=+{money}{ROW_UNDERGROUND}+{money}{ROW_ABOVEGROUND}"
+        total_value = _Formula(f"=+{money}{ROW_UNDERGROUND}+{money}{ROW_ABOVEGROUND}")
     else:
         total_value = total_area
 
@@ -543,10 +560,10 @@ def _project_column(ws, index, project, cover, costs=None, sources=None):
 
     # The headline ₽/м², and next to it how far this project sits from the
     # first one — the column everything else is being compared against.
-    _write(ws, ROW_PER_SQM, col, f"=+{per_sqm}{ROW_CONTRACT_TOTAL}", fmt=FMT_PER_SQM,
+    _write(ws, ROW_PER_SQM, col, _Formula(f"=+{per_sqm}{ROW_CONTRACT_TOTAL}"), fmt=FMT_PER_SQM,
            font=_font(), fill=_FILL_BAND, align=_CENTER,
            top=MEDIUM, bottom=MEDIUM, left=MEDIUM, right=THIN_BLACK)
-    deviation = None if index == 0 else (
+    deviation = None if index == 0 else _Formula(
         f"=IFERROR({money}{ROW_PER_SQM}/${first_money}${ROW_PER_SQM}-1,\"\")"
     )
     _write(ws, ROW_PER_SQM, col + 1, deviation, fmt=FMT_DEVIATION,
@@ -560,7 +577,7 @@ def _project_column(ws, index, project, cover, costs=None, sources=None):
            font=_font(color=COLOR_WHITE), fill=_FILL_DARK, align=_CENTER_WRAP,
            top=MEDIUM, bottom=MEDIUM, left=THIN_BLACK, right=MEDIUM)
 
-    _write(ws, ROW_CONTRACT_TOTAL, col, f"=+{money}{ROW_GRAND_TOTAL}", fmt=FMT_MONEY,
+    _write(ws, ROW_CONTRACT_TOTAL, col, _Formula(f"=+{money}{ROW_GRAND_TOTAL}"), fmt=FMT_MONEY,
            font=_font(), fill=_FILL_BAND, align=_CENTER,
            top=MEDIUM, bottom=MEDIUM, left=MEDIUM, right=THIN_BLACK)
     _per_sqm_cell(ws, ROW_CONTRACT_TOTAL, col, money, fill=_FILL_BAND,
@@ -576,7 +593,7 @@ def _project_column(ws, index, project, cover, costs=None, sources=None):
         _per_sqm_cell(ws, row, col, money, top=HAIR, bottom=HAIR)
 
     _write(ws, ROW_SMR_TOTAL, col,
-           f"=SUBTOTAL(9,{money}{ROW_WORK_FIRST}:{money}{ROW_WORK_LAST})",
+           _Formula(f"=SUBTOTAL(9,{money}{ROW_WORK_FIRST}:{money}{ROW_WORK_LAST})"),
            fmt=FMT_MONEY, font=_font(color=COLOR_WHITE), fill=_FILL_DARK,
            align=_CENTER, top=MEDIUM, bottom=MEDIUM, left=MEDIUM, right=THIN_BLACK)
     _per_sqm_cell(ws, ROW_SMR_TOTAL, col, money, fill=_FILL_DARK,
@@ -623,8 +640,8 @@ def _grand_total_formula(money, project):
     )
     price = project["contract_price_rub"]
     if price is None:
-        return f"=+{parts}"
-    return f"=IF({parts}=0,{price:.2f},{parts})"
+        return _Formula(f"=+{parts}")
+    return _Formula(f"=IF({parts}=0,{price:.2f},{parts})")
 
 
 def _per_sqm_cell(ws, row, col, money, *, fill=None, color=None, top=None, bottom=None):
@@ -633,7 +650,7 @@ def _per_sqm_cell(ws, row, col, money, *, fill=None, color=None, top=None, botto
     an empty cell instead of #DIV/0! down the whole column."""
     _write(
         ws, row, col + 1,
-        f"=IFERROR(+{money}{row}/${money}${ROW_TOTAL_AREA},\"\")",
+        _Formula(f"=IFERROR(+{money}{row}/${money}${ROW_TOTAL_AREA},\"\")"),
         fmt=FMT_PER_SQM, font=_font(color=color), fill=fill, align=_CENTER,
         top=top, bottom=bottom, left=THIN_BLACK, right=MEDIUM,
     )

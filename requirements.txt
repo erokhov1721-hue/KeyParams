@@ -1,5 +1,9 @@
 pip-system-certs>=0
 Flask>=3.0,<4.0
+Flask-WTF>=1.2,<2.0
+# The production server (KEYPARAMS_ENV=production) — pure Python, no C
+# extensions to build, and unlike gunicorn it runs on Windows.
+waitress>=3.0,<4.0
 easyocr>=1.7,<2.0
 # Windows' own recognition engine: hundreds of times faster than EasyOCR on
 # the scans this program reads. Windows-only, hence the marker; without it the

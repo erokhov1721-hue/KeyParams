@@ -35,6 +35,31 @@ def _build(**kwargs):
     )
 
 
+def test_a_project_name_with_markup_characters_is_shown_as_plain_text():
+    # reportlab's Paragraph parses its whole argument as markup, not just the
+    # <font> tags this module writes on purpose. A project name is free text
+    # from a person — it must render as literal characters, not be read as
+    # a tag (which would either vanish invisibly or break the PDF build).
+    passports = {"a": {
+        "project_name": 'Проект <b>&"Злой"</b>', "address": '<img src="x"/> ул.',
+        "year_signed": None, "building_class": None, "general_contractor": None,
+        "contract_price_rub": None, "underground_area_sqm": None,
+        "aboveground_area_sqm": None, "total_area_sqm": None,
+    }}
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, {},
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "<b>" in text
+    assert "Злой" in text
+    assert '<img src="x"/>' in text
+
+
 def test_the_charts_start_on_a_page_of_their_own():
     # Первая диаграмма ютилась под таблицами внизу первой страницы, а
     # остальные уезжали на следующую — читать такое приходилось вразбивку.

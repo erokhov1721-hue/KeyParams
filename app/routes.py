@@ -10,7 +10,7 @@ from flask import (
 
 from . import (
     comparison, cost_increase, estimate, estimate_sections, excel_report, extractors,
-    passport as passport_module, pdf_export, project_filter, storage,
+    passport as passport_module, pdf_export, project_filter, storage, upload_guard,
 )
 from .document_reader import DocxReadError
 
@@ -69,6 +69,8 @@ def _cover_problem(cover_file):
     ext = Path(cover_file.filename).suffix.lower() if cover_file.filename else ""
     if ext not in ALLOWED_COVER_EXTENSIONS:
         return "Фото объекта должно быть в формате JPG, PNG или WEBP"
+    if not upload_guard.is_image(cover_file, ext):
+        return "Файл не похож на изображение JPG, PNG или WEBP — проверьте, что это оно"
     cover_file.seek(0, 2)
     size = cover_file.tell()
     cover_file.seek(0)
@@ -317,17 +319,35 @@ def create_project():
         return render_template("new_project.html", error="Введите название проекта"), 400
     if not dgp_file or not dgp_file.filename.lower().endswith(ALLOWED_EXTENSION):
         return render_template("new_project.html", error="Загрузите файл Договора в формате .docx"), 400
+    if not upload_guard.is_office_zip(dgp_file):
+        return render_template(
+            "new_project.html",
+            error="Файл Договора повреждён или не является настоящим .docx",
+        ), 400
     if not tz_file or not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
         return render_template("new_project.html", error="Загрузите файл ТЗ в формате .docx"), 400
+    if not upload_guard.is_office_zip(tz_file):
+        return render_template(
+            "new_project.html", error="Файл ТЗ повреждён или не является настоящим .docx",
+        ), 400
     has_smeta = bool(smeta_file and smeta_file.filename)
     if has_smeta and not smeta_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
         return render_template("new_project.html", error="Смета должна быть в формате .xlsx"), 400
+    if has_smeta and not upload_guard.is_office_zip(smeta_file):
+        return render_template(
+            "new_project.html", error="Файл сметы повреждён или не является настоящим .xlsx",
+        ), 400
     has_contract_terms = bool(contract_terms_file and contract_terms_file.filename)
     if has_contract_terms:
         if not contract_terms_file.filename.lower().endswith(ALLOWED_CONTRACT_TERMS_EXTENSION):
             return render_template(
                 "new_project.html",
                 error="Протокол окончательных условий должен быть в формате PDF",
+            ), 400
+        if not upload_guard.is_pdf(contract_terms_file):
+            return render_template(
+                "new_project.html",
+                error="Файл протокола повреждён или не является настоящим PDF",
             ), 400
         contract_terms_file.seek(0, 2)
         if contract_terms_file.tell() > MAX_CONTRACT_TERMS_SIZE:
@@ -645,6 +665,8 @@ def upload_contract_terms(slug):
     pdf_file = request.files.get("contract_terms_file")
     if not pdf_file or not pdf_file.filename.lower().endswith(ALLOWED_CONTRACT_TERMS_EXTENSION):
         abort(400)
+    if not upload_guard.is_pdf(pdf_file):
+        abort(400)
 
     pdf_file.seek(0, 2)
     size = pdf_file.tell()
@@ -694,6 +716,8 @@ def upload_cost_increase(slug):
     data = xlsx_file.read()
     if len(data) > MAX_COST_INCREASE_SIZE:
         return refuse("too_big")
+    if not upload_guard.is_office_zip(io.BytesIO(data)):
+        return refuse("format")
     try:
         lines = cost_increase.read_lines(io.BytesIO(data))
     except cost_increase.CostIncreaseError as e:
@@ -738,6 +762,8 @@ def upload_dgp(slug):
         return redirect(url_for("main.project_page", slug=slug, dgp=code))
 
     if not dgp_file.filename.lower().endswith(ALLOWED_EXTENSION):
+        return refuse("format")
+    if not upload_guard.is_office_zip(dgp_file):
         return refuse("format")
 
     tz = storage.tz_path(root, slug)
@@ -790,6 +816,8 @@ def upload_estimate(slug):
         return redirect(url_for("main.project_page", slug=slug, estimate=code))
 
     if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return refuse("format")
+    if not upload_guard.is_office_zip(xlsx_file):
         return refuse("format")
 
     dest = storage.estimate_path(root, slug)
@@ -852,7 +880,8 @@ def update_manual_coefficients(slug):
     data = passport_module.load_passport(path)
     for field in MANUAL_COEFFICIENT_FIELDS:
         raw_value = request.form.get(field, "").strip()
-        data[field] = extractors.parse_number(raw_value) if raw_value else None
+        value = extractors.parse_number(raw_value) if raw_value else None
+        data[field] = _non_negative(value)
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))
 
@@ -901,6 +930,15 @@ def rename_project(slug):
     return _back_to()
 
 
+def _non_negative(value):
+    """The value, or None if it's negative — an area, a volume, or a price
+    can't be, and a negative one downstream turns a ₽/м² figure negative or
+    flips a comparison's sign rather than raising anything a person would
+    notice. Treated the same as unreadable input: the field goes back to
+    empty rather than keeping a number that can't be true."""
+    return value if value is None or value >= 0 else None
+
+
 @bp.route("/projects/<slug>", methods=["POST"])
 def update_project(slug):
     root = _projects_root()
@@ -920,7 +958,7 @@ def update_project(slug):
         if not raw_value:
             new_value = None
         elif field in passport_module.NUMERIC_FIELDS:
-            new_value = extractors.parse_number(raw_value)
+            new_value = _non_negative(extractors.parse_number(raw_value))
         else:
             new_value = raw_value
         data[field] = new_value

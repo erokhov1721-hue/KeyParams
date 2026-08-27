@@ -116,6 +116,70 @@ class EstimateSectionsError(Exception):
     pass
 
 
+class FormulaWithoutCacheError(EstimateSectionsError):
+    """A cell holds a formula Excel never saved a computed result for.
+
+    ``data_only=True`` reads that cell as ``None`` — the same as a cell with
+    nothing in it at all — and a reader that can't tell the two apart either
+    drops a section's cost silently or, worse, keeps reading formula cells
+    from other rows and ends up with a report that looks complete but isn't.
+    """
+
+
+class _CheckedSheet:
+    """A worksheet paired with its own formula-only twin (the same file
+    loaded a second time with ``data_only=False``), so ``amount_at`` can
+    tell "genuinely empty" apart from "a formula with no cached value" —
+    everything else about the sheet (``cell``, ``max_row``, ``title``, ...)
+    passes straight through to the ``data_only=True`` worksheet unchanged.
+    """
+
+    def __init__(self, ws, ws_formulas):
+        self._ws = ws
+        self._ws_formulas = ws_formulas
+
+    def __getattr__(self, name):
+        return getattr(self._ws, name)
+
+    def amount_at(self, row, column):
+        """The number in this cell — via ``_amount`` — or None if it is
+        genuinely empty. Raises ``FormulaWithoutCacheError`` if the cell
+        holds an uncached formula instead."""
+        value = self._ws.cell(row=row, column=column).value
+        if value is not None:
+            return _amount(value)
+        raw = self._ws_formulas.cell(row=row, column=column).value
+        if isinstance(raw, str) and raw.startswith("="):
+            coord = self._ws.cell(row=row, column=column).coordinate
+            raise FormulaWithoutCacheError(
+                f'Ячейка {coord} на листе «{self._ws.title}» — формула без '
+                'сохранённого значения. Откройте файл в Excel, дайте ему '
+                'пересчитаться (или просто сохраните заново) и загрузите его '
+                'ещё раз.'
+            )
+        return None
+
+
+def _checked_sheets(path, error_type=None):
+    """Every worksheet of ``path``, paired with its formula-only twin — the
+    same workbook loaded once with cached values and once without, zipped
+    sheet by sheet so ``amount_at`` has both views of the same cell.
+    """
+    error_type = error_type or EstimateSectionsError
+    try:
+        # Not read_only: the header spans merged cells, and a streaming
+        # worksheet doesn't carry the merges needed to tell the two
+        # cost blocks apart.
+        wb = openpyxl.load_workbook(path, data_only=True)
+        wb_formulas = openpyxl.load_workbook(path, data_only=False)
+    except Exception as e:
+        raise error_type(f"Cannot read {path}: {e}") from e
+    return [
+        _CheckedSheet(ws, ws_formulas)
+        for ws, ws_formulas in zip(wb.worksheets, wb_formulas.worksheets)
+    ]
+
+
 _LETTER_RE = re.compile(r"[a-zа-яё]", re.IGNORECASE)
 
 
@@ -253,16 +317,7 @@ def read_sections(path) -> list:
     did before any estimate was attached.
     """
     path = Path(path)
-    try:
-        # Not read_only: the header spans merged cells, and a streaming
-        # worksheet doesn't carry the merges needed to tell the two
-        # cost blocks apart. Only three cells per row are read afterwards,
-        # so the whole-workbook load is the cheaper half of this anyway.
-        wb = openpyxl.load_workbook(path, data_only=True)
-    except Exception as e:
-        raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
-
-    for ws in wb.worksheets:
+    for ws in _checked_sheets(path):
         sections = _sections_from_sheet(ws)
         if sections:
             return sections
@@ -348,7 +403,7 @@ def _sections_from_levels(ws):
         current_key, current_own, total = None, None, 0.0
 
     for row in range(header.row + 1, ws.max_row + 1):
-        amount = _amount(ws.cell(row=row, column=header.total_col).value)
+        amount = ws.amount_at(row, header.total_col)
         first = _named(ws.cell(row=row, column=header.first).value)
         second = _named(ws.cell(row=row, column=header.second).value)
         third = (
@@ -435,7 +490,7 @@ def _sections_from_offer(ws):
         )
         if not name:
             continue
-        amount = _amount(ws.cell(row=row, column=header.total_col).value)
+        amount = ws.amount_at(row, header.total_col)
         if amount is None:
             continue
         key = classify(name)
@@ -517,12 +572,7 @@ def _quantity_by_category(path, category_key, is_matching_unit, name_contains=No
     there but nothing under it matches.
     """
     path = Path(path)
-    try:
-        wb = openpyxl.load_workbook(path, data_only=True)
-    except Exception as e:
-        raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
-
-    for ws in wb.worksheets:
+    for ws in _checked_sheets(path):
         value = _quantity_by_category_from_sheet(
             ws, category_key, is_matching_unit, name_contains,
         )
@@ -559,7 +609,7 @@ def _quantity_from_levels_sheet(ws, category_key, is_matching_unit, name_contain
             continue
         if not in_section:
             continue
-        qty = _amount(ws.cell(row=row, column=header.qty_col).value)
+        qty = ws.amount_at(row, header.qty_col)
         if qty is None:
             continue
         if header.unit_col and not is_matching_unit(_cell_text(ws, row, header.unit_col)):
@@ -664,7 +714,7 @@ def _quantity_in_named_subsections(
             continue
         matched = True
         for r in range(row + 1, end):
-            qty = _amount(ws.cell(row=r, column=qty_col).value)
+            qty = ws.amount_at(r, qty_col)
             if qty is None:
                 continue
             if unit_col and not is_matching_unit(_cell_text(ws, r, unit_col)):
@@ -699,7 +749,7 @@ def _quantity_by_category_from_sheet(
     total = 0.0
     for row, end in ranges:
         for r in range(row + 1, end):
-            qty = _amount(ws.cell(row=r, column=qty_col).value)
+            qty = ws.amount_at(r, qty_col)
             if qty is None:
                 continue
             if unit_col and not is_matching_unit(_cell_text(ws, r, unit_col)):
@@ -807,12 +857,7 @@ def read_facade_area(path):
     See the constants above for why each scenario excludes what it does.
     """
     path = Path(path)
-    try:
-        wb = openpyxl.load_workbook(path, data_only=True)
-    except Exception as e:
-        raise EstimateSectionsError(f"Cannot read {path}: {e}") from e
-
-    for ws in wb.worksheets:
+    for ws in _checked_sheets(path):
         header = _find_header(ws)
         if header is not None:
             ranges = _section_row_ranges(ws, header, "facade")

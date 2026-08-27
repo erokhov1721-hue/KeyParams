@@ -55,6 +55,7 @@
       </button>
       <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="fields-card">
             {% for field in fields %}
               {% if field != "project_name" %}
@@ -105,6 +106,7 @@
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_dgp', slug=slug) }}" enctype="multipart/form-data"
               data-confirm="Заменить ДГП? Поля паспорта выше будут пересобраны заново из нового файла — включая те, что были поправлены вручную.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="contract-replace-link" for="dgp-input">Заменить ДГП</label>
           <input class="file-input" type="file" id="dgp-input" name="dgp_file" accept=".docx">
         </form>
@@ -127,6 +129,7 @@
       <div class="accordion-panel" hidden>
         {% if has_contract_terms %}
         <form method="post" action="{{ url_for('main.update_contract_terms', slug=slug) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="fields-card">
             {% for field in contract_fields %}
             {% set value = passport[field] %}
@@ -148,12 +151,14 @@
         </form>
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="contract-replace-link" for="contract-terms-input">Заменить файл протокола (PDF)</label>
           <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
         </form>
         {% else %}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="file-drop" for="contract-terms-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
@@ -234,6 +239,7 @@
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_estimate', slug=slug) }}" enctype="multipart/form-data"
               data-confirm="Заменить смету? Удорожание объекта на этой странице начнёт считаться от новой сметы.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="contract-replace-link" for="estimate-input">Заменить смету (Excel)</label>
           <input class="file-input" type="file" id="estimate-input" name="estimate_file" accept=".xlsx">
         </form>
@@ -241,6 +247,7 @@
         <p class="accordion-empty">Смета не загружена для этого проекта.</p>
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_estimate', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="file-drop" for="estimate-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
@@ -351,6 +358,7 @@
         {% endif %}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_cost_increase', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="contract-replace-link" for="cost-increase-input">Заменить файл удорожания (Excel)</label>
           <input class="file-input" type="file" id="cost-increase-input" name="cost_increase_file" accept=".xlsx">
         </form>
@@ -362,6 +370,7 @@
         {% endif %}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_cost_increase', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="file-drop" for="cost-increase-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
@@ -388,6 +397,7 @@
       </button>
       <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_manual_coefficients', slug=slug) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="fields-card">
             <div class="field-row {{ 'is-empty' if concrete_volume is none else 'is-filled' }}">
               <div class="field-label-col">

@@ -26,6 +26,20 @@ def _smeta_bytes():
     return buf.getvalue()
 
 
+def _valid_zip_with_wrong_contents():
+    """A real, well-formed zip archive — passes the upload's own "is this
+    even the right shape of file" check — that isn't a real .docx or .xlsx
+    once something actually tries to read it as one. For exercising the
+    "file opened fine but couldn't be understood" path specifically, as
+    opposed to "this isn't the claimed format at all".
+    """
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("not_an_office_document.txt", "just some text")
+    return buf.getvalue()
+
+
 def test_index_page_loads_when_empty(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -203,6 +217,47 @@ def test_update_project_saves_manual_field(tmp_path):
     saved = passport.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["building_class"] == "Бизнес"
     assert saved["aboveground_area_sqm"] == 2000.0
+
+
+def test_update_project_rejects_a_negative_area(tmp_path):
+    # A negative area isn't a typo the parser should shrug off — it feeds
+    # straight into ₽/м² math downstream, so accepting it either flips a
+    # sign somewhere or divides by something that should never be negative.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    create_resp = client.post("/projects", data={
+        "project_name": "Минус",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    project_url = create_resp.headers["Location"]
+    slug = "Минус"
+
+    client.post(project_url, data={"total_area_sqm": "-500"})
+
+    from app import passport, storage
+    saved = passport.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["total_area_sqm"] is None
+
+
+def test_manual_coefficients_reject_a_negative_volume(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    create_resp = client.post("/projects", data={
+        "project_name": "Минус2",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+    project_url = create_resp.headers["Location"]
+    slug = "Минус2"
+
+    client.post(f"{project_url}/manual-coefficients", data={
+        "concrete_volume_manual": "-100",
+    })
+
+    from app import passport, storage
+    saved = passport.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["concrete_volume_manual"] is None
 
 
 def _root_with_passport_above(tmp_path):
@@ -1142,6 +1197,25 @@ def test_create_project_rejects_non_xlsx_estimate(tmp_path):
     assert storage.list_project_slugs(tmp_path) == []
 
 
+def test_an_oversized_upload_is_rejected_rather_than_loaded_whole(tmp_path):
+    from app import MAX_CONTENT_LENGTH
+    app = create_app(tmp_path)
+    client = app.test_client()
+    too_big = b"0" * (MAX_CONTENT_LENGTH + 1)
+
+    resp = client.post("/projects", data={
+        "project_name": "Слишком большой файл",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(too_big), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 413
+
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
+
+
 def test_new_project_form_has_optional_estimate_field(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -1586,6 +1660,50 @@ def test_create_project_rejects_corrupted_estimate(tmp_path):
     assert storage.list_project_slugs(tmp_path) == []
 
 
+def _zip_bomb_bytes():
+    """A tiny archive that expands to a lot of data — the shape checked for
+    regardless of what real corruption looks like, since a genuine zip bomb
+    named .xlsx is otherwise a perfectly well-formed zip file."""
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("bomb.xml", "A" * 50_000_000)
+    return buf.getvalue()
+
+
+def test_create_project_rejects_a_zip_bomb_disguised_as_dgp(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post("/projects", data={
+        "project_name": "Бомба",
+        "dgp_file": (io.BytesIO(_zip_bomb_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_rejects_a_renamed_text_file_as_the_estimate(tmp_path):
+    # Plain text with an .xlsx name — the shape a mislabelled or malicious
+    # upload takes far more often than an actual zip bomb.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.post("/projects", data={
+        "project_name": "Не смета",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "smeta_file": (io.BytesIO(b"Section,Total\nFoundation,1000\n"), "smeta.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    from app import storage
+    assert storage.list_project_slugs(tmp_path) == []
+
+
 # --- contract-terms upload: the page explains why nothing was filled ---
 
 def _upload_contract_terms(client, slug, follow=True):
@@ -1926,12 +2044,12 @@ def test_cover_upload_from_the_project_list_still_works(tmp_path):
 
     resp = client.post(
         f"/projects/{slug}/cover",
-        data={"cover_file": (io.BytesIO(_cover_bytes()), "photo.jpg")},
+        data={"cover_file": (io.BytesIO(_cover_bytes()), "photo.png")},
         content_type="multipart/form-data",
     )
 
     assert resp.status_code == 302
-    assert storage.cover_path(tmp_path, slug).name == "cover.jpg"
+    assert storage.cover_path(tmp_path, slug).name == "cover.png"
 
 
 def test_cover_upload_from_the_project_list_refuses_a_wrong_format(tmp_path):
@@ -2296,7 +2414,7 @@ def test_an_unreadable_cost_increase_file_is_refused_and_the_old_one_kept(tmp_pa
     slug = _make_project_with_passport(tmp_path, "Тест")
     _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 110.0)]))
 
-    resp = _upload_increase(client, slug, b"not a workbook at all")
+    resp = _upload_increase(client, slug, _valid_zip_with_wrong_contents())
 
     assert resp.status_code == 302
     assert "increase=unreadable" in resp.headers["Location"]
@@ -2792,7 +2910,7 @@ def test_an_unreadable_dgp_is_refused_and_the_old_one_kept(tmp_path):
     client = app.test_client()
     slug = _create_full_project(client, "Тест")
 
-    resp = _upload_dgp(client, slug, b"this has a .docx name but is not a real zip")
+    resp = _upload_dgp(client, slug, _valid_zip_with_wrong_contents())
 
     assert "dgp=unreadable" in resp.headers["Location"]
     body = client.get(f"/projects/{slug}?dgp=unreadable").get_data(as_text=True)
@@ -2874,7 +2992,7 @@ def test_an_unreadable_estimate_is_refused_and_the_old_one_kept(tmp_path):
     slug = _make_project_with_passport(tmp_path, "Тест")
     _upload_estimate(client, slug, _offer_bytes([("8. Кровля", 1_000_000.0)]))
 
-    resp = _upload_estimate(client, slug, b"not a workbook at all")
+    resp = _upload_estimate(client, slug, _valid_zip_with_wrong_contents())
 
     assert "estimate=unreadable" in resp.headers["Location"]
     body = client.get(f"/projects/{slug}?estimate=unreadable").get_data(as_text=True)

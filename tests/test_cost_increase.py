@@ -369,6 +369,18 @@ def test_read_lines_works_on_an_open_file_so_an_upload_can_be_checked_before_sav
     assert [line.name for line in lines] == ["Кровля"]
 
 
+def test_an_uncached_formula_in_stalo_is_reported_not_silently_dropped():
+    # "Кровля" would otherwise vanish from the report entirely (was is also
+    # None, so the "was is None and now is None" check would skip the row)
+    # — read as a real formula, not the same as an empty cell.
+    buf = io.BytesIO()
+    _workbook([("Кровля", None, "=100+30")]).save(buf)
+    buf.seek(0)
+
+    with pytest.raises(cost_increase.FormulaWithoutCacheError):
+        cost_increase.read_lines(buf)
+
+
 def test_reads_from_a_path_as_well(tmp_path):
     path = tmp_path / "udorozhanie.xlsx"
     _workbook([("Кровля", 100.0, 110.0)]).save(path)

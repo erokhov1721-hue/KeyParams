@@ -1,4 +1,5 @@
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import openpyxl
@@ -65,9 +66,18 @@ def read_estimate(path) -> list:
     """
     path = Path(path)
     try:
-        wb_styles = openpyxl.load_workbook(path, data_only=False)
-        wb_values = openpyxl.load_workbook(path, data_only=True)
-    except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError) as e:
+        # Read into memory once and open two independent BytesIO views on
+        # it, rather than handing openpyxl the path directly: a workbook
+        # that fails to load partway through (a zip missing its manifest,
+        # say) leaves openpyxl's own archive reader without ever closing
+        # it, and on Windows that keeps the file locked — the caller's own
+        # cleanup of a rejected upload then fails with "file in use" on
+        # top of the read error it was already reporting. A BytesIO has no
+        # OS file handle to leak, so there is nothing left open either way.
+        data = path.read_bytes()
+        wb_styles = openpyxl.load_workbook(BytesIO(data), data_only=False)
+        wb_values = openpyxl.load_workbook(BytesIO(data), data_only=True)
+    except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError, OSError) as e:
         raise EstimateReadError(f"Cannot read {path}: {e}") from e
 
     value_bounds = _value_bounds(path)

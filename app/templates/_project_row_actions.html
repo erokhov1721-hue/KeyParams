@@ -9,6 +9,7 @@
    после правки) и `with_cover`. #}
 <form class="rename-form" method="post"
       action="{{ url_for('main.rename_project', slug=slug) }}" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="text" name="project_name" value="{{ name }}" required>
   <input type="hidden" name="back" value="{{ back }}">
   <button type="submit" class="btn-rename-save" title="Сохранить название" aria-label="Сохранить название">
@@ -25,6 +26,7 @@
 {% if with_cover %}
 <form class="cover-upload-form" method="post"
       action="{{ url_for('main.upload_project_cover', slug=slug) }}" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label class="btn-cover-upload" for="cover-input-{{ index }}" title="Загрузить фото объекта" aria-label="Загрузить фото объекта">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/>
@@ -43,6 +45,7 @@
 </button>
 <form class="delete-form" method="post" action="{{ url_for('main.delete_project', slug=slug) }}"
       onsubmit="return confirm('Удалить проект «{{ name }}»? Это действие нельзя отменить.');">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="back" value="{{ back }}">
   <button type="submit" class="btn-delete" title="Удалить проект" aria-label="Удалить проект">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

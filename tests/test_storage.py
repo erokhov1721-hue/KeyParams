@@ -122,6 +122,20 @@ def test_purge_deleted_finishes_a_delete_once_the_file_is_free(tmp_path):
     assert not (tmp_path / slug).exists()
 
 
+def test_purge_tolerates_the_folder_already_being_gone(tmp_path):
+    # Two dashboard loads landing at the same time both try to finish
+    # removing the same deleted project. Whichever runs second must not
+    # crash just because the first one already finished the job.
+    directory = tmp_path / "already-gone"
+    directory.mkdir()
+    (directory / storage.DELETED_MARKER).touch()
+
+    assert storage._purge(directory) is True
+    assert not directory.exists()
+
+    assert storage._purge(directory) is True
+
+
 def test_purge_deleted_leaves_live_projects_alone(tmp_path):
     slug = storage.create_project(tmp_path, "Живой")
     _finish_project(tmp_path, slug)
