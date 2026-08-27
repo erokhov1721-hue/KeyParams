@@ -292,6 +292,93 @@
 </div>
 {% endif %}
 
+{% if averages %}
+<div class="card sections-card">
+  <div class="sections-head">
+    <h2 class="chart-title">Средние показатели по объектам</h2>
+    <p class="sections-sub">
+      Простое среднее по {{ slugs | length }} выбранным объектам, с поправками
+      на НДС и инфляцию, если они включены выше.
+    </p>
+  </div>
+
+  {# slug переопределяется проверенным списком, а не тем, что в адресе: там
+     может лежать неизвестный слаг, который не должен переезжать в ссылку. #}
+  {% set base_args = dict(request.args.to_dict(flat=False), slug=slugs) %}
+  <div class="avg-group-tabs">
+    <a class="avg-group-tab {{ 'is-active' if not averages_group_by }}"
+       href="{{ url_for('main.compare_projects', **dict(base_args, avg_group=[])) }}">Все объекты</a>
+    {% for key, field, label, order in averages_group_options %}
+    <a class="avg-group-tab {{ 'is-active' if averages_group_by == key }}"
+       href="{{ url_for('main.compare_projects', **dict(base_args, avg_group=[key])) }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">{{ 'Группа' if averages_group_by else 'Объекты' }}</th>
+          <th>Объектов</th>
+          <th>Средняя стоимость за м²</th>
+          <th>Средняя цена по договору</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in averages.rows %}
+        <tr>
+          <td class="sections-label-col">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-value"><span class="sections-number">{{ row.count }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.contract_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="pair-subtitle">
+    Средняя стоимость по видам работ
+    <span class="sections-sub">по убыванию стоимости; столбцы можно отсортировать</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table works-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">
+            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+              Вид работ<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+              средний ₽/м²<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th class="sections-weight-col">есть у</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in averages.works %}
+        <tr>
+          <td class="sections-label-col" data-sort-value="{{ row.label }}">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-value"
+              data-sort-value="{{ row.avg_per_sqm if row.avg_per_sqm is not none else -1 }}">
+            <span class="sections-number">{{ row.avg_per_sqm_display }}</span>
+          </td>
+          <td class="sections-weight-col">{{ row.frequency_display }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {% if increase %}
 <div class="card sections-card">
   <div class="sections-head">

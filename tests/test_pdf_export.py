@@ -177,6 +177,40 @@ def test_the_work_rows_draw_progress_bars():
         assert len(page.curves) >= 2 * len(increase["works"])
 
 
+def test_the_pdf_omits_the_averages_block_without_data():
+    text = "\n".join(_page_texts(_build()))
+
+    assert "Средние показатели по объектам" not in text
+
+
+def test_the_pdf_shows_the_averages_table():
+    passports = {
+        "a": {"project_name": "ПроектА", "year_signed": "2024",
+              "total_area_sqm": 1_000.0, "contract_price_rub": 5_000_000.0},
+    }
+    costs = {"a": {"facade": 3_000_000.0}}
+    averages = comparison.build_averages_table(["a"], passports, costs, NONE)
+    charts = {"price_by_year": [
+        {"label": "ПроектА (2024)", "value": 1_000_000_000.0,
+         "display": "1 000 000 000", "width_pct": 100.0},
+    ]}
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        averages=averages,
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Средние показатели по объектам" in text
+    assert "3 000" in text           # 3 000 000 ₽ / 1 000 м²
+    assert "5 000 000" in text       # средняя цена по договору
+    assert "Средняя стоимость по видам работ" in text
+    assert "Фасад" in text
+
+
 # --- справка по одному объекту ----------------------------------------------
 
 def _project_passport(**fields):

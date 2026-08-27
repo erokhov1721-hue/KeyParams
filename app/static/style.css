@@ -1566,6 +1566,7 @@ select option {
 .sections-card > .stat-tiles,
 .sections-card > .pair-subtitle,
 .sections-card > .delta-list,
+.sections-card > .avg-group-tabs,
 .compare-card > .sections-head {
   margin-inline: var(--table-edge);
 }
@@ -2080,6 +2081,34 @@ select option {
 
 .filter-reset:hover {
   color: var(--text-100);
+}
+
+.avg-group-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.avg-group-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.avg-group-tab:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.avg-group-tab.is-active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Панель раскрывается обычным потоком: список под ней просто сдвигается,

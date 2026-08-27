@@ -154,6 +154,7 @@ def compare_projects():
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
+    group_by = _averages_group_by(request.args)
     return render_template(
         "compare.html",
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
@@ -177,8 +178,23 @@ def compare_projects():
         increase=comparison.build_increase_summary(
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
         ),
+        averages=comparison.build_averages_table(
+            slugs, passports, costs, adjustments, group_by=group_by,
+        ),
+        averages_group_by=group_by,
+        averages_group_options=project_filter.GROUPS,
         adjustments=adjustments,
     )
+
+
+def _averages_group_by(args):
+    """Какое поле выбрано в переключателе таблицы средних, или None — вкладка
+    «Все объекты». Значение из адреса, которого нет среди известных ключей
+    группировки (чужой параметр, опечатка), читается как «Все объекты», а не
+    как ошибка.
+    """
+    group_by = args.get("avg_group")
+    return group_by if group_by in project_filter.GROUP_KEYS else None
 
 
 def _pair_choice(slugs):
@@ -269,6 +285,10 @@ def compare_projects_pdf():
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
             slugs, passports, _increase_reports(root, slugs, costs), adjustments,
+        ),
+        averages=comparison.build_averages_table(
+            slugs, passports, costs, adjustments,
+            group_by=_averages_group_by(request.args),
         ),
     )
     return Response(

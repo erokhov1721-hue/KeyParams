@@ -2008,6 +2008,40 @@ def test_compare_page_has_no_section_table_without_estimates(tmp_path):
     assert "Стоимость по разделам" not in body
 
 
+def test_compare_page_shows_the_averages_table(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 3_000_000.0)],
+        contract_price_rub=5_000_000.0,
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Средние показатели по объектам" in body
+    assert "3 000" in body           # 3 000 000 ₽ / 1 000 м²
+    assert "5 000 000" in body       # средняя цена по договору
+    assert "Средняя стоимость по видам работ" in body
+
+
+def test_the_averages_table_splits_into_rows_by_general_contractor(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "А", [], general_contractor="ООО «АНТТЕК»",
+    )
+    b = _project_with_offer(
+        tmp_path, "Б", [], general_contractor="ООО «ГЭС»",
+    )
+
+    body = client.get(
+        f"/compare?slug={a}&slug={b}&avg_group=contractor",
+    ).get_data(as_text=True)
+
+    assert "ООО «АНТТЕК»" in body
+    assert "ООО «ГЭС»" in body
+
+
 def test_section_table_corrections_are_off_by_default(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

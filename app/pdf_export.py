@@ -557,6 +557,82 @@ def _sections_block(sections, styles, page_width):
     return story
 
 
+def _averages_block(averages, styles, page_width):
+    """«Средние показатели по объектам» — те же две таблицы, что на экране:
+    средние за м² и по цене договора (по всей выборке или по группам,
+    смотря что было выбрано в переключателе), и средняя стоимость по видам
+    работ, независимо от переключателя."""
+    if not averages:
+        return []
+
+    total_count = sum(row["count"] for row in averages["rows"])
+    story = [
+        Paragraph("Средние показатели по объектам", styles["heading"]),
+        Paragraph(
+            f"Простое среднее по {total_count} выбранным объектам, с поправками "
+            "на НДС и инфляцию, если они включены.",
+            styles["sub"],
+        ),
+    ]
+
+    label = "Группа" if averages["group_by"] else "Объекты"
+    label_w = min(200.0, page_width * 0.34)
+    rest_w = (page_width - label_w) / 3
+    data = [[
+        Paragraph(label, styles["head"]),
+        Paragraph("объектов", styles["head"]),
+        Paragraph("средняя стоимость за м²", styles["head"]),
+        Paragraph("средняя цена по договору", styles["head"]),
+    ]]
+    for row in averages["rows"]:
+        data.append([
+            Paragraph(row["label"], styles["cell"]),
+            Paragraph(str(row["count"]), styles["cell_right"]),
+            Paragraph(row["per_sqm_display"], styles["cell_right"]),
+            Paragraph(row["contract_display"], styles["cell_right"]),
+        ])
+    table = Table(data, colWidths=[label_w, rest_w, rest_w, rest_w])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    story.append(Paragraph("Средняя стоимость по видам работ", styles["subheading"]))
+    work_label_w = min(210.0, page_width * 0.4)
+    work_rest = (page_width - work_label_w) / 2
+    work_data = [[
+        Paragraph("Вид работ", styles["head"]),
+        Paragraph("средний ₽/м²", styles["head"]),
+        Paragraph("есть у", styles["head"]),
+    ]]
+    for row in averages["works"]:
+        work_data.append([
+            Paragraph(row["label"], styles["cell"]),
+            Paragraph(row["avg_per_sqm_display"], styles["cell_right"]),
+            Paragraph(row["frequency_display"], styles["cell_right"]),
+        ])
+    work_table = Table(
+        work_data, colWidths=[work_label_w, work_rest, work_rest], repeatRows=1,
+    )
+    work_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(work_table)
+    return story
+
+
 def _increase_block(increase, styles, page_width):
     """«Удорожание проектов» — те же плитки, диаграмма и таблица, что на экране."""
     if not increase:
@@ -824,7 +900,7 @@ def _pair_block(pair, styles, page_width):
 def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
-    sections=None, pair=None, terms=None, increase=None,
+    sections=None, pair=None, terms=None, increase=None, averages=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
@@ -856,6 +932,10 @@ def build_compare_pdf(
     if sections_story:
         story.append(PageBreak())
         story += sections_story
+    averages_story = _averages_block(averages, styles, page_width)
+    if averages_story:
+        story.append(PageBreak())
+        story += averages_story
     increase_story = _increase_block(increase, styles, page_width)
     if increase_story:
         story.append(PageBreak())

@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 
 from . import cost_increase, estimate_sections, extractors, passport as passport_module
+from . import project_filter
 from .passport import format_number
 
 DEFAULT_VAT_RATE = 22.0
@@ -716,4 +717,149 @@ def build_increase_summary(slugs, passports, reports, adjustments):
         "without_estimate": [
             p["name"] for p in projects if not p["from_estimate"]
         ],
+    }
+
+
+# --- средние по объектам ----------------------------------------------------
+
+GROUP_LABEL_ALL = "Все объекты"
+
+
+def _grouped_slugs(slugs, passports, group_by):
+    """``[(подпись строки, [слаги])]`` — одна строка на всю выборку без
+    группировки, иначе одна на каждое встретившееся значение поля.
+
+    Использует то же поле, ту же нормализацию года и то же «Не указано», что
+    и фильтр списка проектов (``project_filter``) — переключатель этой
+    таблицы и галочки там задают один и тот же вопрос, и отвечать на него
+    по-разному было бы только путать.
+    """
+    if group_by is None:
+        return [(GROUP_LABEL_ALL, list(slugs))]
+
+    field, order = next(
+        (field, order) for key, field, _label, order in project_filter.GROUPS
+        if key == group_by
+    )
+    by_value = {}
+    for slug in slugs:
+        value = project_filter._value(passports[slug], field)
+        by_value.setdefault(value, []).append(slug)
+
+    return [
+        (
+            project_filter.NOT_SET_LABEL if value == project_filter.NOT_SET else value,
+            by_value[value],
+        )
+        for value in project_filter._sorted_values(by_value, order)
+    ]
+
+
+def _average(values):
+    return sum(values) / len(values) if values else None
+
+
+def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
+    """Среднее за м² по смете и среднее по цене договора для одной строки
+    таблицы — простое среднее по объектам, у которых нужная цифра есть.
+
+    Объект без сметы или без площади не участвует в среднем за м², но не
+    выпадает из среднего по договору, если цена там есть, — и наоборот: это
+    два разных вопроса, и у каждого свой знаменатель.
+    """
+    per_sqm_values = []
+    contract_values = []
+    for slug in group_slugs:
+        passport = passports[slug]
+        factor, _notes = project_factor(
+            _source_vat(passport), passport.get("year_signed"), adjustments,
+        )
+        costs = costs_by_slug.get(slug) or {}
+        area = passport.get("total_area_sqm") or None
+        if costs and area:
+            per_sqm_values.append(sum(costs.values()) * factor / area)
+        price = passport.get("contract_price_rub")
+        if price is not None:
+            contract_values.append(price * factor)
+
+    per_sqm_avg = _average(per_sqm_values)
+    contract_avg = _average(contract_values)
+    return {
+        "label": label,
+        "count": len(group_slugs),
+        "per_sqm_avg": per_sqm_avg,
+        "per_sqm_display": _format_metric(per_sqm_avg, UNIT_PER_SQM),
+        "contract_avg": contract_avg,
+        "contract_display": _format_metric(contract_avg, UNIT_MONEY),
+    }
+
+
+def _average_work_rows(slugs, passports, costs_by_slug, adjustments):
+    """Средний ₽/м² по каждому виду работ, по всей выборке целиком — не
+    зависит от переключателя группировки, который делит только строки выше.
+
+    «N из M»: M — у скольких выбранных объектов смета вообще содержит этот
+    вид работ, N — у скольких из них к тому же известна площадь и цифра
+    попала в среднее. Так видно, на скольких объектах в итоге основано число.
+    """
+    gathered = {}
+    for slug in slugs:
+        costs = costs_by_slug.get(slug)
+        if not costs:
+            continue
+        passport = passports[slug]
+        factor, _notes = project_factor(
+            _source_vat(passport), passport.get("year_signed"), adjustments,
+        )
+        area = passport.get("total_area_sqm") or None
+        for key, amount in costs.items():
+            entry = gathered.setdefault(key, {"key": key, "values": [], "total": 0})
+            entry["total"] += 1
+            if area:
+                entry["values"].append(amount * factor / area)
+
+    rows = []
+    for entry in gathered.values():
+        avg = _average(entry["values"])
+        rows.append({
+            "key": entry["key"],
+            "label": estimate_sections.CATEGORY_LABELS[entry["key"]],
+            "avg_per_sqm": avg,
+            "avg_per_sqm_display": _format_metric(avg, UNIT_PER_SQM),
+            "frequency_display": f'{len(entry["values"])} из {entry["total"]}',
+        })
+
+    # Сначала то, что в среднем обходится дороже всего — как и в остальных
+    # таблицах этой страницы, отсортированных по стоимости.
+    rows.sort(
+        key=lambda row: row["avg_per_sqm"] if row["avg_per_sqm"] is not None else -1.0,
+        reverse=True,
+    )
+    return rows
+
+
+def build_averages_table(slugs, passports, costs_by_slug, adjustments, group_by=None):
+    """Средние показатели по выбранным объектам — за м² по смете и по цене
+    договора, — плюс разбивка по видам работ на всю выборку.
+
+    ``group_by`` — один из ``project_filter.GROUP_KEYS`` ("contractor",
+    "class", "year"), чтобы разбить строки по генподрядчику, классу или году
+    подписания вместо одной строки на всю выборку; None — одна строка.
+
+    None вместо таблицы, когда сравнивать нечего — список проектов пуст.
+    """
+    if not slugs:
+        return None
+
+    costs_by_slug = costs_by_slug or {}
+    groups = _grouped_slugs(slugs, passports, group_by)
+    rows = [
+        _averages_row(label, group_slugs, passports, costs_by_slug, adjustments)
+        for label, group_slugs in groups
+    ]
+
+    return {
+        "group_by": group_by,
+        "rows": rows,
+        "works": _average_work_rows(slugs, passports, costs_by_slug, adjustments),
     }

@@ -777,3 +777,159 @@ def test_the_corrections_move_the_roubles_per_metre_but_not_the_area():
 
     assert plain["total_area"] == lifted["total_area"] == 1000.0
     assert lifted["total_per_sqm"] > plain["total_per_sqm"]
+
+
+# --- средние по объектам ---
+
+def test_there_is_no_averages_table_without_any_projects():
+    assert comparison.build_averages_table([], {}, {}, NONE) is None
+
+
+def test_ungrouped_averages_are_one_row_over_the_whole_selection():
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0, contract_price_rub=1_000_000.0),
+        "b": _passport("Б", total_area_sqm=2000.0, contract_price_rub=3_000_000.0),
+    }
+    costs = {"a": {"facade": 1_000_000.0}, "b": {"facade": 2_000_000.0}}
+
+    table = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
+
+    assert len(table["rows"]) == 1
+    row = table["rows"][0]
+    assert row["label"] == "Все объекты"
+    assert row["count"] == 2
+    # a: 1_000_000 / 1000 = 1000 ₽/м²; b: 2_000_000 / 2000 = 1000 ₽/м² — среднее 1000.
+    assert row["per_sqm_avg"] == pytest.approx(1000.0)
+    # (1_000_000 + 3_000_000) / 2
+    assert row["contract_avg"] == pytest.approx(2_000_000.0)
+    assert row["contract_display"] == "2 000 000 ₽"
+
+
+def test_a_project_without_an_estimate_or_area_is_left_out_of_that_average():
+    # Нет сметы у "b" — из среднего за м² он выпадает, но цена по договору у
+    # него есть и в свой средний идёт.
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0, contract_price_rub=1_000_000.0),
+        "b": _passport("Б", total_area_sqm=None, contract_price_rub=3_000_000.0),
+    }
+    costs = {"a": {"facade": 500_000.0}, "b": {}}
+
+    table = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
+
+    row = table["rows"][0]
+    assert row["per_sqm_avg"] == pytest.approx(500.0)
+    assert row["contract_avg"] == pytest.approx(2_000_000.0)
+
+
+def test_without_any_usable_figure_the_average_is_a_dash():
+    passports = {"a": _passport("А", total_area_sqm=None, contract_price_rub=None)}
+    table = comparison.build_averages_table(["a"], passports, {"a": {}}, NONE)
+
+    row = table["rows"][0]
+    assert row["per_sqm_avg"] is None
+    assert row["per_sqm_display"] == "—"
+    assert row["contract_avg"] is None
+    assert row["contract_display"] == "—"
+
+
+def test_grouping_by_contractor_splits_the_table_into_one_row_per_value():
+    passports = {
+        "a": _passport("А", general_contractor="ООО «АНТТЕК»", contract_price_rub=1_000_000.0),
+        "b": _passport("Б", general_contractor="ООО «АНТТЕК»", contract_price_rub=3_000_000.0),
+        "c": _passport("В", general_contractor="ООО «ГЭС»", contract_price_rub=2_000_000.0),
+    }
+
+    table = comparison.build_averages_table(
+        ["a", "b", "c"], passports, {}, NONE, group_by="contractor",
+    )
+
+    rows = {row["label"]: row for row in table["rows"]}
+    assert rows["ООО «АНТТЕК»"]["count"] == 2
+    assert rows["ООО «АНТТЕК»"]["contract_avg"] == pytest.approx(2_000_000.0)
+    assert rows["ООО «ГЭС»"]["count"] == 1
+    assert rows["ООО «ГЭС»"]["contract_avg"] == pytest.approx(2_000_000.0)
+
+
+def test_a_project_without_the_grouped_field_gets_its_own_not_set_row():
+    passports = {
+        "a": _passport("А", general_contractor="ООО «АНТТЕК»"),
+        "b": _passport("Б", general_contractor=None),
+    }
+
+    table = comparison.build_averages_table(
+        ["a", "b"], passports, {}, NONE, group_by="contractor",
+    )
+
+    labels = [row["label"] for row in table["rows"]]
+    assert "Не указано" in labels
+    # "Не указано" всегда последним, как и в фильтре списка проектов.
+    assert labels[-1] == "Не указано"
+
+
+def test_grouping_by_year_reads_the_year_out_of_a_free_form_date():
+    passports = {
+        "a": _passport("А", year_signed="от 2024 г."),
+        "b": _passport("Б", year_signed="2025"),
+    }
+
+    table = comparison.build_averages_table(
+        ["a", "b"], passports, {}, NONE, group_by="year",
+    )
+
+    labels = [row["label"] for row in table["rows"]]
+    # Года по убыванию, как в фильтре.
+    assert labels == ["2025", "2024"]
+
+
+def test_corrections_reach_the_averages():
+    passports = {"a": _passport("А", year_signed="2020", contract_price_rub=1_000_000.0)}
+
+    plain = comparison.build_averages_table(["a"], passports, {}, NONE)
+    lifted = comparison.build_averages_table(["a"], passports, {}, INFLATION_10)
+
+    assert lifted["rows"][0]["contract_avg"] > plain["rows"][0]["contract_avg"]
+
+
+def test_the_work_breakdown_averages_per_square_metre_across_the_whole_selection():
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0),
+        "b": _passport("Б", total_area_sqm=2000.0),
+    }
+    costs = {
+        "a": {"facade": 1_000_000.0, "roof": 200_000.0},
+        "b": {"facade": 4_000_000.0},
+    }
+
+    table = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
+    works = {row["key"]: row for row in table["works"]}
+
+    # a: 1000 ₽/м², b: 2000 ₽/м² — среднее 1500.
+    assert works["facade"]["avg_per_sqm"] == pytest.approx(1500.0)
+    assert works["facade"]["frequency_display"] == "2 из 2"
+    # Кровля есть только у "a".
+    assert works["roof"]["avg_per_sqm"] == pytest.approx(200.0)
+    assert works["roof"]["frequency_display"] == "1 из 1"
+
+
+def test_the_work_breakdown_is_not_affected_by_the_group_switch():
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0, general_contractor="X"),
+        "b": _passport("Б", total_area_sqm=2000.0, general_contractor="Y"),
+    }
+    costs = {"a": {"facade": 1_000_000.0}, "b": {"facade": 4_000_000.0}}
+
+    ungrouped = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
+    grouped = comparison.build_averages_table(
+        ["a", "b"], passports, costs, NONE, group_by="contractor",
+    )
+
+    assert grouped["works"] == ungrouped["works"]
+
+
+def test_the_work_breakdown_sorts_the_costliest_first():
+    passports = {"a": _passport("А", total_area_sqm=1000.0)}
+    costs = {"a": {"facade": 3_000_000.0, "roof": 1_000_000.0}}
+
+    table = comparison.build_averages_table(["a"], passports, costs, NONE)
+
+    assert [row["key"] for row in table["works"]] == ["facade", "roof"]
