@@ -1134,7 +1134,11 @@ def _project_increase_block(report, format_number, format_percent, format_delta,
         )
         baseline_header = "Было, руб."
 
-    story = [
+    # Built up in block, not story directly, and wrapped in KeepTogether
+    # below: without it the heading could be the last thing that fits at
+    # the bottom of a page, with the table itself starting fresh on the
+    # next one.
+    block = [
         Paragraph("Удорожание объекта", styles["heading"]),
         Paragraph(note, styles["sub"]),
     ]
@@ -1199,7 +1203,8 @@ def _project_increase_block(report, format_number, format_percent, format_delta,
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]))
-    story.append(table)
+    block.append(table)
+    story = [KeepTogether(block)]
 
     if report.unmatched:
         names = "; ".join(_esc(name) for name in report.unmatched)
