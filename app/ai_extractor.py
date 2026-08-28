@@ -11,13 +11,22 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-5"
 
+# The SDK's own defaults — a ten-minute timeout, its own retry count — are
+# sized for a background job, not a request a person is waiting on to render
+# a page. An unreachable gateway must fail in bounded time rather than hold
+# the project page open indefinitely. A per-request spend cap isn't a client
+# argument at all — it's set on the API key or gateway route, outside this
+# code.
+REQUEST_TIMEOUT = 30.0
+MAX_RETRIES = 1
+
 _client = None
 
 
 def _get_client():
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        _client = anthropic.Anthropic(timeout=REQUEST_TIMEOUT, max_retries=MAX_RETRIES)
     return _client
 
 
@@ -74,8 +83,8 @@ def extract_missing_fields(missing_fields: list, context_text: str) -> dict:
         )
         raw_text = next(block.text for block in response.content if block.type == "text")
         raw = json.loads(raw_text)
-    except Exception:
-        logger.exception("AI extractor fallback failed")
+    except Exception as exc:
+        logger.exception("AI extractor fallback failed (%s)", _classify_failure(exc))
         return {}
 
     if not isinstance(raw, dict):

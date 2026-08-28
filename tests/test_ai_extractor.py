@@ -1,4 +1,5 @@
 import json
+import logging
 
 from app import ai_extractor
 from app.document_reader import DocxContent
@@ -35,6 +36,25 @@ class _RaisingClient:
         @staticmethod
         def create(**kwargs):
             raise RuntimeError("no network")
+
+
+def test_get_client_sets_an_explicit_timeout_and_retry_cap(monkeypatch):
+    # The SDK's own defaults (a ten-minute timeout, its own retry count) are
+    # sized for a background job, not a request a person is waiting on to
+    # render a page — an unreachable gateway must fail in bounded time.
+    calls = []
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(ai_extractor.anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(ai_extractor, "_client", None)
+
+    ai_extractor._get_client()
+
+    assert calls[0]["timeout"] == ai_extractor.REQUEST_TIMEOUT
+    assert calls[0]["max_retries"] == ai_extractor.MAX_RETRIES
 
 
 def test_build_context_text_combines_paragraphs_and_tables_from_both_docs():
@@ -100,6 +120,23 @@ def test_extract_missing_fields_client_error_returns_empty_dict(monkeypatch):
     result = ai_extractor.extract_missing_fields(["general_contractor"], "текст")
 
     assert result == {}
+
+
+def test_extract_missing_fields_logs_the_classified_failure_reason(monkeypatch, caplog):
+    # Any failure used to be one indistinguishable "AI extractor fallback
+    # failed" line — no way to tell an unresolvable key apart from a plain
+    # network error by reading the log.
+    monkeypatch.setattr(ai_extractor, "_get_client", lambda: _RaisingClient())
+    # create_app() configures the "app" logger with propagate=False (so
+    # requests aren't also printed to the console via the root logger) —
+    # caplog's own handler lives on the root logger, so once some earlier
+    # test in the run has called create_app(), it has to be let through here.
+    monkeypatch.setattr(logging.getLogger("app"), "propagate", True)
+
+    with caplog.at_level("ERROR", logger="app.ai_extractor"):
+        ai_extractor.extract_missing_fields(["general_contractor"], "текст")
+
+    assert ai_extractor.PROBLEM_API_ERROR in caplog.text
 
 
 def test_extract_missing_fields_malformed_json_returns_empty_dict(monkeypatch):
