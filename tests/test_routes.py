@@ -1315,6 +1315,7 @@ def _offer_with_facade_quantity(area_m2):
     ws.cell(row=11, column=7, value="м2")
     ws.cell(row=11, column=12, value=1)
 
+    ws.cell(row=12, column=3, value="Устройство облицовки фасада")
     ws.cell(row=12, column=4, value="Панель навесного фасада")
     ws.cell(row=12, column=7, value="м2")
     ws.cell(row=12, column=10, value=area_m2)
@@ -1354,6 +1355,7 @@ def _offer_with_concrete_and_facade_quantity(volume_m3, area_m2):
     ws.cell(row=13, column=4, value="Устройство фасадов")
     ws.cell(row=13, column=7, value="м2")
     ws.cell(row=13, column=12, value=1)
+    ws.cell(row=14, column=3, value="Устройство облицовки фасада")
     ws.cell(row=14, column=4, value="Панель навесного фасада")
     ws.cell(row=14, column=7, value="м2")
     ws.cell(row=14, column=10, value=area_m2)

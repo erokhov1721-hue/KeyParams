@@ -558,26 +558,19 @@ def _is_area_unit(text):
     return normalized in ("м2", "m2")
 
 
-def _quantity_by_category(path, category_key, is_matching_unit, name_contains=None):
+def _quantity_by_category(path, category_key, is_matching_unit):
     """The proposed quantity summed under the top-level section(s) that
     classify as ``category_key``, restricted to lines whose own unit passes
-    ``is_matching_unit`` and, if given, whose own name contains
-    ``name_contains`` (matched lowercase). Tried as an offer first
-    ("Предлагаемое количество") and, failing that, as a levels estimate
-    ("количество") — the same two shapes ``read_sections`` already reads
-    cost from.
+    ``is_matching_unit``. Tried as an offer first ("Предлагаемое
+    количество") and, failing that, as a levels estimate ("количество") —
+    the same two shapes ``read_sections`` already reads cost from.
 
     Unlike cost, a quantity is never rolled up onto a section's own row —
     only the line items underneath it carry one — so this adds up every
     matching quantity between the section's row and the next top-level
     section, at any depth below it. Other kinds of work sometimes sit inside
     the same section (metalwork priced in tonnes inside "Возведение несущих
-    конструкций", say), so a line only counts where its own unit matches —
-    and where a section quotes the same area more than once, layer by layer
-    (a facade's substructure, insulation and cladding panels are each given
-    their own line at the same square metres), ``name_contains`` narrows it
-    to the one layer that stands for the area, so the others aren't added on
-    top of it.
+    конструкций", say), so a line only counts where its own unit matches.
 
     None where the workbook isn't laid out as either shape of sectioned
     estimate, has no quantity column, or has no section that classifies as
@@ -586,15 +579,11 @@ def _quantity_by_category(path, category_key, is_matching_unit, name_contains=No
     """
     path = Path(path)
     for ws in _checked_sheets(path):
-        value = _quantity_by_category_from_sheet(
-            ws, category_key, is_matching_unit, name_contains,
-        )
+        value = _quantity_by_category_from_sheet(ws, category_key, is_matching_unit)
         if value is None:
             # Не смета-оффер — попробовать как укрупнённую, с колонками
             # «номер N»/«уровень N» вместо одной колонки «№ раздела».
-            value = _quantity_from_levels_sheet(
-                ws, category_key, is_matching_unit, name_contains,
-            )
+            value = _quantity_from_levels_sheet(ws, category_key, is_matching_unit, None)
         if value is not None:
             return value
     return None
@@ -706,89 +695,13 @@ def _section_row_ranges(ws, header, category_key):
     return ranges
 
 
-def _section_has_marker(ws, header, category_key, marker):
-    """Whether any line under this header's ``category_key`` section(s)
-    names ``marker`` — used to tell apart estimate shapes that need
-    different rules for the same quantity."""
-    for row, end in _section_row_ranges(ws, header, category_key):
-        for r in range(row, end):
-            for col in (header.article_col, header.name_col):
-                if col and marker in _cell_text(ws, r, col):
-                    return True
-    return False
+# A numbered row at any depth ("6", "6.3", "6.3.3", ...) — a section or
+# sub-section of its own, as opposed to a leaf line item, which carries no
+# number in this column at all.
+_NUMBERED_ROW_RE = re.compile(r"^\d+(\.\d+)*$")
 
 
-# A one-level-deep sub-section number ("6.1", "6.2", ...) — the level at
-# which a facade estimate usually names its own components (glazing,
-# cladding, plaster, ...), one below the top-level section itself.
-SUBSECTION_RE = re.compile(r"^\d+\.\d+$")
-
-
-def _named_subsection_ranges(ws, header, ranges):
-    """(row, name, end) for every one-level-deep sub-section inside the
-    given top-level ranges, each bounded by the next sub-section at the same
-    level (or by the end of its own top-level range)."""
-    subs = []
-    for start, end in ranges:
-        rows_in_range = []
-        for row in range(start + 1, end):
-            number = ws.cell(row=row, column=header.section_col).value
-            if number is None or not SUBSECTION_RE.match(str(number).strip()):
-                continue
-            name = _named(ws.cell(row=row, column=header.article_col).value) or _named(
-                ws.cell(row=row, column=header.name_col).value if header.name_col else None
-            )
-            rows_in_range.append((row, name))
-        for i, (row, name) in enumerate(rows_in_range):
-            sub_end = rows_in_range[i + 1][0] if i + 1 < len(rows_in_range) else end
-            subs.append((row, name, sub_end))
-    return subs
-
-
-def _quantity_in_named_subsections(
-    ws, header, ranges, is_matching_unit, include_markers, exclude_leaf=None,
-):
-    """The quantity summed under every one-level-deep sub-section whose own
-    name carries one of ``include_markers`` — every square-metre line below
-    it, at any depth, except ones whose own name carries ``exclude_leaf``.
-
-    None if the section carries no sub-section matching ``include_markers``
-    at all; 0.0 is a real answer (a matching sub-section with nothing under
-    it), so the two must stay distinguishable.
-    """
-    qty_col = _find_qty_column(ws, header.row)
-    if qty_col is None:
-        return None
-    unit_col = _find_unit_column(ws, header.row)
-
-    matched = False
-    total = 0.0
-    for row, name, end in _named_subsection_ranges(ws, header, ranges):
-        text = (name or "").lower()
-        if not any(marker in text for marker in include_markers):
-            continue
-        matched = True
-        for r in range(row + 1, end):
-            qty = ws.amount_at(r, qty_col)
-            if qty is None:
-                continue
-            if unit_col and not is_matching_unit(_cell_text(ws, r, unit_col)):
-                continue
-            if exclude_leaf:
-                leaf_name = _named(ws.cell(row=r, column=header.article_col).value) or _named(
-                    ws.cell(row=r, column=header.name_col).value if header.name_col else None
-                )
-                leaf_text = leaf_name.lower() if leaf_name else ""
-                if any(token in leaf_text for token in exclude_leaf):
-                    continue
-            total += qty
-
-    return total if matched else None
-
-
-def _quantity_by_category_from_sheet(
-    ws, category_key, is_matching_unit, name_contains=None, exclude_contains=None,
-):
+def _quantity_by_category_from_sheet(ws, category_key, is_matching_unit):
     header = _find_header(ws)
     if header is None:
         return None
@@ -809,15 +722,6 @@ def _quantity_by_category_from_sheet(
                 continue
             if unit_col and not is_matching_unit(_cell_text(ws, r, unit_col)):
                 continue
-            if name_contains is not None or exclude_contains is not None:
-                leaf_name = _named(ws.cell(row=r, column=header.article_col).value) or _named(
-                    ws.cell(row=r, column=header.name_col).value if header.name_col else None
-                )
-                text = leaf_name.lower() if leaf_name else ""
-                if name_contains is not None and name_contains not in text:
-                    continue
-                if exclude_contains is not None and any(token in text for token in exclude_contains):
-                    continue
             total += qty
 
     return total
@@ -830,113 +734,117 @@ def read_concrete_volume(path):
     return _quantity_by_category(path, "concrete", _is_volume_unit)
 
 
-# A ventilated facade's own three layers — substructure, insulation, and (at
-# a plinth) the protective board under its facing — are quoted at the same
-# square metres as the facing that sits on top of them. The plain scenario
-# below keeps only the facing by matching "панел" in its name, which already
-# leaves out "подсистема"/"утеплитель" (neither carries the word) but not
-# "защитная панель" — so that one is excluded here by name, the same way the
-# glazing scenario further down excludes its own duplicate layers.
-FACADE_LAYER_EXCLUDE = ("подсистема", "утеплитель", "защитная панель")
-
-# A facade section that also prices light-transmitting structures ("Свето-
-# прозрачные конструкции" — windows, curtain walls) can leave the plain
-# scenario with nothing at all: its glazing lines carry no "панель" word of
-# their own, and its cladding is sometimes named "кассеты" rather than
-# "панель" either, so the plain scenario's total comes out at 0 once
-# ``FACADE_LAYER_EXCLUDE`` has ruled out the false "Защитная панель" match
-# that would otherwise stand in for it. Only then — a glazing section found,
-# and the plain scenario empty-handed in it — is the area read the other way:
-# summing every square-metre line under the section instead of hunting for
-# one particular word. An object whose plain scenario already finds a real
-# cladding line (a "Панели из стеклофибробетона", say) is read exactly as
-# before: this is an addition for the shape the plain scenario can't read at
-# all, not a replacement for it.
-FACADE_GLAZING_MARKER = "светопрозрачн"
-
-# Elements a glazing estimate counts in square metres alongside the glazing
-# itself but that aren't the facade's own area: a canopy over an entrance, an
-# aluminium cap along the top of a parapet, the soffit lining under an arch
-# or entrance.
-FACADE_DECOR_EXCLUDE = (
-    "козырьк", "покрытие парапета", "подшивка горизонтальных поверхностей",
+# The facade classifier's own axis (column "Статья СМР") — the one place
+# formulations agree word for word between estimates, unlike the free-text
+# works name a person types by hand. Each facade type prices its own area
+# on exactly one classifier position; its neighbours in the same type price
+# a different layer at the same square metres (substructure, insulation,
+# frame) and must not be added to it. Matched by the numeric code when an
+# estimate states it, and by the position's own wording otherwise.
+#
+#   Тип фасада                     Площадь несёт              Не сюда (тот же тип)
+#   Светопрозрачные (6.1, 6.2)     6.1.2/6.2.2 заполнение      6.1.1/6.2.1 профильная система
+#   Навесной (6.3, 6.4)            6.3.3/6.4.3 облицовка       6.3.1/6.4.1 подсистема, .2 утеплитель
+#   Модульный (6.5)                6.5.2 заполнение модуля     6.5.1 кронштейны, 6.5.3 прочее
+#   Мокрый (6.7)                   6.7.2 штукатурка по сетке   6.7.1 утеплитель, 6.7.3 окраска
+#   Реставрация (6.8, 6.9)         6.8.4 / 6.9.3 воссоздание   демонтаж, кладка, декор, навесы
+#
+# "профильная система" alone is deliberately not matched: bare, it's the
+# translucent type's own excluded frame layer (6.1.1/6.2.1); only paired
+# with "заполнение модуля" does it name the modular type's area, and that
+# combination is already covered by the modular phrase below on its own.
+FACADE_AREA_CODE_RE = re.compile(r"\b6\.(1\.2|2\.2|3\.3|4\.3|5\.2|7\.2|8\.4|9\.3)\b")
+FACADE_AREA_PHRASES = (
+    "устройство заполнения",
+    "устройство облицовки",
+    "заполнение модуля",
+    "декоративная штукатурка",
+    "воссоздание штукатурного фасада",
 )
 
-# A third estimate shape names its own facade components at the sub-section
-# level instead of on individual lines — no "панель" line anywhere, and no
-# single word marking the finish either, just sub-sections called "Устройство
-# облицовки фасада", "Штукатурный фасад" and the like. ``FACADE_NAMED_MARKER``
-# is specific to this shape (unlike ``FACADE_GLAZING_MARKER``, which a
-# "панел"-scenario estimate can carry too) and is checked first, ahead of
-# both other scenarios.
-FACADE_NAMED_CLADDING_MARKER = "устройство облицовки фасада"
 
-# Sub-sections read whole once this shape is detected: the glazing component
-# (``FACADE_GLAZING_MARKER``'s own wording, including a misspelling this
-# module has seen for real — "Сетопрозрачные" — hence matching on the tail
-# "прозрачные конструкции" rather than the word "свето"), the cladding
-# itself, the plastered part, and the grilles/screens that sit alongside it.
-FACADE_NAMED_INCLUDE = (
-    "прозрачные конструкции", FACADE_NAMED_CLADDING_MARKER, "штукатурный фасад",
-    "вентиляционные, декоративные решетки", "вентиляционные и декоративные решетки",
-)
+def _names_facade_area(article_text):
+    text = (article_text or "").strip().lower()
+    if not text:
+        return False
+    if FACADE_AREA_CODE_RE.search(text):
+        return True
+    if "воссоздание" in text and ("светопрозрачн" in text or "остеклен" in text):
+        return True
+    return any(phrase in text for phrase in FACADE_AREA_PHRASES)
 
-# Cantilevered glass canopies quoted in square metres inside the glazing
-# sub-section, but not themselves facade area.
-FACADE_NAMED_LEAF_EXCLUDE = ("стеклянные консольные козырьки",)
+
+def _facade_area_by_article(ws, header, ranges):
+    """The facade area from rows whose "Статья СМР" names an
+    area-bearing layer (``_names_facade_area``), or None if the article
+    column names one nowhere in the section — asking to be filled in by
+    hand rather than guessed at from a free-text works name that means
+    something different in every estimate.
+
+    A row that is itself numbered (a section or sub-section, not a leaf)
+    is preferred over its own leaves: where the classifier is filled, it
+    is usually filled on the свод, which then already states the figure
+    whole rather than as parts still to be summed and at risk of double
+    counting a rollup against its own breakdown.
+    """
+    if header.article_col is None:
+        return None
+    qty_col = _find_qty_column(ws, header.row)
+    if qty_col is None:
+        return None
+    unit_col = _find_unit_column(ws, header.row)
+
+    rollup_total = 0.0
+    rollup_matched = False
+    leaf_total = 0.0
+    leaf_matched = False
+    for start, end in ranges:
+        for r in range(start + 1, end):
+            if not _names_facade_area(_cell_text(ws, r, header.article_col)):
+                continue
+            qty = ws.amount_at(r, qty_col)
+            if qty is None:
+                continue
+            if unit_col and not _is_area_unit(_cell_text(ws, r, unit_col)):
+                continue
+            number = ws.cell(row=r, column=header.section_col).value
+            is_rollup = number is not None and _NUMBERED_ROW_RE.match(str(number).strip())
+            if is_rollup:
+                rollup_total += qty
+                rollup_matched = True
+            else:
+                leaf_total += qty
+                leaf_matched = True
+
+    if rollup_matched:
+        return rollup_total
+    if leaf_matched:
+        return leaf_total
+    return None
 
 
 def read_facade_area(path):
-    """The proposed facade area, in m² — the "Предлагаемое количество" under
-    the estimate's facade section (any section whose name carries "фасад"),
-    the same section whose cost is the report's "facade" line.
+    """The proposed facade area, in m² — read from the "Статья СМР"
+    classifier column under the estimate's facade section (any section
+    whose name carries "фасад"), the same section whose cost is the
+    report's "facade" line. See ``_facade_area_by_article`` and the map
+    above it for how a row is told to carry the area or not.
 
-    Three estimate shapes are told apart, most specific first:
+    None where the classifier names no area-bearing layer anywhere in the
+    section: a free-text works name is a person's own wording and not a
+    safe basis to guess a layer from — the facade area field on the
+    passport exists precisely for this case, to be filled in by hand.
 
-    - One names its own components at the sub-section level rather than on
-      individual lines (``FACADE_NAMED_CLADDING_MARKER``), and is read by
-      summing every square-metre line under the sub-sections named in
-      ``FACADE_NAMED_INCLUDE``, minus ``FACADE_NAMED_LEAF_EXCLUDE``.
-    - Otherwise, lines naming a cladding panel ("панел..."), minus
-      ``FACADE_LAYER_EXCLUDE``, stand for the area: a ventilated facade
-      quotes the same area three times over — the substructure, the
-      insulation, and the panel that finishes it — and adding all three (or
-      latching onto an unrelated "Защитная панель") would misstate it.
-    - Where that leaves a facade section carrying a glazing component
-      (``FACADE_GLAZING_MARKER``) with nothing found at all, the area is
-      read the other way instead: every square-metre line under the
-      section, minus the same layer duplicates and minus lines that carry
-      square metres without being facade area at all
-      (``FACADE_DECOR_EXCLUDE``).
-
-    See the constants above for why each scenario excludes what it does.
+    The levels-estimate shape ("укрупнённая смета") carries no "Статья
+    СМР" column of its own; its facade section is still read by summing
+    every square-metre leaf under it, the same as before.
     """
     path = Path(path)
     for ws in _checked_sheets(path):
         header = _find_header(ws)
         if header is not None:
             ranges = _section_row_ranges(ws, header, "facade")
-        else:
-            ranges = []
-        if ranges and _section_has_marker(
-            ws, header, "facade", FACADE_NAMED_CLADDING_MARKER,
-        ):
-            value = _quantity_in_named_subsections(
-                ws, header, ranges, _is_area_unit,
-                FACADE_NAMED_INCLUDE, exclude_leaf=FACADE_NAMED_LEAF_EXCLUDE,
-            )
-        elif header is not None:
-            value = _quantity_by_category_from_sheet(
-                ws, "facade", _is_area_unit,
-                name_contains="панел", exclude_contains=FACADE_LAYER_EXCLUDE,
-            )
-            if value == 0.0 and _section_has_marker(
-                ws, header, "facade", FACADE_GLAZING_MARKER,
-            ):
-                value = _quantity_by_category_from_sheet(
-                    ws, "facade", _is_area_unit,
-                    exclude_contains=FACADE_LAYER_EXCLUDE + FACADE_DECOR_EXCLUDE,
-                )
+            value = _facade_area_by_article(ws, header, ranges) if ranges else None
         else:
             value = None
         if value is None:
