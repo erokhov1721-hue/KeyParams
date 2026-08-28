@@ -7,6 +7,7 @@ from openpyxl.styles.colors import COLOR_INDEX
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
+from . import workbook_cache
 from .passport import format_number
 
 DEFAULT_COLUMN_WIDTH = 8.43  # Excel's own default column width, in characters.
@@ -66,17 +67,27 @@ def read_estimate(path) -> list:
     """
     path = Path(path)
     try:
-        # Read into memory once and open two independent BytesIO views on
-        # it, rather than handing openpyxl the path directly: a workbook
-        # that fails to load partway through (a zip missing its manifest,
-        # say) leaves openpyxl's own archive reader without ever closing
-        # it, and on Windows that keeps the file locked — the caller's own
-        # cleanup of a rejected upload then fails with "file in use" on
-        # top of the read error it was already reporting. A BytesIO has no
-        # OS file handle to leak, so there is nothing left open either way.
-        data = path.read_bytes()
-        wb_styles = openpyxl.load_workbook(BytesIO(data), data_only=False)
-        wb_values = openpyxl.load_workbook(BytesIO(data), data_only=True)
+        # Checked against the cache first: a project page also reads this
+        # same file for its concrete volume, facade area and section costs
+        # (app.estimate_sections), and re-parsing it again here for the
+        # render was most of what made the page slow.
+        wb_styles = workbook_cache.get(path, data_only=False)
+        wb_values = workbook_cache.get(path, data_only=True)
+        if wb_styles is None or wb_values is None:
+            # Read into memory once and open two independent BytesIO views
+            # on it, rather than handing openpyxl the path directly: a
+            # workbook that fails to load partway through (a zip missing
+            # its manifest, say) leaves openpyxl's own archive reader
+            # without ever closing it, and on Windows that keeps the file
+            # locked — the caller's own cleanup of a rejected upload then
+            # fails with "file in use" on top of the read error it was
+            # already reporting. A BytesIO has no OS file handle to leak,
+            # so there is nothing left open either way.
+            data = path.read_bytes()
+            wb_styles = openpyxl.load_workbook(BytesIO(data), data_only=False)
+            wb_values = openpyxl.load_workbook(BytesIO(data), data_only=True)
+            workbook_cache.put(path, False, wb_styles)
+            workbook_cache.put(path, True, wb_values)
     except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError, OSError) as e:
         raise EstimateReadError(f"Cannot read {path}: {e}") from e
 

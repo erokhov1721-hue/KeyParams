@@ -1,7 +1,23 @@
 import os
+from pathlib import Path
 
 import pytest
 from app import storage
+
+
+class _FakeUpload:
+    """Stands in for Werkzeug's FileStorage, whose ``.save(dest)`` is the
+    only thing these tests need — including one that fails partway, the
+    way a full disk or an interrupted upload would."""
+
+    def __init__(self, data, fail=False):
+        self._data = data
+        self._fail = fail
+
+    def save(self, dest):
+        if self._fail:
+            raise OSError("disk full")
+        Path(dest).write_bytes(self._data)
 
 
 def test_slugify_replaces_spaces():
@@ -160,3 +176,46 @@ def test_purge_deleted_leaves_a_half_created_project_alone(tmp_path):
 def test_raw_dir_and_passport_path(tmp_path):
     assert storage.raw_dir(tmp_path, "mira") == tmp_path / "mira" / "raw"
     assert storage.passport_path(tmp_path, "mira") == tmp_path / "mira" / "passport.json"
+
+
+# --- save_upload: writing an upload atomically ------------------------------
+
+def test_save_upload_writes_the_file_and_leaves_no_temporary_sibling(tmp_path):
+    dest = tmp_path / "protocol.pdf"
+    storage.save_upload(_FakeUpload(b"new"), dest)
+    assert dest.read_bytes() == b"new"
+    assert list(tmp_path.iterdir()) == [dest]
+
+
+def test_save_upload_leaves_the_previous_file_intact_when_the_write_fails(tmp_path):
+    # A crash or a full disk partway through the write must not destroy a
+    # working file with nothing to restore it from.
+    dest = tmp_path / "protocol.pdf"
+    dest.write_bytes(b"old")
+
+    with pytest.raises(OSError):
+        storage.save_upload(_FakeUpload(b"new", fail=True), dest)
+
+    assert dest.read_bytes() == b"old"
+
+
+def test_save_cover_removes_a_previous_cover_of_a_different_extension(tmp_path):
+    slug = storage.create_project(tmp_path, "Мира")
+    directory = storage.project_dir(tmp_path, slug)
+    (directory / "cover.png").write_bytes(b"old")
+
+    storage.save_cover(tmp_path, slug, _FakeUpload(b"new"), ".jpg")
+
+    assert not (directory / "cover.png").exists()
+    assert (directory / "cover.jpg").read_bytes() == b"new"
+
+
+def test_save_cover_keeps_the_previous_cover_when_the_write_fails(tmp_path):
+    slug = storage.create_project(tmp_path, "Мира")
+    directory = storage.project_dir(tmp_path, slug)
+    (directory / "cover.jpg").write_bytes(b"old")
+
+    with pytest.raises(OSError):
+        storage.save_cover(tmp_path, slug, _FakeUpload(b"new", fail=True), ".jpg")
+
+    assert (directory / "cover.jpg").read_bytes() == b"old"

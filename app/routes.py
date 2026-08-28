@@ -11,6 +11,7 @@ from flask import (
 from . import (
     comparison, cost_increase, estimate, estimate_sections, excel_report, extractors,
     passport as passport_module, pdf_export, project_filter, storage, upload_guard,
+    workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -675,7 +676,7 @@ def upload_contract_terms(slug):
         abort(400)
 
     dest = storage.contract_terms_path(root, slug)
-    pdf_file.save(dest)
+    storage.save_upload(pdf_file, dest)
 
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
@@ -833,6 +834,10 @@ def upload_estimate(slug):
         return refuse("unreadable")
 
     tmp.replace(dest)
+    # (path, mtime, size) alone could in principle still match the estimate
+    # this just replaced; dropping the cache outright is what actually
+    # guarantees the next read reflects the new file, not a coincidence.
+    workbook_cache.invalidate(dest)
     return redirect(url_for("main.project_page", slug=slug))
 
 

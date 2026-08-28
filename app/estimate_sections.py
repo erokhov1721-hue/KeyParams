@@ -17,9 +17,7 @@ import re
 from collections import namedtuple
 from pathlib import Path
 
-import openpyxl
-
-from . import extractors
+from . import extractors, workbook_cache
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +167,12 @@ def _checked_sheets(path, error_type=None):
     try:
         # Not read_only: the header spans merged cells, and a streaming
         # worksheet doesn't carry the merges needed to tell the two
-        # cost blocks apart.
-        wb = openpyxl.load_workbook(path, data_only=True)
-        wb_formulas = openpyxl.load_workbook(path, data_only=False)
+        # cost blocks apart. Cached per (path, mtime, size): a project page
+        # reads this same file several times over (concrete volume, facade
+        # area, section costs), and re-parsing it from disk every time was
+        # the single most expensive thing the page did.
+        wb = workbook_cache.get_or_load(path, data_only=True)
+        wb_formulas = workbook_cache.get_or_load(path, data_only=False)
     except Exception as e:
         raise error_type(f"Cannot read {path}: {e}") from e
     return [
@@ -590,37 +591,79 @@ def _quantity_by_category(path, category_key, is_matching_unit, name_contains=No
 def _quantity_from_levels_sheet(ws, category_key, is_matching_unit, name_contains):
     """The levels-estimate counterpart of ``_quantity_by_category_from_sheet``.
 
-    Same rule as the offer: a quantity sits only on a leaf line, never on a
-    section or sub-section row, so summing every matching-unit quantity from
-    the section's first-level row to the next one double-counts nothing.
+    Unlike an offer, a "укрупнённая смета" can state a quantity on a section
+    or sub-section row itself as well as on the leaves underneath it — the
+    same "own figure, or the sum of its parts" shape ``_sections_from_levels``
+    already reads cost with. Summing every row regardless of level double- or
+    triple-counts wherever a rollup row states its own quantity on top of its
+    own breakdown: on the real sample this was written against, 159 342 m3
+    instead of the 39 835 m3 the section states on its own row.
     """
     header = _find_levels_header(ws)
     if header is None or header.qty_col is None:
         return None
 
+    def own_qty(row, name):
+        if name_contains is not None and (name is None or name_contains not in name.lower()):
+            return None
+        qty = ws.amount_at(row, header.qty_col)
+        if qty is None:
+            return None
+        if header.unit_col and not is_matching_unit(_cell_text(ws, row, header.unit_col)):
+            return None
+        return qty
+
     matched = False
     in_section = False
-    total = 0.0
+    section_own = None
+    section_parts = 0.0
+    sub_open = False
+    sub_own = None
+    sub_parts = 0.0
+
+    def close_subsection():
+        nonlocal section_parts, sub_open, sub_own, sub_parts
+        if sub_open:
+            section_parts += sub_own if sub_own is not None else sub_parts
+        sub_open, sub_own, sub_parts = False, None, 0.0
+
+    def close_section():
+        nonlocal section_own, section_parts
+        close_subsection()
+        result = section_own if section_own is not None else section_parts
+        section_own, section_parts = None, 0.0
+        return result
+
+    total = None
     for row in range(header.row + 1, ws.max_row + 1):
         first = _named(ws.cell(row=row, column=header.first).value)
         if first:
+            if in_section:
+                total = close_section()
             in_section = classify(first) == category_key
             matched = matched or in_section
+            if in_section:
+                section_own = own_qty(row, first)
             continue
         if not in_section:
             continue
-        qty = ws.amount_at(row, header.qty_col)
+        second = _named(ws.cell(row=row, column=header.second).value)
+        if second:
+            close_subsection()
+            sub_own = own_qty(row, second)
+            sub_open = True
+            continue
+        third = _named(ws.cell(row=row, column=header.third).value) if header.third else None
+        qty = own_qty(row, third)
         if qty is None:
             continue
-        if header.unit_col and not is_matching_unit(_cell_text(ws, row, header.unit_col)):
-            continue
-        if name_contains is not None:
-            leaf_name = (
-                _named(ws.cell(row=row, column=header.third).value) if header.third else None
-            ) or _named(ws.cell(row=row, column=header.second).value)
-            if not leaf_name or name_contains not in leaf_name.lower():
-                continue
-        total += qty
+        if sub_open:
+            sub_parts += qty
+        else:
+            section_parts += qty
+
+    if in_section:
+        total = close_section()
 
     return total if matched else None
 

@@ -1,6 +1,7 @@
+import openpyxl
 from openpyxl import Workbook
 
-from app import estimate_sections
+from app import estimate_sections, workbook_cache
 
 
 def _offer(rows, *, header_row=9):
@@ -713,3 +714,64 @@ def test_facade_area_sums_leaf_quantities_in_a_levels_estimate(tmp_path):
     ]), tmp_path, "levels_qty.xlsx")
 
     assert estimate_sections.read_facade_area(path) == 6200.5
+
+
+# --- workbook_cache reuse ----------------------------------------------------
+
+def test_reading_concrete_then_facade_parses_the_file_only_once(tmp_path, monkeypatch):
+    # A project page reads this same file for its concrete volume, facade
+    # area and section costs — each used to open and parse it again from
+    # scratch, which was most of what made the page slow.
+    workbook_cache.clear()
+    path = _save(_offer_with_quantity([
+        (4, "4. Конструктивные решения", "Возведение несущих конструкций здания", None, "м3"),
+        (None, None, "Монолит", 200.0, "м3"),
+        (6, "6. Фасады", "Устройство фасадов", None, "м2"),
+        (None, None, "Панель фасадная", 100.0, "м2"),
+    ]), tmp_path)
+
+    calls = []
+    real_load = openpyxl.load_workbook
+
+    def counting_load(*args, **kwargs):
+        calls.append(kwargs.get("data_only"))
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(openpyxl, "load_workbook", counting_load)
+
+    assert estimate_sections.read_concrete_volume(path) == 200.0
+    assert estimate_sections.read_facade_area(path) == 100.0
+    assert estimate_sections.read_sections(path)
+
+    assert calls.count(True) == 1
+    assert calls.count(False) == 1
+
+
+def test_concrete_volume_in_a_levels_estimate_takes_a_sections_own_total_over_its_parts(tmp_path):
+    # A "укрупнённая смета" section can state its own quantity directly, the
+    # same way it can state its own cost (see _sections_from_levels). Summing
+    # the sub-sections underneath it on top of that overcounts — on the real
+    # sample this was written against, 159 342 m3 instead of the 39 835 m3
+    # the section states on its own row.
+    path = _save(_levels_estimate_with_quantity([
+        (1, 4, "Конструктивные решения", 39835.0, "м3"),
+        (2, "4.1.", "Подземная часть. Конструктивные решения", None, None),
+        (3, "4.1.1.", "Устройство фундаментной плиты", 60000.0, "м3"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_concrete_volume(path) == 39835.0
+
+
+def test_concrete_volume_in_a_levels_estimate_takes_a_subsections_own_total_over_its_leaves(tmp_path):
+    # Same rule one level down: a sub-section that states its own quantity is
+    # taken at its word, not added to the leaves listed underneath it.
+    path = _save(_levels_estimate_with_quantity([
+        (1, 4, "Конструктивные решения", None, None),
+        (2, "4.1.", "Подземная часть. Конструктивные решения", 100.0, "м3"),
+        (3, "4.1.1.", "Устройство фундаментной плиты", 40.0, "м3"),
+        (3, "4.1.2.", "Горизонтальные конструкции подземной части", 40.0, "м3"),
+        (2, "4.2.", "Надземная часть. Конструктивные решения", None, None),
+        (3, "4.2.1.", "Горизонтальные конструкции надземной части", 50.0, "м3"),
+    ]), tmp_path, "levels_qty.xlsx")
+
+    assert estimate_sections.read_concrete_volume(path) == 100.0 + 50.0

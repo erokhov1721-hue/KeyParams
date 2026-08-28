@@ -1,3 +1,5 @@
+import pytest
+
 from app import ai_extractor, ocr, passport
 from tests.helpers import document_xml, make_docx, words_from_text
 
@@ -320,6 +322,34 @@ def test_save_passport_writes_readable_utf8(tmp_path):
     passport.save_passport(data, path)
     text = path.read_text(encoding="utf-8")
     assert "Проспект Мира" in text
+
+
+def test_save_passport_leaves_no_temporary_file_behind(tmp_path):
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "Мира"}, path)
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_save_passport_failure_midway_leaves_the_previous_file_intact(tmp_path, monkeypatch):
+    # A crash or a full disk partway through the write must not leave a
+    # truncated, unreadable passport.json in place of a working one.
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "Старый"}, path)
+
+    from pathlib import Path
+    real_write_text = Path.write_text
+
+    def failing_write_text(self, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            raise OSError("disk full")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_write_text)
+
+    with pytest.raises(OSError):
+        passport.save_passport({"project_name": "Новый"}, path)
+
+    assert passport.load_passport(path)["project_name"] == "Старый"
 
 
 def test_build_passport_easyocr_disabled_by_default(tmp_path, monkeypatch):

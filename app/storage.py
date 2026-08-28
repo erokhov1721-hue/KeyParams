@@ -79,14 +79,24 @@ def cover_path(root: Path, slug: str) -> Path | None:
     return None
 
 
+def save_upload(file_storage, dest: Path) -> None:
+    """Write an upload to ``dest`` atomically: saved to a sibling temporary
+    file first, and only swapped into place once that succeeds — a write
+    that fails partway (a full disk, an interrupted upload) then raises
+    with ``dest`` still holding whatever was there before, rather than a
+    truncated file with nothing to restore it from."""
+    tmp = dest.with_name(dest.name + ".upload")
+    file_storage.save(tmp)
+    tmp.replace(dest)
+
+
 def save_cover(root: Path, slug: str, file_storage, ext: str) -> Path:
     directory = project_dir(root, slug)
-    for existing_ext in COVER_EXTENSIONS:
-        existing = directory / f"cover{existing_ext}"
-        if existing.exists():
-            existing.unlink()
     dest = directory / f"cover{ext}"
-    file_storage.save(dest)
+    save_upload(file_storage, dest)
+    for existing_ext in COVER_EXTENSIONS:
+        if existing_ext != ext:
+            (directory / f"cover{existing_ext}").unlink(missing_ok=True)
     return dest
 
 

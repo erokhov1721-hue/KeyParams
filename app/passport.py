@@ -407,10 +407,14 @@ def _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz):
 
 
 def save_passport(passport_data: dict, path: Path) -> None:
-    path.write_text(
-        json.dumps(passport_data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    # Written to a sibling temp file and swapped in with os.replace() rather
+    # than written straight to path: a crash or a full disk mid-write must
+    # not leave a truncated, unreadable passport.json in place of a working
+    # one.
+    text = json.dumps(passport_data, ensure_ascii=False, indent=2)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def price_per_sqm(data: dict):
