@@ -50,7 +50,7 @@
     </a>
     {# Фото объекта правится на общем списке: здесь выбирают, что с чем
        сравнить, и лишняя кнопка в строке этому только мешает. #}
-    {% with name=project_names[slug], index=loop.index0, back='select', with_cover=false %}
+    {% with name=project_names[slug], version=project_versions[slug], index=loop.index0, back='select', with_cover=false %}
     {% include "_project_row_actions.html" %}
     {% endwith %}
   </div>

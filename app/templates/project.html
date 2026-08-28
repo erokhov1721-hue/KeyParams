@@ -43,6 +43,13 @@
   <div class="object-main-col">
     {# Как и предупреждения по протоколу и удорожанию ниже — снаружи
        гармошки: внутри закрытой панели его бы никто не прочитал. #}
+    {% if request.args.get('conflict') %}
+    <div class="alert alert-error">
+      Кто-то другой уже изменил эти данные, пока эта страница была открыта —
+      правка не сохранена, чтобы не стереть чужую. Обновите страницу и
+      попробуйте снова.
+    </div>
+    {% endif %}
     {% if dgp_problem %}
     <div class="alert alert-error">ДГП: {{ dgp_problem }}</div>
     {% endif %}
@@ -56,6 +63,7 @@
       <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_project', slug=slug) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           <div class="fields-card">
             {% for field in fields %}
               {% if field != "project_name" %}
@@ -107,6 +115,7 @@
               action="{{ url_for('main.upload_dgp', slug=slug) }}" enctype="multipart/form-data"
               data-confirm="Заменить ДГП? Поля паспорта выше будут пересобраны заново из нового файла — включая те, что были поправлены вручную.">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           <label class="contract-replace-link" for="dgp-input">Заменить ДГП</label>
           <input class="file-input" type="file" id="dgp-input" name="dgp_file" accept=".docx">
         </form>
@@ -130,6 +139,7 @@
         {% if has_contract_terms %}
         <form method="post" action="{{ url_for('main.update_contract_terms', slug=slug) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           <div class="fields-card">
             {% for field in contract_fields %}
             {% set value = passport[field] %}
@@ -152,6 +162,7 @@
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           <label class="contract-replace-link" for="contract-terms-input">Заменить файл протокола (PDF)</label>
           <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
         </form>
@@ -159,6 +170,7 @@
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           <label class="file-drop" for="contract-terms-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
@@ -406,6 +418,7 @@
       <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_manual_coefficients', slug=slug) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
           {% if manual_coefficients_date %}
           <p class="field-hint">Ручные значения введены {{ manual_coefficients_date }}.</p>
           {% endif %}

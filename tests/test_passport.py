@@ -305,6 +305,7 @@ def test_save_and_load_passport_roundtrip(tmp_path):
     data = {field: None for field in fields}
     data["project_name"] = "Проспект Мира"
     data["general_contractor"] = "ООО «АНТТЕК»"
+    data["version"] = 0
     path = tmp_path / "passport.json"
     passport.save_passport(data, path)
     loaded = passport.load_passport(path)
@@ -331,6 +332,60 @@ def test_load_passport_backfills_missing_field_from_older_save(tmp_path):
     passport.save_passport({"project_name": "Старый проект"}, path)
     loaded = passport.load_passport(path)
     assert loaded["contract_price_rub"] is None
+
+
+# --- concurrent-edit protection (version) ---
+
+def test_a_passport_saved_before_version_existed_backfills_to_zero(tmp_path):
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "Старый проект"}, path)
+    assert passport.load_passport(path)["version"] is not None
+    assert passport.load_passport(path)["version"] == 0
+
+
+def test_save_passport_checked_bumps_the_version(tmp_path):
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "П"}, path)
+    data = passport.load_passport(path)
+
+    passport.save_passport_checked(data, path, expected_version=data["version"])
+
+    assert passport.load_passport(path)["version"] == 1
+
+
+def test_save_passport_checked_accepts_a_brand_new_file(tmp_path):
+    # A file that doesn't exist yet has no version to conflict with —
+    # expected_version=0 (what load_passport would backfill on a fresh
+    # read) must be accepted rather than treated as a stale read.
+    path = tmp_path / "passport.json"
+    passport.save_passport_checked({"project_name": "П"}, path, expected_version=0)
+    assert passport.load_passport(path)["version"] == 1
+
+
+def test_save_passport_checked_rejects_a_stale_version(tmp_path):
+    # Two edits open on the same passport: the first save moves the file to
+    # version 1, and the second — still holding version 0 in its own copy
+    # of the data — must be refused rather than silently overwrite it.
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "П", "address": None}, path)
+    first_read = passport.load_passport(path)
+    second_read = passport.load_passport(path)
+
+    first_read["address"] = "Первая правка"
+    passport.save_passport_checked(first_read, path, expected_version=first_read["version"])
+
+    second_read["address"] = "Вторая правка, потеряна бы без проверки"
+    try:
+        passport.save_passport_checked(
+            second_read, path, expected_version=second_read["version"],
+        )
+    except passport.PassportConflictError:
+        pass
+    else:
+        raise AssertionError("устаревшая версия должна была быть отклонена")
+
+    # The first edit is still the one on disk — not silently overwritten.
+    assert passport.load_passport(path)["address"] == "Первая правка"
 
 
 def test_save_passport_writes_readable_utf8(tmp_path):

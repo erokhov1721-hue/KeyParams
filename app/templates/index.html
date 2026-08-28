@@ -27,7 +27,7 @@
         </svg>
       </span>
     </a>
-    {% with name=project_names[slug], index=loop.index0, back='', with_cover=true %}
+    {% with name=project_names[slug], version=project_versions[slug], index=loop.index0, back='', with_cover=true %}
     {% include "_project_row_actions.html" %}
     {% endwith %}
   </div>

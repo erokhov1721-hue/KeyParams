@@ -219,6 +219,77 @@ def test_update_project_saves_manual_field(tmp_path):
     assert saved["aboveground_area_sqm"] == 2000.0
 
 
+def test_a_second_edit_from_a_stale_version_is_refused(tmp_path):
+    # Two tabs open on the same project, both loaded at version 0: the
+    # first save wins and moves it to version 1, and the second — still
+    # holding version 0 in the form it submits — must be refused rather
+    # than silently overwrite it with nothing to show it ever happened.
+    from app import passport, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СПравкой")
+
+    first = client.post(f"/projects/{slug}", data={
+        "version": "0", "general_contractor": "Первая правка",
+    })
+    assert first.status_code == 302
+    assert "conflict" not in first.headers["Location"]
+
+    second = client.post(f"/projects/{slug}", data={
+        "version": "0", "general_contractor": "Вторая правка — должна быть отклонена",
+    })
+    assert second.status_code == 302
+    assert "conflict=1" in second.headers["Location"]
+
+    saved = passport.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["general_contractor"] == "Первая правка"
+
+    body = client.get(second.headers["Location"]).get_data(as_text=True)
+    assert "Кто-то другой уже изменил" in body
+
+
+def test_the_page_carries_the_current_version_forward_after_a_save(tmp_path):
+    # Proves the template wiring, not just save_passport_checked itself: a
+    # real edit-reload-edit sequence through the actual rendered form must
+    # keep succeeding, not just the first one.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СВерсией")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert 'name="version" value="0"' in body
+
+    client.post(f"/projects/{slug}", data={"version": "0", "general_contractor": "А"})
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert 'name="version" value="1"' in body
+
+    second = client.post(f"/projects/{slug}", data={"version": "1", "general_contractor": "Б"})
+    assert "conflict" not in second.headers["Location"]
+
+
+def test_a_stale_manual_coefficients_edit_is_also_refused(tmp_path):
+    # Same protection on a different form — the version check lives in
+    # save_passport_checked, shared by every route that edits the passport.
+    from app import passport, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СКоэффициентами")
+
+    client.post(f"/projects/{slug}", data={"version": "0", "general_contractor": "Кто-то"})
+
+    resp = client.post(f"/projects/{slug}/manual-coefficients", data={
+        "version": "0", "rebar_coefficient_avg": "0.15",
+        "facade_area_manual": "", "concrete_volume_manual": "",
+    })
+
+    assert "conflict=1" in resp.headers["Location"]
+    saved = passport.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["rebar_coefficient_avg"] is None
+
+
 def test_update_project_rejects_a_negative_area(tmp_path):
     # A negative area isn't a typo the parser should shrug off — it feeds
     # straight into ₽/м² math downstream, so accepting it either flips a
@@ -414,6 +485,26 @@ def test_rename_project_updates_name_and_redirects_to_index(tmp_path):
     assert resp.status_code == 200
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["project_name"] == "Новое имя"
+
+
+def test_a_stale_rename_is_refused_too(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Старое имя")
+    passport_module.save_passport(
+        {"project_name": "Старое имя"}, storage.passport_path(tmp_path, slug),
+    )
+    client.post(f"/projects/{slug}", data={"version": "0", "general_contractor": "Кто-то"})
+
+    resp = client.post(f"/projects/{slug}/rename", data={
+        "version": "0", "project_name": "Отклонённое имя",
+    })
+
+    assert "conflict=1" in resp.headers["Location"]
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["project_name"] == "Старое имя"
 
 
 def test_rename_project_rejects_empty_name(tmp_path):

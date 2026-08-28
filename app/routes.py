@@ -115,6 +115,11 @@ def _project_list_context(root):
             slug: passport.get("project_name") or slug
             for slug, passport in passports.items()
         },
+        # For the inline rename form's hidden version field — the row
+        # doesn't otherwise read anything else out of the passport.
+        "project_versions": {
+            slug: passport.get("version", 0) for slug, passport in passports.items()
+        },
         "filters": filters,
         "has_projects": bool(slugs),
     }
@@ -718,6 +723,7 @@ def upload_contract_terms(slug):
     tmp = dest.with_name(dest.name + ".upload")
     pdf_file.save(tmp)
 
+    expected_version = _expected_version()
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
     try:
@@ -735,7 +741,7 @@ def upload_contract_terms(slug):
     tmp.replace(dest)
     data.update(extracted)
     data["contract_auto_fields"] = filled
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     # A problem code travels back as a query parameter rather than a flash
     # message: flashing would need a SECRET_KEY, which this app doesn't set.
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
@@ -821,6 +827,7 @@ def upload_dgp(slug):
     if not tz.exists():
         abort(404)
 
+    expected_version = _expected_version()
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
 
@@ -840,7 +847,7 @@ def upload_dgp(slug):
 
     tmp.replace(dest)
     data.update(fresh)
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -900,6 +907,7 @@ def update_contract_terms(slug):
     if not path.exists():
         abort(404)
 
+    expected_version = _expected_version()
     data = passport_module.load_passport(path)
     auto_fields = list(data.get("contract_auto_fields", []))
     for field in passport_module.CONTRACT_FIELDS:
@@ -909,7 +917,7 @@ def update_contract_terms(slug):
         if new_value != old_value and field in auto_fields:
             auto_fields.remove(field)
     data["contract_auto_fields"] = auto_fields
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -932,6 +940,7 @@ def update_manual_coefficients(slug):
     if not path.exists():
         abort(404)
 
+    expected_version = _expected_version()
     data = passport_module.load_passport(path)
     for field in MANUAL_COEFFICIENT_FIELDS:
         raw_value = request.form.get(field, "").strip()
@@ -948,7 +957,7 @@ def update_manual_coefficients(slug):
         if any(data[field] is not None for field in MANUAL_COEFFICIENT_FIELDS)
         else None
     )
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -989,10 +998,11 @@ def rename_project(slug):
     new_name = request.form.get("project_name", "").strip()
     if not new_name:
         abort(400)
+    expected_version = _expected_version()
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
     data["project_name"] = new_name
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     return _back_to()
 
 
@@ -1005,6 +1015,21 @@ def _non_negative(value):
     return value if value is None or value >= 0 else None
 
 
+def _expected_version():
+    """The passport version the submitted form was rendered with —
+    save_passport_checked compares this against what's on disk now, so a
+    save built from a page that was already stale by the time it was
+    submitted is refused rather than silently overwriting a newer save.
+    Missing or unparseable defaults to 0: the version a passport never
+    saved through save_passport_checked before is backfilled to, so a
+    form genuinely missing the field only succeeds against an
+    untouched passport rather than clobbering one that has moved on."""
+    try:
+        return int(request.form.get("version", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 @bp.route("/projects/<slug>", methods=["POST"])
 def update_project(slug):
     root = _projects_root()
@@ -1013,6 +1038,7 @@ def update_project(slug):
     path = storage.passport_path(root, slug)
     if not path.exists():
         abort(404)
+    expected_version = _expected_version()
     data = passport_module.load_passport(path)
     ocr_fields = list(data.get("ocr_fields", []))
     ai_fields = list(data.get("ai_fields", []))
@@ -1034,7 +1060,7 @@ def update_project(slug):
             ai_fields.remove(field)
     data["ocr_fields"] = ocr_fields
     data["ai_fields"] = ai_fields
-    passport_module.save_passport(data, path)
+    passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1054,3 +1080,20 @@ def _passport_read_error(exc):
     slug = request.view_args.get("slug") if request.view_args else None
     current_app.logger.error("Паспорт проекта «%s» повреждён: %s", slug or "?", exc)
     return render_template("passport_broken.html", slug=slug), 500
+
+
+@bp.errorhandler(passport_module.PassportConflictError)
+def _passport_conflict_error(exc):
+    """One outcome for two edits landing on the same passport at once.
+
+    Every route that loads the passport, changes a field and saves it back
+    goes through save_passport_checked, which raises this instead of
+    silently overwriting a version newer than the one the edit started
+    from. Routed here rather than caught in each of those six routes
+    individually — the same reasoning as the read-error handler above.
+    """
+    slug = request.view_args.get("slug") if request.view_args else None
+    current_app.logger.warning("Конфликт правки паспорта «%s»: %s", slug or "?", exc)
+    if not slug:
+        return redirect(url_for("main.index"))
+    return redirect(url_for("main.project_page", slug=slug, conflict=1))

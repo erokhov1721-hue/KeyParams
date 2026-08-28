@@ -431,6 +431,41 @@ def save_passport(passport_data: dict, path: Path) -> None:
     tmp.replace(path)
 
 
+class PassportConflictError(Exception):
+    """Raised by ``save_passport_checked`` when the passport on disk has
+    moved since ``expected_version`` was read — a second edit landed
+    while this one was still open in a form, and saving it now would
+    silently throw the other one away with nothing to show it ever
+    happened."""
+
+
+def save_passport_checked(passport_data: dict, path: Path, expected_version: int) -> None:
+    """Like ``save_passport``, but refuses to overwrite a passport that
+    has changed since ``expected_version`` — the version this
+    ``passport_data`` was built from — was read; raises
+    ``PassportConflictError`` instead.
+
+    The filesystem gives no transaction across a read and a later write —
+    every route that loads the passport, changes a field, and saves it
+    back should go through this rather than ``save_passport`` directly,
+    so two edits open on the same project at once don't let the second
+    one to save quietly erase the first with no record either ever
+    existed. Plays the same role an HTTP ETag would on a PUT, just as an
+    integer counter instead, since nothing here needs to interoperate
+    with an actual ETag header.
+    """
+    if path.exists():
+        on_disk_version = load_passport(path).get("version", 0)
+        if on_disk_version != expected_version:
+            raise PassportConflictError(
+                f"Паспорт {path} изменился с версии {expected_version} "
+                f"(сейчас версия {on_disk_version}) — правка отклонена, "
+                "чтобы не потерять чужую."
+            )
+    passport_data["version"] = expected_version + 1
+    save_passport(passport_data, path)
+
+
 def price_per_sqm(data: dict):
     price = data.get("contract_price_rub")
     area = data.get("total_area_sqm")
@@ -695,4 +730,8 @@ def load_passport(path: Path) -> dict:
         MANUAL_COEFFICIENTS_UPDATED_AT_FIELD,
     ]:
         data.setdefault(field, None)
+    # An integer counter, not None like the rest above: save_passport_checked
+    # compares it directly, and a passport saved before it existed is
+    # unambiguously at the start of the count, not at an unknown version.
+    data.setdefault("version", 0)
     return data

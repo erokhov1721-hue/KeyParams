@@ -4,12 +4,14 @@
    Один кусок на две страницы — общий список и выбор проектов для сравнения:
    кнопки там нужны одни и те же, и разъезжаться им незачем.
 
-   Ждёт в контексте: `slug`, `name`, `index` — номер строки, он делает
-   неповторимым id поля выбора файла, — `back` (на какую страницу вернуться
-   после правки) и `with_cover`. #}
+   Ждёт в контексте: `slug`, `name`, `version` — версия паспорта, чтобы
+   переименование не затёрло чужую правку, — `index` — номер строки, он
+   делает неповторимым id поля выбора файла, — `back` (на какую страницу
+   вернуться после правки) и `with_cover`. #}
 <form class="rename-form" method="post"
       action="{{ url_for('main.rename_project', slug=slug) }}" hidden>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="version" value="{{ version }}">
   <input type="text" name="project_name" value="{{ name }}" required>
   <input type="hidden" name="back" value="{{ back }}">
   <button type="submit" class="btn-rename-save" title="Сохранить название" aria-label="Сохранить название">
