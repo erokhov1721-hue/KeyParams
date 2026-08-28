@@ -402,6 +402,22 @@ def test_two_levels_sections_on_one_report_line_are_added_up(tmp_path):
     assert estimate_sections.read_section_totals(path) == {"utilities": 300.0}
 
 
+def test_the_closing_итого_row_of_a_levels_estimate_is_not_counted(tmp_path):
+    # Jois's own estimate ends its levels with exactly this row: not a
+    # section, but the estimate's own grand total. Classifying it would
+    # either drop it as unmatched (harmless but noisy) or, worse, count the
+    # whole estimate's total again as if it were a section of its own.
+    path = _save(_levels_estimate([
+        (1, 2, "Котлован", None),
+        (2, "2.1.", "Разработка грунта", 50.0),
+        (1, None, "ИТОГО, руб. с учетом НДС", 50.0),
+    ]), tmp_path, "levels.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"excavation": 50.0}
+
+
 # --- формула без сохранённого значения ---
 
 def test_an_uncached_formula_in_a_section_total_is_reported_not_silently_zero(tmp_path):

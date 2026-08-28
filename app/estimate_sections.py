@@ -206,6 +206,14 @@ def _cell_text(ws, row, col):
     return str(value).strip().lower() if value is not None else ""
 
 
+def _is_total_marker(text):
+    """Whether ``text`` is an estimate's own "ИТОГО" row rather than a
+    section — the closing line of a priced block, in either shape of
+    estimate this module reads.
+    """
+    return str(text or "").strip().lower().startswith("итого")
+
+
 def _heading_block(ws, row, col):
     """The columns a heading covers: up to just before the next heading.
 
@@ -452,6 +460,14 @@ def _sections_from_levels(ws):
 
         if first:
             close_section()
+            # The estimate's own closing total, not a section — Jois's
+            # estimate ends its levels with exactly this row. Classifying
+            # it would either drop it as unmatched (harmless here, but
+            # noisy) or, worse, count the whole estimate's total a second
+            # time as if it were a section of its own. Nothing meaningful
+            # follows it either way, so reading stops here.
+            if _is_total_marker(first):
+                break
             key = classify(first)
             if key is None:
                 unmatched.append(first)
@@ -510,7 +526,7 @@ def _sections_from_offer(ws):
     # its own right; its unnumbered parts are already inside its total.
     past_total = False
     for row in range(header.row + 2, ws.max_row + 1):
-        if _cell_text(ws, row, 1).startswith("итого"):
+        if _is_total_marker(ws.cell(row=row, column=1).value):
             if past_total:
                 break
             past_total = True
