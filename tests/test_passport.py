@@ -306,6 +306,18 @@ def test_save_and_load_passport_roundtrip(tmp_path):
     assert loaded == data
 
 
+def test_load_passport_raises_a_passport_read_error_on_corrupted_json(tmp_path):
+    path = tmp_path / "passport.json"
+    path.write_text("{not valid json", encoding="utf-8")
+
+    try:
+        passport.load_passport(path)
+    except passport.PassportReadError:
+        pass
+    else:
+        raise AssertionError("повреждённый passport.json должен быть отклонён понятной ошибкой")
+
+
 def test_load_passport_backfills_missing_field_from_older_save(tmp_path):
     # A passport saved before contract_price_rub existed lacks the key —
     # load_passport must backfill it as None rather than raise/omit it, so

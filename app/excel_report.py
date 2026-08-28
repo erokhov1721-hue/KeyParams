@@ -9,7 +9,6 @@ document: change a project's total area in Excel and its whole column
 recalculates.
 """
 
-import json
 import logging
 import re
 from datetime import date, datetime
@@ -183,7 +182,7 @@ def load_project(project_dir) -> dict:
         )
     try:
         passport = passport_module.load_passport(path)
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+    except passport_module.PassportReadError as e:
         raise ExcelReportError(
             f"Не удалось прочитать паспорт проекта «{slug}» — файл повреждён. "
             "Создайте проект заново, загрузив исходные документы."

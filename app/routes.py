@@ -1,5 +1,4 @@
 import io
-import json
 from pathlib import Path
 
 from flask import (
@@ -40,13 +39,17 @@ def _safe_passport(root, slug):
     """The project's passport, or an empty one if the file can't be read.
 
     A passport that can't be parsed falls back rather than raising: this runs
-    from the sidebar context processor, so one corrupted file would otherwise
-    take down every page in the app — including the ones that could explain
-    the problem or delete the project.
+    from the sidebar context processor and the dashboard list, so one
+    corrupted file would otherwise take down every page in the app —
+    including the dashboard itself, which is where the project can actually
+    be deleted from. A page that reads the passport as its whole reason for
+    being there (project_page and the rest) instead lets PassportReadError
+    reach the errorhandler below, which says so explicitly rather than
+    showing a broken project as a quietly empty one.
     """
     try:
         return passport_module.load_passport(storage.passport_path(root, slug))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+    except passport_module.PassportReadError:
         return {}
 
 
@@ -1019,3 +1022,21 @@ def update_project(slug):
     data["ai_fields"] = ai_fields
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.errorhandler(passport_module.PassportReadError)
+def _passport_read_error(exc):
+    """One outcome for a corrupted passport.json, wherever it's hit.
+
+    Before this, whether a broken passport 500'd or quietly showed an empty
+    project depended on which of routes.py's ten load_passport call sites
+    happened to run — project_page and friends never caught it at all,
+    _safe_passport swallowed it into {} for the dashboard and sidebar only.
+    Routing every uncaught PassportReadError here instead gives the same
+    diagnosable page everywhere: what's broken, and a way to delete the
+    project (which only needs the slug to exist on disk, not its passport
+    to parse) rather than being stuck with it forever.
+    """
+    slug = request.view_args.get("slug") if request.view_args else None
+    current_app.logger.error("Паспорт проекта «%s» повреждён: %s", slug or "?", exc)
+    return render_template("passport_broken.html", slug=slug), 500

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a class="back-link" href="{{ url_for('main.index') }}">&larr; К списку проектов</a>
+    <h1>Паспорт проекта повреждён</h1>
+  </div>
+</div>
+
+<div class="card">
+  <div class="alert alert-error">
+    Файл паспорта этого проекта (<code>passport.json</code>) не читается —
+    он повреждён или обрезан. Открыть проект в таком виде нельзя.
+  </div>
+  <p>
+    Восстановить содержимое отсюда невозможно. Можно удалить проект и
+    завести его заново, загрузив исходные документы.
+  </p>
+  {% if slug %}
+  <form method="post" action="{{ url_for('main.delete_project', slug=slug) }}"
+        onsubmit="return confirm('Удалить проект? Это действие нельзя отменить.');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn-delete">Удалить проект</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

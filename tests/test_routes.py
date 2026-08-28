@@ -2996,6 +2996,54 @@ def _upload_estimate(client, slug, data, filename="smeta.xlsx"):
     )
 
 
+# --- a corrupted passport.json gives one consistent, diagnosable result ---
+
+def _corrupt_passport(tmp_path, slug):
+    from app import storage
+    storage.passport_path(tmp_path, slug).write_text("{not valid json", encoding="utf-8")
+
+
+def test_project_page_with_a_corrupted_passport_explains_rather_than_500s(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _corrupt_passport(tmp_path, slug)
+
+    resp = client.get(f"/projects/{slug}")
+
+    assert resp.status_code == 500
+    body = resp.get_data(as_text=True)
+    assert "повреждён" in body
+
+
+def test_the_corrupted_project_error_page_offers_to_delete_it(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _corrupt_passport(tmp_path, slug)
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "btn-delete" in body
+    assert "/delete" in body
+
+    resp = client.post(f"/projects/{slug}/delete", follow_redirects=True)
+    assert resp.status_code == 200
+    assert slug not in storage.list_project_slugs(tmp_path)
+
+
+def test_dashboard_still_works_when_one_project_has_a_corrupted_passport(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Сломанный")
+    _corrupt_passport(tmp_path, slug)
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+
+
 def test_the_estimate_accordion_offers_to_upload_when_there_is_none(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

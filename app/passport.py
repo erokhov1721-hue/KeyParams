@@ -648,8 +648,19 @@ def build_comparison_charts(
     }
 
 
+class PassportReadError(Exception):
+    """passport.json exists but can't be read — corrupted JSON, a bad
+    encoding, or the file itself has gone missing or unreadable between the
+    directory listing and the read. One error type for every caller to
+    handle the same way, rather than each deciding for itself which of
+    json.JSONDecodeError/UnicodeDecodeError/OSError it's willing to catch."""
+
+
 def load_passport(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        raise PassportReadError(f"Не удалось прочитать паспорт {path}: {e}") from e
     # A passport saved before a field existed (e.g. contract_price_rub)
     # won't have that key — backfill it as unset rather than making every
     # caller (templates included) handle a missing key.
