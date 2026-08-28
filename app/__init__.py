@@ -136,6 +136,13 @@ def create_app(projects_root=None):
     csrf.init_app(app)
     _configure_logging(app.config["PROJECTS_ROOT"])
 
+    from . import storage
+    # Debris from a process that crashed mid-creation, before it could
+    # publish or clean up after itself. Done here rather than per-request
+    # (the way purge_deleted runs on every dashboard load): sweeping while a
+    # request is live could destroy a project that's still being built.
+    storage.sweep_staging(app.config["PROJECTS_ROOT"])
+
     from . import excel_report_routes, routes
     app.register_blueprint(routes.bp)
     app.register_blueprint(excel_report_routes.excel_report_bp)

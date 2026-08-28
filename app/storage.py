@@ -107,6 +107,60 @@ def create_project(root: Path, project_name: str) -> str:
     return slug
 
 
+def _staging_root(root: Path) -> Path:
+    return root / ".staging"
+
+
+def begin_project(root: Path, project_name: str):
+    """Reserve a slug for a new project and set up a staging directory to
+    build it in — not the real project directory yet.
+
+    Returns ``(slug, staging_root)``; pass ``staging_root`` wherever
+    ``root`` is expected (``raw_dir``, ``passport_path``, ``save_cover``,
+    ...) to address files inside the staged copy. Nothing under it is
+    visible to ``list_project_slugs`` or any other reader until
+    ``publish_project`` moves it into place, so a creation that fails
+    partway — a corrupt upload, a crash, anything at all — never leaves a
+    half-built project sitting on disk with documents in it and no way to
+    reach it through the UI to clean it up.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    slug = unique_slug(root, slugify(project_name))
+    staging_root = _staging_root(root)
+    raw_dir(staging_root, slug).mkdir(parents=True)
+    return slug, staging_root
+
+
+def publish_project(root: Path, slug: str, staging_root: Path) -> None:
+    """Move a fully-built staging directory into place as the real project
+    — a rename, atomic because staging lives under ``root``, on the same
+    volume."""
+    project_dir(staging_root, slug).replace(project_dir(root, slug))
+
+
+def discard_staging(staging_root: Path, slug: str) -> None:
+    """Remove an abandoned staging directory after a creation fails
+    partway. Best-effort, the same as ``delete_project``: Windows can hold
+    a document just written open for an antivirus scan."""
+    shutil.rmtree(project_dir(staging_root, slug), ignore_errors=True)
+
+
+def sweep_staging(root: Path) -> None:
+    """Remove every staging directory left by a process that crashed before
+    it could publish or clean up after itself.
+
+    Only ever call this once, at startup, before the app serves any
+    requests — sweeping while a request is live would destroy a creation
+    that's still being built.
+    """
+    staging_root = _staging_root(root)
+    if not staging_root.exists():
+        return
+    for entry in staging_root.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+
+
 # Marks a folder the user has already deleted, whose files couldn't all be
 # removed at the time. Its presence takes the folder out of
 # ``list_project_slugs`` on its own, so a deleted project stays deleted no

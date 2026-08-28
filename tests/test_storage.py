@@ -210,6 +210,47 @@ def test_save_cover_removes_a_previous_cover_of_a_different_extension(tmp_path):
     assert (directory / "cover.jpg").read_bytes() == b"new"
 
 
+def test_begin_project_builds_in_staging_not_the_real_root(tmp_path):
+    slug, staging_root = storage.begin_project(tmp_path, "Мира")
+
+    assert not (tmp_path / slug).exists()
+    assert storage.raw_dir(staging_root, slug).is_dir()
+    assert slug not in storage.list_project_slugs(tmp_path)
+
+
+def test_publish_project_moves_the_staged_project_into_the_real_root(tmp_path):
+    slug, staging_root = storage.begin_project(tmp_path, "Мира")
+    storage.passport_path(staging_root, slug).write_text("{}", encoding="utf-8")
+
+    storage.publish_project(tmp_path, slug, staging_root)
+
+    assert not storage.project_dir(staging_root, slug).exists()
+    assert slug in storage.list_project_slugs(tmp_path)
+
+
+def test_discard_staging_removes_the_abandoned_build(tmp_path):
+    slug, staging_root = storage.begin_project(tmp_path, "Мира")
+
+    storage.discard_staging(staging_root, slug)
+
+    assert not storage.project_dir(staging_root, slug).exists()
+
+
+def test_sweep_staging_removes_leftover_staging_directories(tmp_path):
+    # What a process that crashed mid-creation, before it could publish or
+    # clean up after itself, leaves behind.
+    slug, staging_root = storage.begin_project(tmp_path, "Мира")
+
+    storage.sweep_staging(tmp_path)
+
+    assert not storage.project_dir(staging_root, slug).exists()
+    assert slug not in storage.list_project_slugs(tmp_path)
+
+
+def test_sweep_staging_tolerates_no_staging_directory_at_all(tmp_path):
+    storage.sweep_staging(tmp_path / "does-not-exist-yet")
+
+
 def test_save_cover_keeps_the_previous_cover_when_the_write_fails(tmp_path):
     slug = storage.create_project(tmp_path, "Мира")
     directory = storage.project_dir(tmp_path, slug)

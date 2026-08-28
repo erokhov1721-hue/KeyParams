@@ -1,6 +1,5 @@
 import io
 import json
-import shutil
 from pathlib import Path
 
 from flask import (
@@ -365,7 +364,7 @@ def create_project():
             return render_template("new_project.html", error=problem), 400
 
     try:
-        slug = storage.create_project(root, project_name)
+        slug, staging_root = storage.begin_project(root, project_name)
     except ValueError:
         # The name is non-empty but consists only of characters slugify
         # strips (e.g. "***"), so there is no usable folder name for it.
@@ -374,23 +373,31 @@ def create_project():
             error="Название проекта должно содержать хотя бы одну букву или цифру",
         ), 400
 
-    raw = storage.raw_dir(root, slug)
+    # Built in a staging directory — root/.staging/<slug>, not root/<slug> —
+    # and published by rename only once the passport is written. A creation
+    # that fails partway (a corrupt upload, a crash) then leaves its debris
+    # in staging, invisible to list_project_slugs and swept away on the next
+    # restart, rather than a half-built project sitting in the real project
+    # list with documents on disk and no way to reach it through the UI.
+    raw = storage.raw_dir(staging_root, slug)
     dgp_path = raw / "dgp.docx"
     tz_path = raw / "tz.docx"
     dgp_file.save(dgp_path)
     tz_file.save(tz_path)
 
     if has_cover:
-        storage.save_cover(root, slug, cover_file, Path(cover_file.filename).suffix.lower())
+        storage.save_cover(
+            staging_root, slug, cover_file, Path(cover_file.filename).suffix.lower(),
+        )
 
     if has_smeta:
-        smeta_path = storage.estimate_path(root, slug)
+        smeta_path = storage.estimate_path(staging_root, slug)
         smeta_file.save(smeta_path)
         try:
             estimate.read_estimate(smeta_path)
         except estimate.EstimateReadError as e:
             current_app.logger.warning("Не удалось разобрать смету: %s", e)
-            shutil.rmtree(storage.project_dir(root, slug), ignore_errors=True)
+            storage.discard_staging(staging_root, slug)
             return render_template(
                 "new_project.html",
                 error="Не удалось прочитать смету — убедитесь, что это корректный файл .xlsx",
@@ -399,11 +406,8 @@ def create_project():
     try:
         data = passport_module.build_passport(project_name, dgp_path, tz_path)
     except DocxReadError as e:
-        # Don't let a cleanup failure (file lock, permissions) turn the
-        # intended 400 into a 500 — the orphan directory is harmless anyway,
-        # storage.list_project_slugs ignores directories without a passport.
         current_app.logger.warning("Не удалось разобрать загруженный файл: %s", e)
-        shutil.rmtree(storage.project_dir(root, slug), ignore_errors=True)
+        storage.discard_staging(staging_root, slug)
         return render_template(
             "new_project.html",
             error="Не удалось прочитать файл — убедитесь, что это корректный .docx",
@@ -412,15 +416,24 @@ def create_project():
     problem = None
     if has_contract_terms:
         # Built after the passport so the VAT rule has the signing year.
-        dest = storage.contract_terms_path(root, slug)
+        dest = storage.contract_terms_path(staging_root, slug)
         contract_terms_file.save(dest)
-        extracted, filled, problem = passport_module.build_contract_terms(
-            dest, year_signed=data.get("year_signed"), project_name=project_name,
-        )
+        try:
+            extracted, filled, problem = passport_module.build_contract_terms(
+                dest, year_signed=data.get("year_signed"), project_name=project_name,
+            )
+        except pdf_reader.PdfReadError as e:
+            current_app.logger.warning("Не удалось прочитать протокол: %s", e)
+            storage.discard_staging(staging_root, slug)
+            return render_template(
+                "new_project.html",
+                error="Не удалось прочитать протокол — убедитесь, что это корректный PDF",
+            ), 400
         data.update(extracted)
         data["contract_auto_fields"] = filled
 
-    passport_module.save_passport(data, storage.passport_path(root, slug))
+    passport_module.save_passport(data, storage.passport_path(staging_root, slug))
+    storage.publish_project(root, slug, staging_root)
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 

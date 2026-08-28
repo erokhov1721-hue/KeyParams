@@ -1852,6 +1852,31 @@ def _create_data(dgp=None, contract_terms=None):
     return data
 
 
+def test_create_project_with_an_unreadable_protocol_leaves_no_orphan_files(tmp_path, monkeypatch):
+    # The file passes the signature check but pdfplumber can't parse it —
+    # build_contract_terms used to raise this uncaught, after the dgp/tz/
+    # protocol were already written straight into the real project root:
+    # no passport.json (invisible in the UI, undeletable through it), but
+    # the uploaded documents themselves sitting there regardless.
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    def broken_read(path):
+        raise passport_module.pdf_reader.PdfReadError("boom")
+    monkeypatch.setattr(passport_module.pdf_reader, "read_pdf_text", broken_read)
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert storage.list_project_slugs(tmp_path) == []
+    assert not any(tmp_path.rglob("dgp.docx"))
+    assert not any(tmp_path.rglob("protocol.pdf"))
+
+
 def test_create_project_accepts_optional_contract_terms_pdf(tmp_path, monkeypatch):
     from app import storage
 
