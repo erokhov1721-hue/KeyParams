@@ -26,16 +26,16 @@
 </div>
 {% else %}
 
-<div class="card">
-  <form class="pair-form" method="get" action="{{ url_for('main.compare_vs_average') }}">
-    <label for="vs-average-slug">Объект</label>
-    <select id="vs-average-slug" name="slug" onchange="this.form.submit()">
+<div class="card object-picker-card">
+  <form class="object-picker" method="get" action="{{ url_for('main.compare_vs_average') }}">
+    <label class="object-picker-label" for="vs-average-slug">Объект</label>
+    <select id="vs-average-slug" name="slug" class="object-picker-select" onchange="this.form.submit()">
       <option value="">Выберите объект…</option>
       {% for slug in slugs %}
       <option value="{{ slug }}" {{ 'selected' if slug == selected_slug }}>{{ project_names[slug] }}</option>
       {% endfor %}
     </select>
-    <noscript><button type="submit" class="btn btn-secondary">Показать</button></noscript>
+    <noscript><button type="submit" class="btn btn-secondary object-picker-fallback">Показать</button></noscript>
   </form>
 </div>
 

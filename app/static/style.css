@@ -1845,6 +1845,54 @@ select option {
   flex: 0 0 auto;
 }
 
+/* --- Выбор объекта: «Сравнить со средним по классу» ---
+
+   Grid, not flex-with-a-bare-label: a label with no fixed width and no
+   line-height of its own sat next to a select whose height came from its
+   own padding, so "align-items: center" had two different boxes to
+   center against each other rather than one clean row. auto/1fr fixes the
+   label's column once, and every future row of this form lines up under
+   it without repeating the width by hand. */
+.object-picker-card {
+  padding: 20px var(--table-edge);
+}
+
+.object-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.object-picker-label {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-100);
+}
+
+.object-picker-select {
+  width: 100%;
+  max-width: 420px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.object-picker-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.object-picker-fallback {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .pair-grid {
   display: flex;
   flex-direction: column;
