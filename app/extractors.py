@@ -1,3 +1,4 @@
+import math
 import re
 
 GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\s*«[^»]+»')
@@ -52,11 +53,12 @@ BUILDING_CLASS_KEYWORD_RE = re.compile(
 )
 WHITESPACE_RE = re.compile(r'\s+')
 # A cell holding a value: a number, optionally followed by a unit of measure.
-# Group 1 captures *only* the numeric portion. The unit has to be discarded
-# rather than handed to parse_number, because units contain digits of their own
-# ("м2") and parse_number strips non-digits, which would glue the unit's digit
-# onto the value ("50 000 м2" -> 500002). The lazy quantifier is what lets the
-# unit alternation claim its own text instead of the number swallowing it.
+# Group 1 captures *only* the numeric portion, so a unit's own digits ("м2")
+# never end up inside it — parse_number now refuses a string with anything
+# but a number in it rather than gluing them together, but a caller still
+# wants the number even when a unit sits right after it, not a None because
+# the cell as a whole doesn't parse as one. The lazy quantifier is what lets
+# the unit alternation claim its own text instead of the number swallowing it.
 NUMERIC_CELL_RE = re.compile(
     r'^([-+−]?\d[\d\s .,]*?)'
     r'\s*(?:м2|м²|кв\.?\s*м\.?|га|шт\.?|эт\.?|этаж(?:а|ей)?)?\.?$',
@@ -69,22 +71,46 @@ MAX_LABEL_CELLS = 2
 # area labels but must never be picked in their place.
 FOOTPRINT_EXCLUSION = ('застройки',)
 
+# A signed number written the way these documents actually write one:
+# digits, optional thousand-separating whitespace, and at most one decimal
+# separator (comma or dot). Nothing else — a stray letter or a truncated
+# exponent leaves characters unconsumed, which fails the full-string match.
+_NUMBER_BODY_RE = re.compile(r'^\d[\d\s ]*([.,]\d+)?$')
+# The ASCII hyphen and the real minus sign (U+2212) a document might use for
+# a negative value — not an em/en dash, which these documents use on its own
+# to mean "no value" (see the sentinel check below) rather than as a sign.
+_MINUS_CHARS = '-−'
+
 
 def parse_number(text):
+    """The number ``text`` names in full, or None if it doesn't name one
+    cleanly.
+
+    Parses the whole string rather than digging a number out of whatever is
+    in it: text with a stray letter in the middle ("12abc34"), a truncated
+    exponent ("1e400"), two decimal points, or anything else that isn't
+    recognisably one number is refused rather than guessed at — a wrong
+    number is worse than a missing one. A leading typographic minus is
+    still read as negative, and a result too large to be a real quantity
+    (``inf``) is refused the same as anything else that doesn't parse.
+    """
     if text is None:
         return None
     t = text.strip()
-    if t in ('', '-', '—', '–'):
+    if t in ('', '-', '—', '–', '−'):
         return None
-    t = WHITESPACE_RE.sub('', t)
-    t = t.replace(',', '.')
-    t = re.sub(r'[^0-9.\-]', '', t)
-    if t in ('', '-', '.', '-.'):
+    negative = t[0] in _MINUS_CHARS
+    body = t[1:].strip() if negative or t[0] == '+' else t
+    if not _NUMBER_BODY_RE.match(body):
         return None
+    body = WHITESPACE_RE.sub('', body).replace(',', '.')
     try:
-        return float(t)
+        value = float(body)
     except ValueError:
         return None
+    if not math.isfinite(value):
+        return None
+    return -value if negative else value
 
 
 def extract_general_contractor(dgp):

@@ -23,6 +23,44 @@ def test_parse_number_empty_is_none():
     assert extractors.parse_number(None) is None
 
 
+def test_parse_number_rejects_embedded_garbage():
+    # Stripping non-digit characters used to dig a number out of anything —
+    # "12abc34" read as 1234.0. A number that isn't written cleanly should
+    # be refused, not guessed at.
+    assert extractors.parse_number("12abc34") is None
+
+
+def test_parse_number_reads_the_typographic_minus():
+    # Real documents write a negative with "−" (U+2212), not the ASCII
+    # hyphen — dropping it used to turn -500 into 500.
+    assert extractors.parse_number("−500") == -500.0
+
+
+def test_parse_number_reads_a_leading_plus():
+    assert extractors.parse_number("+500") == 500.0
+
+
+def test_parse_number_rejects_a_truncated_exponent():
+    # "1e400" used to have its "e" stripped as an unrecognised character,
+    # silently turning it into 1400.0 — the wrong number by many orders of
+    # magnitude, with nothing to say so.
+    assert extractors.parse_number("1e400") is None
+
+
+def test_parse_number_rejects_two_decimal_points():
+    assert extractors.parse_number("1.2.3") is None
+
+
+def test_parse_number_rejects_a_number_too_large_to_be_finite():
+    assert extractors.parse_number("9" * 400) is None
+
+
+def test_parse_number_em_dash_alone_is_still_none():
+    # "—" alone is how these documents write "no value" — must stay a
+    # sentinel for "nothing here", not be read as a minus sign.
+    assert extractors.parse_number("—") is None
+
+
 # --- extract_general_contractor (synthetic) ---
 
 def test_extract_general_contractor_synthetic():
