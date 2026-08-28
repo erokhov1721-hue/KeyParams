@@ -209,13 +209,25 @@ def _money(value):
 def _source_vat(passport):
     """The rate the estimate was priced at.
 
-    Derived from the signing year first, exactly as the rest of the app does
-    it — 20% through 2025, 22% from 2026. The passport's own ``vat`` field is
-    only filled when a contract-terms protocol was uploaded, so relying on it
-    would leave the correction inert on every project that hasn't got one.
+    The passport's own ``vat`` field wins when it's set: the project page,
+    the PDF and every export already show that value, and deriving a
+    second, different rate from the signing year here — the year-by-year
+    rule this project used to prefer — meant a project with an uploaded
+    protocol could show one VAT rate everywhere else and a different one
+    on this page, with nothing to explain why. Falls back to the rule by
+    year only when there's no stored rate to read yet: that's every
+    project before a contract-terms protocol has been uploaded, and the
+    rule is what keeps the correction from going inert on all of them.
+
+    A year edited later does not retroactively update an already-stored
+    rate — by design: the stored rate may be what the protocol actually
+    says, not a guess from the rule, and silently overwriting it on every
+    unrelated year correction would be its own way of losing information.
     """
-    year = parse_year(passport.get("year_signed"))
-    return passport_module.vat_for_year(year) or passport.get("vat")
+    stored = passport.get("vat")
+    if stored:
+        return stored
+    return passport_module.vat_for_year(parse_year(passport.get("year_signed")))
 
 
 def _column(slug, passport, costs, adjustments):
@@ -813,7 +825,18 @@ def _project_factor_or_exclude(passport, adjustments):
 
 def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
     """Среднее за м² по смете и среднее по цене договора для одной строки
-    таблицы — простое среднее по объектам, у которых нужная цифра есть.
+    таблицы.
+
+    За м² — портфельное: сумма стоимости работ по всем объектам, у которых
+    есть смета и площадь, делённая на сумму их площадей, а не среднее из
+    отдельных ставок объектов. Простое среднее ставок даёт маленькому
+    дорогому объекту тот же вес, что и крупному, и тянет число туда, где
+    реальных денег на фоне остальных почти нет; портфельное отвечает на
+    вопрос «сколько в среднем стоит квадратный метр во всей этой выборке
+    денег», а не «какая тут типичная ставка».
+
+    Цена по договору — всё ещё простое среднее по объектам, где она вписана:
+    это не ставка на единицу чего-либо, портфельно взвешивать её не на что.
 
     Объект без сметы или без площади не участвует в среднем за м², но не
     выпадает из среднего по договору, если цена там есть, — и наоборот: это
@@ -821,7 +844,9 @@ def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
     группы (``count``) — он остаётся её паспортом, а не подменяет собой ни
     один из знаменателей.
     """
-    per_sqm_values = []
+    total_cost = 0.0
+    total_area = 0.0
+    per_sqm_count = 0
     contract_values = []
     excluded = []
     for slug in group_slugs:
@@ -833,19 +858,21 @@ def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
         costs = costs_by_slug.get(slug) or {}
         area = passport.get("total_area_sqm") or None
         if costs and area:
-            per_sqm_values.append(sum(costs.values()) * factor / area)
+            total_cost += sum(costs.values()) * factor
+            total_area += area
+            per_sqm_count += 1
         price = passport.get("contract_price_rub")
         if price is not None:
             contract_values.append(price * factor)
 
-    per_sqm_avg = _average(per_sqm_values)
+    per_sqm_avg = total_cost / total_area if total_area else None
     contract_avg = _average(contract_values)
     return {
         "label": label,
         "count": len(group_slugs),
         "per_sqm_avg": per_sqm_avg,
         "per_sqm_display": _format_metric(per_sqm_avg, UNIT_PER_SQM),
-        "per_sqm_count": len(per_sqm_values),
+        "per_sqm_count": per_sqm_count,
         "contract_avg": contract_avg,
         "contract_display": _format_metric(contract_avg, UNIT_MONEY),
         "contract_count": len(contract_values),
@@ -856,6 +883,10 @@ def _averages_row(label, group_slugs, passports, costs_by_slug, adjustments):
 def _average_work_rows(slugs, passports, costs_by_slug, adjustments):
     """Средний ₽/м² по каждому виду работ, по всей выборке целиком — не
     зависит от переключателя группировки, который делит только строки выше.
+
+    Портфельное, как и средняя за м² в строке выше: сумма стоимости этого
+    вида работ по объектам, где он нашёлся в смете, делённая на сумму их
+    площадей — не среднее из отдельных ставок объектов.
 
     «N из M»: M — у скольких выбранных объектов вообще есть смета (и, если
     поправки включены, применимая к ним), N — у скольких из них этот вид
@@ -880,14 +911,17 @@ def _average_work_rows(slugs, passports, costs_by_slug, adjustments):
     for passport, costs, factor in considered:
         area = passport.get("total_area_sqm") or None
         for key, amount in costs.items():
-            entry = gathered.setdefault(key, {"key": key, "values": [], "with_section": 0})
+            entry = gathered.setdefault(
+                key, {"key": key, "total_cost": 0.0, "total_area": 0.0, "with_section": 0},
+            )
             entry["with_section"] += 1
             if area:
-                entry["values"].append(amount * factor / area)
+                entry["total_cost"] += amount * factor
+                entry["total_area"] += area
 
     rows = []
     for entry in gathered.values():
-        avg = _average(entry["values"])
+        avg = entry["total_cost"] / entry["total_area"] if entry["total_area"] else None
         rows.append({
             "key": entry["key"],
             "label": estimate_sections.CATEGORY_LABELS[entry["key"]],

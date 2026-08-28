@@ -331,6 +331,21 @@ def test_the_vat_rate_comes_from_the_signing_year_when_the_passport_has_none():
     assert table["columns"][0]["notes"] == []
 
 
+def test_the_stored_vat_rate_wins_over_the_signing_year_rule():
+    # 2025 alone would derive 20% by the year rule - but a protocol was
+    # uploaded and reads 15%, and that's what the project page and PDF
+    # already show. Using the rule here instead would silently show a
+    # second, different rate on this one page for the same project.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport(year_signed="2025", vat="15%", total_area_sqm=1000.0)},
+        {"a": {"facade": 1_150_000.0}}, VAT_22,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert round(facade["cells"][0]["value"], 2) == round(1150.0 * 122 / 115, 2)
+    assert table["columns"][0]["notes"] == []
+
+
 # --- карточки двух объектов ---
 
 def _pair(left_fields=None, right_fields=None, left_costs=None, right_costs=None,
@@ -831,6 +846,21 @@ def test_ungrouped_averages_are_one_row_over_the_whole_selection():
     assert row["contract_display"] == "2 000 000 ₽"
 
 
+def test_the_averages_row_is_portfolio_weighted_not_a_simple_mean_of_rates():
+    # a: 1 000 000 / 1000 = 1000 ₽/м²; b: 1 000 000 / 4000 = 250 ₽/м². A
+    # simple mean of the two rates would be 625; portfolio-weighted sums
+    # cost and area separately first: 2 000 000 / 5000 = 400.
+    passports = {
+        "a": _passport("А", total_area_sqm=1000.0),
+        "b": _passport("Б", total_area_sqm=4000.0),
+    }
+    costs = {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_000_000.0}}
+
+    table = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
+
+    assert table["rows"][0]["per_sqm_avg"] == pytest.approx(400.0)
+
+
 def test_a_project_without_an_estimate_or_area_is_left_out_of_that_average():
     # Нет сметы у "b" — из среднего за м² он выпадает, но цена по договору у
     # него есть и в свой средний идёт.
@@ -929,8 +959,9 @@ def test_the_work_breakdown_averages_per_square_metre_across_the_whole_selection
     table = comparison.build_averages_table(["a", "b"], passports, costs, NONE)
     works = {row["key"]: row for row in table["works"]}
 
-    # a: 1000 ₽/м², b: 2000 ₽/м² — среднее 1500.
-    assert works["facade"]["avg_per_sqm"] == pytest.approx(1500.0)
+    # Портфельное: (1 000 000 + 4 000 000) / (1000 + 2000) = 1666,67 ₽/м² —
+    # not the simple mean of a's 1000 and b's 2000.
+    assert works["facade"]["avg_per_sqm"] == pytest.approx(5_000_000.0 / 3000.0)
     assert works["facade"]["frequency_display"] == "2 из 2"
     # Кровля есть только у "a", но знаменатель — оба объекта со сметой, а не
     # только тот, у которого раздел нашёлся: иначе «1 из 10» читалось бы как
