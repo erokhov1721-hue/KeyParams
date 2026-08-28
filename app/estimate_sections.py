@@ -101,6 +101,8 @@ ITEM_HEADER = "п/п"
 NAME_HEADER = "наименование"
 TOTAL_HEADER = "стоимость всего"
 TOTAL_SUBHEADER = "всего"
+MATERIALS_SUBHEADER = "материалы"
+WORKS_SUBHEADER = "смр"
 
 # A section number, as opposed to a sub-section: "4" is one, "4.1" is part of
 # it and is already counted inside it.
@@ -228,12 +230,14 @@ def _heading_block(ws, row, col):
     return col, HEADER_SEARCH_COLS
 
 
-def _find_total_column(ws, header_row):
-    """The column holding each section's total cost.
+def _find_cost_subcolumn(ws, header_row, subheader):
+    """The column under "Стоимость всего" whose own sub-heading reads
+    ``subheader`` — "всего" for a section's full cost, "материалы" or "смр"
+    for its material/work split.
 
     An offer states costs twice over — per unit and in total — under headings
     with the same four sub-columns beneath each, so the heading alone doesn't
-    identify a column: the one wanted is the "Всего" under "Стоимость всего".
+    identify a column: the one wanted sits under "Стоимость всего".
     "Стоимость всего за объёмы заказчика" stands alongside with nothing
     underneath it, and is passed over for exactly that reason.
     """
@@ -242,9 +246,15 @@ def _find_total_column(ws, header_row):
             continue
         first, last = _heading_block(ws, header_row, col)
         for sub in range(first, last + 1):
-            if _cell_text(ws, header_row + 1, sub) == TOTAL_SUBHEADER:
+            if _cell_text(ws, header_row + 1, sub) == subheader:
                 return sub
     return None
+
+
+def _find_total_column(ws, header_row):
+    """The column holding each section's total cost — see
+    ``_find_cost_subcolumn``, of which this is just the "Всего" case."""
+    return _find_cost_subcolumn(ws, header_row, TOTAL_SUBHEADER)
 
 
 Header = namedtuple(
@@ -794,6 +804,81 @@ def read_concrete_volume(path):
     количество" under the estimate's "Возведение несущих конструкций здания"
     section, the same section whose cost is the report's "concrete" line."""
     return _quantity_by_category(path, "concrete", _is_volume_unit)
+
+
+# The classifier's own position for the concrete section ("4", "Возведение
+# несущих конструкций здания") and, within it, the position that prices
+# steelwork rather than concrete ("4.3", "Металлические конструкции") — the
+# company's own "Справочник статей СМР" numbering, fixed across estimates,
+# as opposed to "№ раздела" which is free-form per workbook and not safe to
+# match a position by.
+CONCRETE_COST_ARTICLE = "4"
+CONCRETE_COST_EXCLUDE_ARTICLE = "4.3"
+
+# The classifier column sometimes carries the code bare ("4") and sometimes
+# with the position's own name after it ("4. Конструктивные решения") — this
+# reads the leading code either way, the same latitude ``LEADING_NUMBER_RE``
+# gives a section's name elsewhere in this module.
+_ARTICLE_CODE_RE = re.compile(r"^(\d+(?:\.\d+)*)\.?\s*")
+
+
+def _article_code(value):
+    if value is None:
+        return None
+    match = _ARTICLE_CODE_RE.match(str(value).strip())
+    return match.group(1) if match else None
+
+
+def read_concrete_cost_breakdown(path):
+    """(materials, works) — Материалы and СМР cost, in roubles, for the
+    classifier's concrete position, with its steelwork subsection taken
+    out. See ``CONCRETE_COST_ARTICLE``/``CONCRETE_COST_EXCLUDE_ARTICLE``.
+
+    Read from each position's own row rather than summed from its parts —
+    the classifier is filled on the свод, which already states the split
+    whole, the same precedence ``_facade_area_by_article`` gives a rollup
+    over its own leaves.
+
+    (None, None) where the estimate isn't laid out as an offer with a
+    "Статья СМР" column, doesn't split "Стоимость всего" into "Материалы"
+    and "СМР", or never states the classifier's position "4" at all. A
+    levels estimate ("укрупнённая смета") carries no classifier column of
+    its own and always reads (None, None).
+    """
+    path = Path(path)
+    for ws in _checked_sheets(path):
+        header = _find_header(ws)
+        if header is None or header.article_col is None:
+            continue
+        materials_col = _find_cost_subcolumn(ws, header.row, MATERIALS_SUBHEADER)
+        works_col = _find_cost_subcolumn(ws, header.row, WORKS_SUBHEADER)
+        if materials_col is None or works_col is None:
+            continue
+
+        found = {}
+        for row in range(header.row + 2, ws.max_row + 1):
+            # Not ``_named`` — that filters out a bare code exactly like the
+            # ones this is matching against, since it's built to keep a name
+            # and drop a code, the other way around from what's wanted here.
+            code = _article_code(ws.cell(row=row, column=header.article_col).value)
+            if code not in (CONCRETE_COST_ARTICLE, CONCRETE_COST_EXCLUDE_ARTICLE):
+                continue
+            found[code] = (
+                ws.money_at(row, materials_col), ws.money_at(row, works_col),
+            )
+
+        if CONCRETE_COST_ARTICLE not in found:
+            continue
+        materials, works = found[CONCRETE_COST_ARTICLE]
+        excl_materials, excl_works = found.get(
+            CONCRETE_COST_EXCLUDE_ARTICLE, (None, None),
+        )
+        if materials is not None and excl_materials is not None:
+            materials -= excl_materials
+        if works is not None and excl_works is not None:
+            works -= excl_works
+        return materials, works
+    return None, None
 
 
 # The facade classifier's own axis (column "Статья СМР") — the one place

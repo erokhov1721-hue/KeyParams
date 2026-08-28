@@ -61,6 +61,8 @@ CHART_DEFS = [
     ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
     ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
     ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
+    ("concrete_materials_per_m3", "Материалы за 1 м³ бетона, ₽/м³"),
+    ("concrete_works_per_m3", "СМР за 1 м³ бетона, ₽/м³"),
 ]
 
 PAGE_SIZE = landscape(A4)

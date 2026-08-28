@@ -556,7 +556,7 @@ def _format_money_short(value):
 
 
 def _format_rub_whole(value):
-    """A rouble-per-m² figure, grouped and rounded to the nearest rouble —
+    """A per-unit rouble figure, grouped and rounded to the nearest rouble —
     "138 577 ₽". Small enough next to a project's name that full precision
     would just be visual noise the way it isn't on a bar chart."""
     return f"{round(value):,}".replace(",", " ") + " ₽"
@@ -569,7 +569,9 @@ def _finalize_chart(rows, kind="coefficient"):
     - "money": a rouble amount too large to show in full next to its bar —
       ``display`` keeps full precision (a tooltip's job), ``short_display``
       is what's actually printed ("24.16 млрд ₽").
-    - "money_per_sqm": a per-m² rouble amount small enough to show whole.
+    - "money_per_sqm": a per-unit rouble amount (per m², per m³, ...) small
+      enough to show whole; the unit is the chart's own title, not the
+      row's, same as "coefficient" below.
     - "coefficient" (default): a plain 2-decimal number; the unit is the
       chart's own title, not the row's.
 
@@ -658,6 +660,7 @@ def _value_chart_rows(passports, slugs, value_fn):
 def build_comparison_charts(
     passports: dict, slugs: list,
     concrete_coefficients: dict = None, facade_coefficients: dict = None,
+    concrete_materials_per_m3: dict = None, concrete_works_per_m3: dict = None,
 ) -> dict:
     """Bar-chart-ready rows for the compare page, one series per chart.
 
@@ -665,12 +668,15 @@ def build_comparison_charts(
     project — projects missing the value(s) a given chart needs are skipped
     rather than shown as zero, since zero would misstate an unknown value.
 
-    ``concrete_coefficients`` and ``facade_coefficients`` are ``{slug:
+    ``concrete_coefficients``, ``facade_coefficients``,
+    ``concrete_materials_per_m3`` and ``concrete_works_per_m3`` are ``{slug:
     value}`` computed from each project's estimate — unlike the rest, they
     can't be read straight off ``passports``.
     """
     concrete_coefficients = concrete_coefficients or {}
     facade_coefficients = facade_coefficients or {}
+    concrete_materials_per_m3 = concrete_materials_per_m3 or {}
+    concrete_works_per_m3 = concrete_works_per_m3 or {}
 
     price_by_year = _chart_rows(passports, slugs, extra_field="year_signed")
     price_by_year.sort(key=lambda row: row["sort_key"])
@@ -706,6 +712,12 @@ def build_comparison_charts(
         "rebar_coefficient": _finalize_chart(_value_chart_rows(
             passports, slugs, lambda slug: passports[slug].get("rebar_coefficient_avg")
         )),
+        "concrete_materials_per_m3": _finalize_chart(_value_chart_rows(
+            passports, slugs, lambda slug: concrete_materials_per_m3.get(slug)
+        ), kind="money_per_sqm"),
+        "concrete_works_per_m3": _finalize_chart(_value_chart_rows(
+            passports, slugs, lambda slug: concrete_works_per_m3.get(slug)
+        ), kind="money_per_sqm"),
     }
 
 

@@ -1,5 +1,6 @@
 import io
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from flask import (
@@ -165,6 +166,9 @@ def compare_projects():
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
+    concrete_materials_per_m3, concrete_works_per_m3 = _concrete_cost_per_m3(
+        root, slugs, passports,
+    )
     group_by = _averages_group_by(request.args)
     return render_template(
         "compare.html",
@@ -179,6 +183,8 @@ def compare_projects():
             passports, slugs,
             concrete_coefficients=concrete_coefficients,
             facade_coefficients=facade_coefficients,
+            concrete_materials_per_m3=concrete_materials_per_m3,
+            concrete_works_per_m3=concrete_works_per_m3,
         ),
         project_colors=passport_module.project_colors(slugs),
         numeric_fields=passport_module.NUMERIC_FIELDS,
@@ -280,6 +286,9 @@ def compare_projects_pdf():
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
+    concrete_materials_per_m3, concrete_works_per_m3 = _concrete_cost_per_m3(
+        root, slugs, passports,
+    )
     pdf_bytes = pdf_export.build_compare_pdf(
         passports, slugs,
         passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS,
@@ -287,6 +296,8 @@ def compare_projects_pdf():
             passports, slugs,
             concrete_coefficients=concrete_coefficients,
             facade_coefficients=facade_coefficients,
+            concrete_materials_per_m3=concrete_materials_per_m3,
+            concrete_works_per_m3=concrete_works_per_m3,
         ),
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
@@ -542,6 +553,40 @@ def _facade_coefficients(root, slugs, passports):
         )
         for slug in slugs
     }
+
+
+def _concrete_cost_breakdown(root, slug):
+    """Материалы и СМР по позиции «4» классификатора сметы («Возведение
+    несущих конструкций здания»), за вычетом позиции «4.3»
+    (металлоконструкции), в рублях — ``(None, None)``, если смету не
+    удалось разобрать, её нет, или в ней нет такой позиции."""
+    path = storage.estimate_path(root, slug)
+    if not path.exists():
+        return None, None
+    try:
+        return estimate_sections.read_concrete_cost_breakdown(path)
+    except estimate_sections.EstimateSectionsError as e:
+        current_app.logger.warning("Не удалось прочитать смету: %s", e)
+        return None, None
+
+
+def _concrete_cost_per_m3(root, slugs, passports):
+    """``({slug: материалы, ₽/м³}, {slug: СМР, ₽/м³})`` для сравнения
+    проектов: стоимость по классификатору (см. ``_concrete_cost_breakdown``),
+    делённая на действующий объём монолита. Проект без сметного разбиения,
+    без объёма монолита, или с нулевым объёмом — в оба словаря не попадает,
+    а не встаёт туда с ложным нулём или делением на ноль."""
+    materials_by_slug, works_by_slug = {}, {}
+    for slug in slugs:
+        volume = _concrete_volume(root, slug, passports[slug])
+        if not volume:
+            continue
+        materials, works = _concrete_cost_breakdown(root, slug)
+        if materials is not None:
+            materials_by_slug[slug] = materials / Decimal(str(volume))
+        if works is not None:
+            works_by_slug[slug] = works / Decimal(str(volume))
+    return materials_by_slug, works_by_slug
 
 
 def _cost_increase_report(root, slug):

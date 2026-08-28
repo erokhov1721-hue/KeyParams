@@ -594,6 +594,87 @@ def test_concrete_volume_of_an_unreadable_file_is_reported_rather_than_crashing(
         raise AssertionError("нечитаемый файл должен быть отклонён понятной ошибкой")
 
 
+# --- read_concrete_cost_breakdown ---
+
+def test_concrete_cost_breakdown_excludes_the_steelwork_position(tmp_path):
+    # Classifier position "4" is the concrete section's own row, stating
+    # its Материалы/СМР split whole; "4.3" inside it prices steelwork, not
+    # concrete, and must come back out rather than be counted with it.
+    wb = _offer([
+        (1, "4", "4", "Возведение несущих конструкций здания", 1000.0),
+    ])
+    ws = wb.active
+    ws.cell(row=11, column=9, value=700.0)
+    ws.cell(row=11, column=10, value=300.0)
+    ws.cell(row=12, column=3, value="4.3")
+    ws.cell(row=12, column=4, value="Металлические конструкции")
+    ws.cell(row=12, column=9, value=50.0)
+    ws.cell(row=12, column=10, value=20.0)
+    ws.cell(row=12, column=12, value=70.0)
+    path = _save(wb, tmp_path)
+
+    materials, works = estimate_sections.read_concrete_cost_breakdown(path)
+
+    assert materials == Decimal("650.0")
+    assert works == Decimal("280.0")
+
+
+def test_concrete_cost_breakdown_stays_whole_without_a_steelwork_position(tmp_path):
+    wb = _offer([
+        (1, "4", "4", "Возведение несущих конструкций здания", 1000.0),
+    ])
+    ws = wb.active
+    ws.cell(row=11, column=9, value=700.0)
+    ws.cell(row=11, column=10, value=300.0)
+    path = _save(wb, tmp_path)
+
+    materials, works = estimate_sections.read_concrete_cost_breakdown(path)
+
+    assert materials == Decimal("700.0")
+    assert works == Decimal("300.0")
+
+
+def test_concrete_cost_breakdown_reads_the_code_with_its_name_attached(tmp_path):
+    # The classifier column doesn't always carry a bare code — one estimate
+    # writes "4. Конструктивные решения" there instead of a plain "4".
+    wb = _offer([
+        (1, "4", "4. Конструктивные решения", "Возведение несущих конструкций здания", 1000.0),
+    ])
+    ws = wb.active
+    ws.cell(row=11, column=9, value=700.0)
+    ws.cell(row=11, column=10, value=300.0)
+    ws.cell(row=12, column=3, value="4.3 Металлические конструкции")
+    ws.cell(row=12, column=9, value=50.0)
+    ws.cell(row=12, column=10, value=20.0)
+    path = _save(wb, tmp_path)
+
+    materials, works = estimate_sections.read_concrete_cost_breakdown(path)
+
+    assert materials == Decimal("650.0")
+    assert works == Decimal("280.0")
+
+
+def test_concrete_cost_breakdown_is_none_without_the_classifier_position(tmp_path):
+    wb = _offer([
+        (1, 1, "1", "Устройство котлована", 200.0),
+    ])
+    ws = wb.active
+    ws.cell(row=11, column=9, value=120.0)
+    ws.cell(row=11, column=10, value=80.0)
+    path = _save(wb, tmp_path)
+
+    assert estimate_sections.read_concrete_cost_breakdown(path) == (None, None)
+
+
+def test_concrete_cost_breakdown_is_none_for_a_levels_estimate(tmp_path):
+    # No "Статья СМР" classifier column exists in this shape of estimate.
+    path = _save(_levels_estimate([
+        (1, 4, "Возведение несущих конструкций здания", 1000.0),
+    ]), tmp_path, "levels.xlsx")
+
+    assert estimate_sections.read_concrete_cost_breakdown(path) == (None, None)
+
+
 # --- read_facade_area ---
 
 def test_facade_area_sums_leaf_rows_whose_article_names_the_cladding_layer(tmp_path):

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 
 from app import ai_extractor, ocr, passport
@@ -275,6 +277,27 @@ def test_charts_rebar_coefficient_sorted_ascending_and_skips_missing():
     assert [row["label"] for row in charts["rebar_coefficient"]] == [
         "Проект В", "Проект А",
     ]
+
+
+def test_charts_concrete_materials_and_works_per_m3_sorted_ascending_and_skips_missing():
+    passports = {
+        "a": _passport("Проект А"),
+        "b": _passport("Проект Б"),
+        "c": _passport("Проект В"),
+    }
+    charts = passport.build_comparison_charts(
+        passports, ["a", "b", "c"],
+        concrete_materials_per_m3={"a": Decimal("21000"), "c": Decimal("19000")},
+        concrete_works_per_m3={"a": Decimal("14000"), "c": Decimal("13500")},
+        # "b" has neither — skipped from both charts.
+    )
+    assert [row["label"] for row in charts["concrete_materials_per_m3"]] == [
+        "Проект В", "Проект А",
+    ]
+    assert [row["label"] for row in charts["concrete_works_per_m3"]] == [
+        "Проект В", "Проект А",
+    ]
+    assert charts["concrete_materials_per_m3"][0]["display"] == "19 000 ₽"
 
 
 def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):

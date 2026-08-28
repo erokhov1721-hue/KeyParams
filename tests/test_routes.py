@@ -1457,6 +1457,71 @@ def _offer_with_concrete_and_facade_quantity(volume_m3, area_m2):
     return buf.getvalue()
 
 
+def _offer_with_concrete_cost_and_volume(
+    materials, works, volume_m3, *, exclude_materials=0.0, exclude_works=0.0,
+):
+    """One estimate whose concrete position ("4") states a Материалы/СМР
+    split, with a steelwork subsection ("4.3") to be excluded from it, plus
+    a proposed quantity leaf so the cost can be divided by a volume."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=9, column=1, value="№ п/п")
+    ws.cell(row=9, column=2, value="№ раздела")
+    ws.cell(row=9, column=3, value="Статья СМР")
+    ws.cell(row=9, column=4, value="Наименование работ")
+    ws.cell(row=9, column=7, value="Ед. изм")
+    ws.cell(row=10, column=10, value="Предлагаемое количество")
+    ws.cell(row=9, column=15, value="Стоимость всего")
+    ws.cell(row=10, column=15, value="Материалы")
+    ws.cell(row=10, column=16, value="СМР")
+    ws.cell(row=10, column=17, value="Косвенные расходы")
+    ws.cell(row=10, column=18, value="Всего")
+
+    ws.cell(row=11, column=2, value=4)
+    ws.cell(row=11, column=3, value="4")
+    ws.cell(row=11, column=4, value="Возведение несущих конструкций здания")
+    ws.cell(row=11, column=7, value="м3")
+    ws.cell(row=11, column=15, value=materials)
+    ws.cell(row=11, column=16, value=works)
+    ws.cell(row=11, column=18, value=materials + works)
+
+    ws.cell(row=12, column=4, value="Фундаментная плита")
+    ws.cell(row=12, column=7, value="м3")
+    ws.cell(row=12, column=10, value=volume_m3)
+    ws.cell(row=12, column=18, value=materials + works)
+
+    ws.cell(row=13, column=3, value="4.3")
+    ws.cell(row=13, column=4, value="Металлические конструкции")
+    ws.cell(row=13, column=15, value=exclude_materials)
+    ws.cell(row=13, column=16, value=exclude_works)
+    ws.cell(row=13, column=18, value=exclude_materials + exclude_works)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_compare_page_shows_the_concrete_materials_and_works_per_m3_charts(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "СМатериаламиИСМР", total_area_sqm=1000.0)
+    storage.estimate_path(tmp_path, slug).write_bytes(
+        _offer_with_concrete_cost_and_volume(
+            700.0, 300.0, 50.0, exclude_materials=50.0, exclude_works=20.0,
+        )
+    )
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    assert "Материалы за 1 м³ бетона, ₽/м³" in body
+    assert "СМР за 1 м³ бетона, ₽/м³" in body
+    # (700-50)/50 = 13 ₽/м³ материалов; (300-20)/50 = 5.6 -> округляется до 6 ₽/м³ СМР
+    assert "13 ₽" in body
+    assert "6 ₽" in body
+
+
 def test_project_page_shows_the_concrete_coefficient(tmp_path):
     from app import passport as passport_module, storage
 
