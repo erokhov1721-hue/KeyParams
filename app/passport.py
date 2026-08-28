@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from datetime import date
 from pathlib import Path
 
 from . import (
@@ -71,6 +72,13 @@ FACADE_AREA_FIELD = "facade_area_manual"
 # заголовком, разбивка по уровням без такого раздела вовсе) — тогда объём
 # вписывается вручную, поверх того, что нашлось в смете.
 CONCRETE_VOLUME_FIELD = "concrete_volume_manual"
+
+# Когда форма «Расчётных коэффициентов» в последний раз что-то сохранила —
+# нет входа для имени, у приложения нет входа с SSO, поэтому дата хотя бы
+# отвечает на вопрос «насколько свежее это ручное значение», раз уж на
+# коэффициент, вписанный руками, полагается вся правдоподобность отчёта.
+# Общая на все три поля формы: они всегда сохраняются одним сабмитом.
+MANUAL_COEFFICIENTS_UPDATED_AT_FIELD = "manual_coefficients_updated_at"
 
 AREA_TOKENS = {
     "underground_area_sqm": (('площад', 'подземн'), extractors.FOOTPRINT_EXCLUSION),
@@ -453,6 +461,19 @@ def facade_coefficient(data: dict, facade_area):
     return facade_area / area
 
 
+def manual_coefficients_date_display(data: dict):
+    """When the manual-coefficients form was last saved with at least one
+    value in it, as "ДД.ММ.ГГГГ" — or None if nothing manual is set, or the
+    stored date doesn't parse (an older passport, hand-edited JSON)."""
+    stored = data.get(MANUAL_COEFFICIENTS_UPDATED_AT_FIELD)
+    if not stored:
+        return None
+    try:
+        return date.fromisoformat(stored).strftime("%d.%m.%Y")
+    except ValueError:
+        return None
+
+
 def format_number(value):
     """Space-group a number's thousands for readability (10067050887.72 ->
     "10 067 050 887.72"), dropping ".00" for whole numbers. Passes through
@@ -666,6 +687,7 @@ def load_passport(path: Path) -> dict:
     # caller (templates included) handle a missing key.
     for field in PASSPORT_FIELDS + CONTRACT_FIELDS + [
         REBAR_COEFFICIENT_FIELD, FACADE_AREA_FIELD, CONCRETE_VOLUME_FIELD,
+        MANUAL_COEFFICIENTS_UPDATED_AT_FIELD,
     ]:
         data.setdefault(field, None)
     return data

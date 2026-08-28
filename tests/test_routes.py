@@ -1474,6 +1474,46 @@ def test_manual_coefficients_clear_on_an_empty_submit(tmp_path):
     assert saved["concrete_volume_manual"] is None
 
 
+def test_manual_coefficients_form_records_the_date(tmp_path):
+    from datetime import date
+
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "САрматурой")
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "0.12", "facade_area_manual": "", "concrete_volume_manual": ""},
+    )
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved[passport_module.MANUAL_COEFFICIENTS_UPDATED_AT_FIELD] == date.today().isoformat()
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert date.today().strftime("%d.%m.%Y") in body
+
+
+def test_clearing_every_manual_coefficient_clears_the_date_too(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "БезАрматуры", rebar_coefficient_avg=0.2,
+        manual_coefficients_updated_at="2026-01-01",
+    )
+
+    client.post(
+        f"/projects/{slug}/manual-coefficients",
+        data={"rebar_coefficient_avg": "", "facade_area_manual": "", "concrete_volume_manual": ""},
+    )
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved[passport_module.MANUAL_COEFFICIENTS_UPDATED_AT_FIELD] is None
+
+
 def test_manual_concrete_volume_overrides_the_one_read_from_the_estimate(tmp_path):
     from app import passport as passport_module, storage
 

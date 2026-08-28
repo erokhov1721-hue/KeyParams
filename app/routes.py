@@ -1,4 +1,5 @@
 import io
+from datetime import date
 from pathlib import Path
 
 from flask import (
@@ -574,6 +575,7 @@ def project_page(slug):
     estimate_unmatched_sections = (
         _estimate_unmatched_sections(root, slug) if has_estimate else []
     )
+    manual_coefficients_date = passport_module.manual_coefficients_date_display(data)
     return render_template(
         "project.html",
         slug=slug,
@@ -593,6 +595,7 @@ def project_page(slug):
         facade_area=facade_area,
         facade_coefficient=facade_coefficient,
         estimate_unmatched_sections=estimate_unmatched_sections,
+        manual_coefficients_date=manual_coefficients_date,
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
         has_cost_increase=increase_file.exists(),
@@ -934,6 +937,17 @@ def update_manual_coefficients(slug):
         raw_value = request.form.get(field, "").strip()
         value = extractors.parse_number(raw_value) if raw_value else None
         data[field] = _non_negative(value)
+    # No login here to record a name against — there's no SSO front-door for
+    # this app — but the date at least says how fresh a hand-entered
+    # coefficient is, which is worth having: the whole report's
+    # plausibility rides on these once they're set. Cleared when every
+    # field in the form comes back empty, so a stale date doesn't linger
+    # once nothing manual is actually in effect any more.
+    data[passport_module.MANUAL_COEFFICIENTS_UPDATED_AT_FIELD] = (
+        date.today().isoformat()
+        if any(data[field] is not None for field in MANUAL_COEFFICIENT_FIELDS)
+        else None
+    )
     passport_module.save_passport(data, path)
     return redirect(url_for("main.project_page", slug=slug))
 

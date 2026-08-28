@@ -406,6 +406,9 @@
       <div class="accordion-panel" hidden>
         <form method="post" action="{{ url_for('main.update_manual_coefficients', slug=slug) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if manual_coefficients_date %}
+          <p class="field-hint">Ручные значения введены {{ manual_coefficients_date }}.</p>
+          {% endif %}
           <div class="fields-card">
             <div class="field-row {{ 'is-empty' if concrete_volume is none else 'is-filled' }}">
               <div class="field-label-col">

@@ -295,7 +295,7 @@ def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
 def test_save_and_load_passport_roundtrip(tmp_path):
     fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [
         passport.REBAR_COEFFICIENT_FIELD, passport.FACADE_AREA_FIELD,
-        passport.CONCRETE_VOLUME_FIELD,
+        passport.CONCRETE_VOLUME_FIELD, passport.MANUAL_COEFFICIENTS_UPDATED_AT_FIELD,
     ]
     data = {field: None for field in fields}
     data["project_name"] = "Проспект Мира"
