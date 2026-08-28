@@ -1095,6 +1095,34 @@ def test_class_average_comparison_work_rows_pair_each_type_with_its_deviation():
     assert works["roof"]["deviation_display"] == "—"
 
 
+def test_class_average_comparison_chart_scales_every_bar_to_one_shared_max():
+    # a: (1 200 000 + 200 000) / 1000 = 1400 ₽/м² за м²; b (пер): 1 000 000
+    # / 1000 = 1000 ₽/м². Самое большое число на всей странице — 1400 (свой
+    # показатель «за м²»), и от него берётся высота каждого столбика.
+    passports = {
+        "a": _passport("А", building_class="Бизнес", total_area_sqm=1000.0),
+        "b": _passport("Б", building_class="Бизнес", total_area_sqm=1000.0),
+    }
+    costs = {
+        "a": {"facade": 1_200_000.0, "roof": 200_000.0},
+        "b": {"facade": 1_000_000.0},
+    }
+
+    result = comparison.build_class_average_comparison("a", passports, costs, NONE)
+    chart = {row["key"]: row for row in result["chart"]}
+
+    assert [row["key"] for row in result["chart"]] == ["per_sqm", "facade", "roof"]
+    assert chart["per_sqm"]["own_value"] == pytest.approx(1400.0)
+    assert chart["per_sqm"]["own_pct"] == pytest.approx(100.0)
+    assert chart["per_sqm"]["peer_pct"] == pytest.approx(round(1000.0 / 1400.0 * 100.0, 1))
+    assert chart["facade"]["peer_pct"] == pytest.approx(round(1000.0 / 1400.0 * 100.0, 1))
+    assert chart["facade"]["own_pct"] == pytest.approx(round(1200.0 / 1400.0 * 100.0, 1))
+    # "roof" не встречается ни у одного пера — нулевой столбик, не пропуск.
+    assert chart["roof"]["peer_value"] is None
+    assert chart["roof"]["peer_pct"] == 0
+    assert chart["roof"]["own_pct"] == pytest.approx(round(200.0 / 1400.0 * 100.0, 1))
+
+
 def test_the_work_breakdown_is_not_affected_by_the_group_switch():
     passports = {
         "a": _passport("А", total_area_sqm=1000.0, general_contractor="X"),

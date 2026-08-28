@@ -1075,15 +1075,51 @@ def build_class_average_comparison(slug, passports, costs_by_slug, adjustments):
         reverse=True,
     )
 
+    per_sqm = {
+        "peer_avg": peer_average["per_sqm_avg"],
+        "peer_avg_display": peer_average["per_sqm_display"],
+        "peer_avg_count": peer_average["per_sqm_count"],
+        "own_value": own["per_sqm_avg"],
+        "own_display": own["per_sqm_display"],
+        **_deviation(own["per_sqm_avg"], peer_average["per_sqm_avg"]),
+    }
+
     return {
         "building_class": building_class,
         "peer_count": len(peer_slugs),
-        "per_sqm": {
-            "peer_avg_display": peer_average["per_sqm_display"],
-            "peer_avg_count": peer_average["per_sqm_count"],
-            "own_display": own["per_sqm_display"],
-            **_deviation(own["per_sqm_avg"], peer_average["per_sqm_avg"]),
-        },
+        "per_sqm": per_sqm,
         "works": work_rows,
+        "chart": _class_average_chart_rows(per_sqm, work_rows),
         "excluded": sorted(set(peer_average["excluded"]) | set(own["excluded"])),
     }
+
+
+def _class_average_chart_rows(per_sqm, work_rows):
+    """Bar-chart-ready rows for the class-average comparison — the same
+    figures as its two tables (the ₽/м² summary, then every work type in
+    the table's own order), each bar's height scaled against the single
+    highest value on the page rather than its own row, so every pair of
+    bars is honestly comparable to every other by eye.
+    """
+    rows = [{"key": "per_sqm", "label": "Стоимость за м²", **per_sqm}] + [
+        {"key": row["key"], "label": row["label"], **row} for row in work_rows
+    ]
+    values = [
+        v for row in rows for v in (row["peer_avg"], row["own_value"]) if v is not None
+    ]
+    max_value = max(values) if values else 1.0
+
+    chart = []
+    for row in rows:
+        peer, own = row["peer_avg"], row["own_value"]
+        chart.append({
+            "key": row["key"],
+            "label": row["label"],
+            "peer_value": peer,
+            "peer_display": row["peer_avg_display"],
+            "peer_pct": round(peer / max_value * 100, 1) if peer else 0,
+            "own_value": own,
+            "own_display": row["own_display"],
+            "own_pct": round(own / max_value * 100, 1) if own else 0,
+        })
+    return chart

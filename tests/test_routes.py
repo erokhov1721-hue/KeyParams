@@ -2453,6 +2453,25 @@ def test_compare_vs_average_shows_the_class_comparison_for_the_chosen_project(tm
     assert "+50,0 %" in body
 
 
+def test_compare_vs_average_shows_a_vertical_bar_chart_below_the_tables(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "Проспект мира", [("6. Фасадные работы", 1_500_000.0)],
+        building_class="Бизнес",
+    )
+    _project_with_offer(
+        tmp_path, "Б", [("6. Фасадные работы", 1_000_000.0)], building_class="Бизнес",
+    )
+
+    body = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
+
+    assert "vbar-chart" in body
+    assert "Стоимость за м²" in body
+    # Свой показатель — самое большое число на графике, столбик в 100%.
+    assert "height: 100.0%;" in body
+
+
 def test_compare_vs_average_explains_when_the_object_has_no_class(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

@@ -1893,6 +1893,108 @@ select option {
   justify-self: start;
 }
 
+/* --- Сравнение со средним: вертикальная гистограмма ---
+
+   Height, not width — the only vertical bar chart on this app, next to
+   the same "one bar, one row" charts everywhere else, because it puts a
+   whole row of categories side by side the way the table above it does,
+   which a stack of horizontal bars can't. .vbar-bars is the one fixed
+   pixel height every bar's own percentage height resolves against. */
+.vbar-chart-wrap {
+  overflow-x: auto;
+}
+
+.vbar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  min-width: min-content;
+  padding: 28px 4px 0;
+}
+
+.vbar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 78px;
+}
+
+.vbar-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+  height: 190px;
+  width: 100%;
+}
+
+.vbar {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+}
+
+.vbar-peer {
+  background: var(--text-500);
+}
+
+.vbar-own {
+  background: var(--accent);
+}
+
+.vbar-value {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-500);
+}
+
+.vbar-label {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-500);
+  text-align: center;
+}
+
+.vbar-legend {
+  display: flex;
+  gap: 20px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-100);
+}
+
+.vbar-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vbar-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.vbar-swatch-peer {
+  background: var(--text-500);
+}
+
+.vbar-swatch-own {
+  background: var(--accent);
+}
+
 .pair-grid {
   display: flex;
   flex-direction: column;
