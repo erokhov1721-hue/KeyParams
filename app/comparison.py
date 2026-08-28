@@ -995,3 +995,95 @@ def build_averages_table(slugs, passports, costs_by_slug, adjustments, group_by=
         "works": _average_work_rows(slugs, passports, costs_by_slug, adjustments),
         "excluded": excluded,
     }
+
+
+def _deviation(own_value, peer_avg):
+    """How far ``own_value`` sits from ``peer_avg``, as a percentage —
+    positive above the average, negative below.
+
+    Same "no basis for a ratio" case as удорожание's own percentage: a zero
+    or unknown average isn't a 0% or 100% difference, it is no difference
+    that can honestly be stated at all.
+    """
+    if own_value is None or not peer_avg:
+        return {"deviation_pct": None, "deviation_display": "—"}
+    pct = (own_value / peer_avg - 1.0) * 100.0
+    return {"deviation_pct": pct, "deviation_display": cost_increase.format_percent(pct)}
+
+
+def build_class_average_comparison(slug, passports, costs_by_slug, adjustments):
+    """One object's own cost against the portfolio average of every other
+    object sharing its building class — "Средняя стоимость за м²" and each
+    work type's ₽/м², each with the object's own figure and how many
+    percent above or below the average it sits.
+
+    The peer group is every other loaded project (``passports`` is expected
+    to already carry all of them, not just a chosen few) with the same
+    ``building_class`` — a "бизнес" object is only ever measured against
+    other "бизнес" objects, never the whole portfolio at once, which would
+    average across price tiers that were never meant to be compared.
+
+    None if the object itself carries no building class (nothing to match
+    peers by) or no other loaded project shares it — there is then no
+    average to hold it against, and a table of dashes would read as a
+    computed answer rather than as "this can't be answered yet".
+    """
+    passport = passports[slug]
+    building_class = passport.get("building_class")
+    if not building_class:
+        return None
+
+    peer_slugs = [
+        s for s in passports
+        if s != slug and passports[s].get("building_class") == building_class
+    ]
+    if not peer_slugs:
+        return None
+
+    costs_by_slug = _as_float_costs(costs_by_slug)
+    peer_average = _averages_row(
+        building_class, peer_slugs, passports, costs_by_slug, adjustments,
+    )
+    own = _averages_row(
+        passport.get("project_name") or slug, [slug], passports, costs_by_slug, adjustments,
+    )
+    peer_works = {
+        row["key"]: row
+        for row in _average_work_rows(peer_slugs, passports, costs_by_slug, adjustments)
+    }
+    own_works = {
+        row["key"]: row
+        for row in _average_work_rows([slug], passports, costs_by_slug, adjustments)
+    }
+
+    work_rows = []
+    for key in set(peer_works) | set(own_works):
+        peer_row, own_row = peer_works.get(key), own_works.get(key)
+        peer_value = peer_row["avg_per_sqm"] if peer_row else None
+        own_value = own_row["avg_per_sqm"] if own_row else None
+        work_rows.append({
+            "key": key,
+            "label": estimate_sections.CATEGORY_LABELS[key],
+            "peer_avg": peer_value,
+            "peer_avg_display": _format_metric(peer_value, UNIT_PER_SQM),
+            "own_value": own_value,
+            "own_display": _format_metric(own_value, UNIT_PER_SQM),
+            **_deviation(own_value, peer_value),
+        })
+    work_rows.sort(
+        key=lambda row: row["peer_avg"] if row["peer_avg"] is not None else -1.0,
+        reverse=True,
+    )
+
+    return {
+        "building_class": building_class,
+        "peer_count": len(peer_slugs),
+        "per_sqm": {
+            "peer_avg_display": peer_average["per_sqm_display"],
+            "peer_avg_count": peer_average["per_sqm_count"],
+            "own_display": own["per_sqm_display"],
+            **_deviation(own["per_sqm_avg"], peer_average["per_sqm_avg"]),
+        },
+        "works": work_rows,
+        "excluded": sorted(set(peer_average["excluded"]) | set(own["excluded"])),
+    }

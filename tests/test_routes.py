@@ -2416,6 +2416,63 @@ def test_the_averages_table_splits_into_rows_by_general_contractor(tmp_path):
     assert "ООО «ГЭС»" in body
 
 
+# --- сравнение объекта со средним по классу ---
+
+def test_compare_vs_average_page_lists_every_loaded_project_in_the_picker(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ПроектА")
+    _make_project_with_passport(tmp_path, "ПроектБ")
+
+    body = client.get("/compare/vs-average").get_data(as_text=True)
+
+    assert "ПроектА" in body
+    assert "ПроектБ" in body
+
+
+def test_compare_vs_average_shows_the_class_comparison_for_the_chosen_project(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "Проспект мира", [("6. Фасадные работы", 1_500_000.0)],
+        building_class="Бизнес",
+    )
+    _project_with_offer(
+        tmp_path, "Б", [("6. Фасадные работы", 1_000_000.0)], building_class="Бизнес",
+    )
+    # Другой класс — не должен попасть в среднее по «Бизнесу».
+    _project_with_offer(
+        tmp_path, "В", [("6. Фасадные работы", 10_000_000.0)], building_class="Комфорт",
+    )
+
+    body = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
+
+    assert "против среднего по классу «Бизнес»" in body
+    assert "1 500 ₽/м²" in body   # свой показатель — 1 500 000 / 1000
+    assert "1 000 ₽/м²" in body   # средний по перам (только "Б", не "В")
+    assert "+50,0 %" in body
+
+
+def test_compare_vs_average_explains_when_the_object_has_no_class(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "БезКласса", building_class=None)
+
+    body = client.get(f"/compare/vs-average?slug={slug}").get_data(as_text=True)
+
+    assert "не указан класс дома" in body
+
+
+def test_compare_vs_average_explains_when_there_are_no_peers_of_the_class(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Одинокий", building_class="Элит")
+
+    body = client.get(f"/compare/vs-average?slug={slug}").get_data(as_text=True)
+
+    assert "нет ни одного того же класса" in body
+
+
 def test_section_table_corrections_are_off_by_default(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

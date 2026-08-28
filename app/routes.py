@@ -320,6 +320,45 @@ def compare_projects_pdf():
     )
 
 
+@bp.route("/compare/vs-average", methods=["GET"])
+def compare_vs_average():
+    """Один объект против среднего по всем остальным загруженным объектам
+    того же класса дома — не за то, что кто-то отметил на выборе объектов,
+    а за все проекты в системе. Оценивается только против своего класса:
+    у «бизнеса» и «комфорта» разные ценовые уровни, и усреднять их вместе
+    значило бы отвечать не на тот вопрос.
+    """
+    root = _projects_root()
+    all_slugs = storage.list_project_slugs(root)
+    passports = {slug: _safe_passport(root, slug) for slug in all_slugs}
+    project_names = {
+        slug: passports[slug].get("project_name") or slug for slug in all_slugs
+    }
+    slug = request.args.get("slug")
+    if slug not in passports:
+        slug = None
+
+    adjustments = comparison.adjustments_from_args(request.args)
+    result = None
+    if slug is not None:
+        costs = _section_costs(root, all_slugs)
+        result = comparison.build_class_average_comparison(
+            slug, passports, costs, adjustments,
+        )
+
+    return render_template(
+        "compare_vs_average.html",
+        slugs=sorted(all_slugs, key=lambda s: project_names[s].lower()),
+        project_names=project_names,
+        selected_slug=slug,
+        selected_name=project_names.get(slug) if slug else None,
+        selected_building_class=passports[slug].get("building_class") if slug else None,
+        result=result,
+        adjustments=adjustments,
+        has_projects=bool(all_slugs),
+    )
+
+
 @bp.route("/projects/new", methods=["GET"])
 def new_project_form():
     return render_template("new_project.html", error=None)

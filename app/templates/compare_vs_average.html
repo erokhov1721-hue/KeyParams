@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Сравнить со средним по классу{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Сравнить со средним по классу</h1>
+    <p class="page-sub">
+      Выберите объект — программа сопоставит его стоимость со средней по
+      всем остальным загруженным объектам того же класса дома.
+    </p>
+  </div>
+</div>
+
+{% if not has_projects %}
+<div class="card empty-state">
+  <p class="empty-title">Сравнивать пока не с чем</p>
+  <p class="empty-sub">Заведите хотя бы два проекта одного класса дома.</p>
+  <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+</div>
+{% else %}
+
+<div class="card">
+  <form class="pair-form" method="get" action="{{ url_for('main.compare_vs_average') }}">
+    <label for="vs-average-slug">Объект</label>
+    <select id="vs-average-slug" name="slug" onchange="this.form.submit()">
+      <option value="">Выберите объект…</option>
+      {% for slug in slugs %}
+      <option value="{{ slug }}" {{ 'selected' if slug == selected_slug }}>{{ project_names[slug] }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit" class="btn btn-secondary">Показать</button></noscript>
+  </form>
+</div>
+
+{% if selected_slug and not result %}
+<div class="card empty-state">
+  <p class="empty-title">Не с чем сравнить</p>
+  <p class="empty-sub">
+    {% if not selected_building_class %}
+    У объекта «{{ selected_name }}» не указан класс дома — без него не с
+    чем сопоставлять.
+    {% else %}
+    Среди остальных загруженных объектов нет ни одного того же класса
+    («{{ selected_building_class }}»), что и «{{ selected_name }}».
+    {% endif %}
+  </p>
+</div>
+{% endif %}
+
+{% if result %}
+<div class="card sections-card">
+  <div class="sections-head">
+    <h2 class="chart-title">
+      «{{ selected_name }}» против среднего по классу «{{ result.building_class }}»
+    </h2>
+    <p class="sections-sub">
+      Сравнение с {{ result.peer_count }} другими загруженными объектами
+      класса «{{ result.building_class }}». Стоимость за м² — портфельная:
+      сумма стоимости работ делится на сумму площадей, а не усредняются
+      ставки отдельных объектов. С поправками на НДС и инфляцию, если они
+      включены ниже.
+    </p>
+    {% if result.excluded %}
+    <p class="sections-sub">
+      Не учтены из-за включённой поправки — год подписания или ставка НДС
+      неизвестны: «{{ result.excluded | join('», «') }}».
+    </p>
+    {% endif %}
+  </div>
+
+  <form class="adjust-form" method="get" action="{{ url_for('main.compare_vs_average') }}">
+    <input type="hidden" name="slug" value="{{ selected_slug }}">
+    <label class="adjust-toggle">
+      <input type="checkbox" name="vat_on" value="1" {{ 'checked' if adjustments.vat_rate is not none }}>
+      <span>Привести НДС к ставке</span>
+      <input class="adjust-input" type="text" name="vat" inputmode="decimal"
+             value="{{ adjustments.vat_display }}">
+      <span class="adjust-unit">%</span>
+    </label>
+    <label class="adjust-toggle">
+      <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
+      <span>Учитывать инфляцию</span>
+      <input class="adjust-input" type="text" name="inflation" inputmode="decimal"
+             value="{{ adjustments.inflation_display }}">
+      <span class="adjust-unit">% в год к</span>
+      <input class="adjust-input adjust-year" type="text" name="year" inputmode="numeric"
+             value="{{ adjustments.target_year }}">
+    </label>
+    <button type="submit" class="btn btn-secondary">Применить</button>
+  </form>
+
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Показатель</th>
+          <th>Средняя по классу</th>
+          <th>«{{ selected_name }}»</th>
+          <th>Отклонение</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="sections-label-col">
+            <span class="sections-label">Стоимость за м²</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ result.per_sqm.peer_avg_display }}</span>
+            <span class="avg-count-note">{{ result.per_sqm.peer_avg_count }} из {{ result.peer_count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ result.per_sqm.own_display }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ result.per_sqm.deviation_display }}</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="pair-subtitle">
+    Средняя стоимость по видам работ
+    <span class="sections-sub">по убыванию средней стоимости; столбцы можно отсортировать</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table works-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">
+            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+              Вид работ<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+              средний ₽/м²<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
+              «{{ selected_name }}», ₽/м²<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
+              Отклонение<span class="sections-arrow"></span>
+            </button>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in result.works %}
+        <tr>
+          <td class="sections-label-col" data-sort-value="{{ row.label }}">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-value"
+              data-sort-value="{{ row.peer_avg if row.peer_avg is not none else -1 }}">
+            <span class="sections-number">{{ row.peer_avg_display }}</span>
+          </td>
+          <td class="sections-value"
+              data-sort-value="{{ row.own_value if row.own_value is not none else -1 }}">
+            <span class="sections-number">{{ row.own_display }}</span>
+          </td>
+          <td class="sections-value"
+              data-sort-value="{{ row.deviation_pct if row.deviation_pct is not none else -9999 }}">
+            <span class="sections-number">{{ row.deviation_display }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

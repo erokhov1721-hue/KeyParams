@@ -1028,6 +1028,73 @@ def test_a_project_whose_correction_cannot_apply_is_excluded_from_the_average():
     assert plain["excluded"] == []
 
 
+# --- сравнение объекта со средним по классу ---
+
+def test_class_average_comparison_is_none_without_a_building_class():
+    passports = {"a": _passport("А", building_class=None)}
+
+    assert comparison.build_class_average_comparison("a", passports, {}, NONE) is None
+
+
+def test_class_average_comparison_is_none_without_a_peer_of_the_same_class():
+    passports = {
+        "a": _passport("А", building_class="Бизнес"),
+        "b": _passport("Б", building_class="Комфорт"),
+    }
+
+    assert comparison.build_class_average_comparison("a", passports, {}, NONE) is None
+
+
+def test_class_average_comparison_computes_the_per_sqm_deviation():
+    passports = {
+        "a": _passport("Проспект мира", building_class="Бизнес", total_area_sqm=1000.0),
+        "b": _passport("Б", building_class="Бизнес", total_area_sqm=1000.0),
+        "c": _passport("В", building_class="Бизнес", total_area_sqm=1000.0),
+        # Другой класс — не должен попасть в среднее.
+        "d": _passport("Г", building_class="Комфорт", total_area_sqm=1000.0),
+    }
+    costs = {
+        "a": {"facade": 1_500_000.0},   # 1500 ₽/м²
+        "b": {"facade": 1_000_000.0},   # 1000 ₽/м²
+        "c": {"facade": 1_000_000.0},   # 1000 ₽/м²
+        "d": {"facade": 10_000_000.0},  # заведомо другой класс
+    }
+
+    result = comparison.build_class_average_comparison("a", passports, costs, NONE)
+
+    assert result["building_class"] == "Бизнес"
+    assert result["peer_count"] == 2       # b, c — не d и не сам a
+    # Среднее по перам (b, c): 2 000 000 / 2000 = 1000 ₽/м².
+    assert result["per_sqm"]["peer_avg_display"] == "1 000 ₽/м²"
+    assert result["per_sqm"]["own_display"] == "1 500 ₽/м²"
+    # a на 50% дороже своих же перов: (1500 / 1000 - 1) * 100 = 50%.
+    assert result["per_sqm"]["deviation_pct"] == pytest.approx(50.0)
+    assert result["per_sqm"]["deviation_display"] == "+50,0 %"
+
+
+def test_class_average_comparison_work_rows_pair_each_type_with_its_deviation():
+    passports = {
+        "a": _passport("А", building_class="Бизнес", total_area_sqm=1000.0),
+        "b": _passport("Б", building_class="Бизнес", total_area_sqm=1000.0),
+    }
+    costs = {
+        "a": {"facade": 1_200_000.0, "roof": 100_000.0},
+        "b": {"facade": 1_000_000.0},
+    }
+
+    result = comparison.build_class_average_comparison("a", passports, costs, NONE)
+    works = {row["key"]: row for row in result["works"]}
+
+    assert works["facade"]["peer_avg"] == pytest.approx(1000.0)
+    assert works["facade"]["own_value"] == pytest.approx(1200.0)
+    assert works["facade"]["deviation_pct"] == pytest.approx(20.0)
+    # "roof" не встречается ни у одного пера — нет базы для процента.
+    assert works["roof"]["peer_avg"] is None
+    assert works["roof"]["own_value"] == pytest.approx(100.0)
+    assert works["roof"]["deviation_pct"] is None
+    assert works["roof"]["deviation_display"] == "—"
+
+
 def test_the_work_breakdown_is_not_affected_by_the_group_switch():
     passports = {
         "a": _passport("А", total_area_sqm=1000.0, general_contractor="X"),
