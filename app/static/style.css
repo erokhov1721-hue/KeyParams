@@ -772,6 +772,11 @@ h1 {
   color: var(--red);
 }
 
+.alert-warning {
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
 .field {
   margin-bottom: 20px;
 }

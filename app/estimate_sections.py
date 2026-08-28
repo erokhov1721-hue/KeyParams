@@ -317,12 +317,22 @@ def read_sections(path) -> list:
     offer at all: the report then leaves its cost lines blank, exactly as it
     did before any estimate was attached.
     """
+    return read_sections_with_warnings(path)[0]
+
+
+def read_sections_with_warnings(path):
+    """(sections, unmatched) — ``read_sections``, plus the section names on
+    the sheet actually used that ``classify`` couldn't place on a report
+    line, so a section quietly going missing from the report can be shown
+    to whoever is looking at the page, not just logged.
+    """
     path = Path(path)
     for ws in _checked_sheets(path):
-        sections = _sections_from_sheet(ws)
+        sections, unmatched = _sections_from_sheet(ws)
         if sections:
-            return sections
-    return []
+            _report_unmatched(unmatched)
+            return sections, unmatched
+    return [], []
 
 
 LEVEL_HEADER = "уровень"
@@ -376,7 +386,7 @@ def _sections_from_levels(ws):
     """
     header = _find_levels_header(ws)
     if header is None:
-        return []
+        return [], []
 
     sections, unmatched = [], []
     current_key = current_name = None
@@ -433,26 +443,29 @@ def _sections_from_levels(ws):
             total += amount
 
     close_section()
-    _report_unmatched(unmatched)
-    return sections
+    return sections, unmatched
 
 
 def _report_unmatched(unmatched):
     if unmatched:
         # Not an error: an estimate may carry sections this report has no line
-        # for. Logged so that a section quietly going missing can be traced.
+        # for. Logged so a section quietly going missing can be traced — and
+        # surfaced to read_sections_with_warnings' caller, so it doesn't only
+        # show up in a log nobody in production reads.
         logger.info("Разделы сметы без строки в отчёте: %s", "; ".join(unmatched))
 
 
 def _sections_from_sheet(ws):
-    sections = _sections_from_offer(ws)
-    return sections if sections else _sections_from_levels(ws)
+    sections, unmatched = _sections_from_offer(ws)
+    if sections:
+        return sections, unmatched
+    return _sections_from_levels(ws)
 
 
 def _sections_from_offer(ws):
     header = _find_header(ws)
     if header is None:
-        return []
+        return [], []
 
     sections = []
     unmatched = []
@@ -500,8 +513,7 @@ def _sections_from_offer(ws):
             continue
         sections.append(Section(key, str(name).strip(), amount))
 
-    _report_unmatched(unmatched)
-    return sections
+    return sections, unmatched
 
 
 # --- quantity coefficients ("Расчётные коэффициенты бетонных и фасадных

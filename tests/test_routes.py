@@ -2981,6 +2981,30 @@ def test_the_estimate_accordion_offers_to_upload_when_there_is_none(tmp_path):
     assert "Загрузить смету" in body
 
 
+def test_project_page_warns_about_an_unmatched_estimate_section(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [
+        ("8. Кровля", 1_000_000.0),
+        ("99. Содержание вертолётной площадки", 50_000.0),
+    ])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "не попал" in body
+    assert "Содержание вертолётной площадки" in body
+
+
+def test_project_page_has_no_warning_when_every_section_matches(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "не попал" not in body
+
+
 def test_uploading_an_estimate_offers_to_replace_it_afterwards(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

@@ -183,6 +183,14 @@
     <div class="alert alert-error">Смета: {{ estimate_problem }}</div>
     {% endif %}
 
+    {% if estimate_unmatched_sections %}
+    <div class="alert alert-warning">
+      Смета: раздел{{ 'ы' if estimate_unmatched_sections|length > 1 }} не попал{{ 'и' if estimate_unmatched_sections|length > 1 }} в отчёт —
+      не нашлось строки под название{{ 'я' if estimate_unmatched_sections|length > 1 }}:
+      «{{ estimate_unmatched_sections | join('», «') }}».
+    </div>
+    {% endif %}
+
     <div class="accordion" data-accordion data-fullscreen>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Смета</span>

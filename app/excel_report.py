@@ -189,7 +189,7 @@ def load_project(project_dir) -> dict:
             "Создайте проект заново, загрузив исходные документы."
         ) from e
 
-    costs, sources = estimate_costs(root, slug)
+    costs, sources, _unmatched = estimate_costs(root, slug)
     return {
         "passport": passport,
         "cover": storage.cover_path(root, slug),
@@ -199,7 +199,8 @@ def load_project(project_dir) -> dict:
 
 
 def estimate_costs(root, slug):
-    """``({line: total}, {line: [section names]})`` from the project's estimate.
+    """``({line: total}, {line: [section names]}, [unmatched section names])``
+    from the project's estimate.
 
     An estimate that can't be parsed is not worth failing the whole export
     over: the passport half of the report is still worth having, and the cost
@@ -208,18 +209,18 @@ def estimate_costs(root, slug):
     """
     path = storage.estimate_path(root, slug)
     if not path.exists():
-        return {}, {}
+        return {}, {}, []
     try:
-        sections = estimate_sections.read_sections(path)
+        sections, unmatched = estimate_sections.read_sections_with_warnings(path)
     except estimate_sections.EstimateSectionsError:
         logger.exception("Не удалось разобрать смету проекта «%s»", slug)
-        return {}, {}
+        return {}, {}, []
 
     totals, sources = {}, {}
     for section in sections:
         totals[section.key] = totals.get(section.key, 0.0) + section.amount
         sources.setdefault(section.key, []).append(section.name)
-    return totals, sources
+    return totals, sources, unmatched
 
 
 # --- the sheet -------------------------------------------------------------

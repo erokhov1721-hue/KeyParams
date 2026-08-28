@@ -198,6 +198,28 @@ def test_sections_the_report_has_no_line_for_are_left_out(tmp_path):
     assert estimate_sections.read_section_totals(path) == {"excavation": 200.0}
 
 
+def test_read_sections_with_warnings_reports_the_unmatched_section_name(tmp_path):
+    path = _save(_offer([
+        (1, 1, "1. Котлован", "Котлован", 200.0),
+        (2, 2, "2. Содержание вертолётной площадки", "Вертолёты", 50.0),
+    ]), tmp_path)
+
+    sections, unmatched = estimate_sections.read_sections_with_warnings(path)
+
+    assert [s.key for s in sections] == ["excavation"]
+    assert unmatched == ["2. Содержание вертолётной площадки"]
+
+
+def test_read_sections_with_warnings_is_empty_when_everything_matches(tmp_path):
+    path = _save(_offer([
+        (1, 1, "1. Котлован", "Котлован", 200.0),
+    ]), tmp_path)
+
+    sections, unmatched = estimate_sections.read_sections_with_warnings(path)
+
+    assert unmatched == []
+
+
 def test_a_workbook_that_is_not_an_offer_yields_nothing(tmp_path):
     wb = Workbook()
     wb.active.append(["Раздел", "Сумма"])

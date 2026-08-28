@@ -436,6 +436,15 @@ def _estimate_totals(root, slug):
     return excel_report.estimate_costs(root, slug)[0]
 
 
+def _estimate_unmatched_sections(root, slug):
+    """Названия разделов сметы, которым не нашлось строки в отчёте — то же,
+    что тихо уходит в лог estimate_sections, но здесь для показа на
+    странице: раздел, пропавший из отчёта, не должен быть виден только
+    тому, кто читает лог продакшна.
+    """
+    return excel_report.estimate_costs(root, slug)[2]
+
+
 def _concrete_volume_from_estimate(root, slug):
     """Объём монолита по смете проекта, в м³ — «Предлагаемое количество» из
     раздела «Возведение несущих конструкций здания». None, если сметы нет, её
@@ -546,6 +555,9 @@ def project_page(slug):
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     facade_area = _facade_area(root, slug, data)
     facade_coefficient = passport_module.facade_coefficient(data, facade_area)
+    estimate_unmatched_sections = (
+        _estimate_unmatched_sections(root, slug) if has_estimate else []
+    )
     return render_template(
         "project.html",
         slug=slug,
@@ -564,6 +576,7 @@ def project_page(slug):
         concrete_coefficient=concrete_coefficient,
         facade_area=facade_area,
         facade_coefficient=facade_coefficient,
+        estimate_unmatched_sections=estimate_unmatched_sections,
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
         has_cost_increase=increase_file.exists(),
