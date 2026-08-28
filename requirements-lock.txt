@@ -1,0 +1,117 @@
+# Every package this app is actually verified to run and pass its test
+# suite against — direct dependencies and everything they pull in
+# transitively (torch and its own dependency tree via easyocr chief among
+# them). requirements.txt/requirements-dev.txt state the direct, open
+# ranges a resolver is free to pick from; this file pins the exact
+# resolution that is currently known to work, so a fresh install months
+# from now can't silently pick up a materially different dependency set
+# with no code change of its own.
+#
+# Captured on Windows (the app's own deployment target — see README) with
+# `pip freeze`, which doesn't emit environment markers: the winrt-*/winocr
+# lines near the bottom are Windows-only, same as their marker in
+# requirements.txt, and pip simply fails to find them on another platform.
+# Drop those lines when locking on Linux/macOS.
+#
+# Install from this file for an exact reproduction of a working
+# environment:
+#     pip install -r requirements-lock.txt
+#
+# To refresh it after deliberately changing a version in requirements.txt
+# or requirements-dev.txt: install from those as usual, run the full test
+# suite, and once it's green regenerate this file with
+#     pip freeze > requirements-lock.txt
+annotated-types==0.8.0
+anthropic==0.121.0
+anyio==4.14.2
+blinker==1.9.0
+certifi==2026.7.22
+cffi==2.1.0
+charset-normalizer==3.4.9
+click==8.4.2
+colorama==0.4.6
+cryptography==49.0.0
+DAWG-Python==0.7.2
+distro==1.9.0
+docopt==0.6.2
+docstring_parser==0.18.0
+easyocr==1.7.2
+et_xmlfile==2.0.0
+filelock==3.32.2
+Flask==3.1.3
+Flask-WTF==1.3.0
+fsspec==2026.7.0
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+ImageIO==2.37.4
+iniconfig==2.3.0
+intervaltree==3.2.1
+ipymarkup==0.9.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+jiter==0.16.0
+lazy-loader==0.5
+MarkupSafe==3.0.3
+mpmath==1.3.0
+natasha==1.6.0
+navec==0.10.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.4.6
+opencv-python-headless==5.0.0.93
+openpyxl==3.1.5
+packaging==26.3
+pandas==3.0.3
+pdfminer.six==20260107
+pdfplumber==0.11.10
+pillow==12.3.0
+pip_system_certs==5.3
+playwright==1.62.0
+pluggy==1.6.0
+pyclipper==1.4.0
+pycparser==3.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+pyee==13.0.1
+Pygments==2.20.0
+pymorphy2==0.9.1
+pymorphy2-dicts-ru==2.4.417127.4579844
+pymupdf==1.28.2
+pypdf==6.15.0
+pypdfium2==5.11.0
+pytest==8.4.2
+python-bidi==0.6.11
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+razdel==0.5.0
+reportlab==4.5.1
+scikit-image==0.26.0
+scipy==1.18.0
+setuptools==84.0.0
+shapely==2.1.2
+six==1.17.0
+slovnet==0.6.0
+sniffio==1.3.1
+sortedcontainers==2.4.0
+sympy==1.14.0
+tifffile==2026.7.31
+torch==2.13.0
+torchvision==0.28.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.2
+waitress==3.0.2
+Werkzeug==3.1.8
+winocr==0.0.15
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
+WTForms==3.2.2
+yargy==0.16.0
