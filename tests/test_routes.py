@@ -2473,6 +2473,55 @@ def test_compare_vs_average_explains_when_there_are_no_peers_of_the_class(tmp_pa
     assert "нет ни одного того же класса" in body
 
 
+def test_compare_vs_average_page_offers_a_pdf_download_only_with_data(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "А", [("6. Фасадные работы", 1_500_000.0)], building_class="Бизнес",
+    )
+    _project_with_offer(
+        tmp_path, "Б", [("6. Фасадные работы", 1_000_000.0)], building_class="Бизнес",
+    )
+    lonely = _make_project_with_passport(tmp_path, "Одинокий", building_class="Элит")
+
+    with_data = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
+    without_data = client.get(f"/compare/vs-average?slug={lonely}").get_data(as_text=True)
+    no_selection = client.get("/compare/vs-average").get_data(as_text=True)
+
+    assert "Сохранить в PDF" in with_data
+    assert "Сохранить в PDF" not in without_data
+    assert "Сохранить в PDF" not in no_selection
+
+
+def test_compare_vs_average_pdf_returns_a_pdf_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "А", [("6. Фасадные работы", 1_500_000.0)], building_class="Бизнес",
+    )
+    _project_with_offer(
+        tmp_path, "Б", [("6. Фасадные работы", 1_000_000.0)], building_class="Бизнес",
+    )
+
+    resp = client.get(f"/compare/vs-average/pdf?slug={a}")
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/pdf"
+    assert resp.data.startswith(b"%PDF")
+
+
+def test_compare_vs_average_pdf_redirects_without_a_valid_selection(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    lonely = _make_project_with_passport(tmp_path, "Одинокий", building_class="Элит")
+
+    no_slug = client.get("/compare/vs-average/pdf")
+    no_peers = client.get(f"/compare/vs-average/pdf?slug={lonely}")
+
+    assert no_slug.status_code == 302
+    assert no_peers.status_code == 302
+
+
 def test_section_table_corrections_are_off_by_default(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

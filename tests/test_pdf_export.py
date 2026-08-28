@@ -236,6 +236,27 @@ def test_the_pdf_shows_the_averages_table():
     assert "Фасад" in text
 
 
+# --- сравнение со средним по классу ------------------------------------------
+
+def test_the_class_average_pdf_shows_the_comparison():
+    passports = {
+        "a": {"project_name": "Проспект мира", "building_class": "Бизнес",
+              "total_area_sqm": 1_000.0},
+        "b": {"project_name": "Б", "building_class": "Бизнес", "total_area_sqm": 1_000.0},
+    }
+    costs = {"a": {"facade": 1_500_000.0}, "b": {"facade": 1_000_000.0}}
+    result = comparison.build_class_average_comparison("a", passports, costs, NONE)
+
+    pdf_bytes = pdf_export.build_class_average_pdf(result, "Проспект мира")
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "против среднего по классу «Бизнес»" in text
+    assert "Фасад" in text
+    assert "1 500" in text
+    assert "1 000" in text
+    assert "50,0" in text
+
+
 # --- справка по одному объекту ----------------------------------------------
 
 def _project_passport(**fields):

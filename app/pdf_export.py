@@ -985,6 +985,126 @@ def build_compare_pdf(
     return buffer.getvalue()
 
 
+# --- сравнение со средним по классу ------------------------------------------
+
+def _class_average_block(result, project_name, styles, page_width):
+    """«Сравнить со средним по классу» — тот же экран, тот же блок: средняя
+    за м² и по видам работ против одного выбранного объекта, с отклонением
+    в процентах."""
+    if not result:
+        return []
+
+    story = [
+        Paragraph(
+            f'«{_esc(project_name)}» против среднего по классу '
+            f'«{_esc(result["building_class"])}»',
+            styles["heading"],
+        ),
+        Paragraph(
+            f'Сравнение с {result["peer_count"]} другими загруженными объектами '
+            f'класса «{_esc(result["building_class"])}». Стоимость за м² — '
+            'портфельная: сумма стоимости работ делится на сумму площадей, а не '
+            'усредняются ставки отдельных объектов. С поправками на НДС и '
+            'инфляцию, если они включены.',
+            styles["sub"],
+        ),
+    ]
+    if result["excluded"]:
+        names = "», «".join(_esc(name) for name in result["excluded"])
+        story.append(Paragraph(
+            f'Не учтены из-за включённой поправки — год подписания или ставка '
+            f'НДС неизвестны: «{names}».',
+            styles["sub"],
+        ))
+
+    label_w = min(200.0, page_width * 0.34)
+    rest_w = (page_width - label_w) / 3
+    per_sqm = result["per_sqm"]
+    data = [
+        [
+            Paragraph("Показатель", styles["head"]),
+            Paragraph("средняя по классу", styles["head"]),
+            Paragraph(_esc(project_name), styles["head"]),
+            Paragraph("отклонение", styles["head"]),
+        ],
+        [
+            Paragraph("Стоимость за м²", styles["cell"]),
+            [
+                Paragraph(per_sqm["peer_avg_display"], styles["cell_right"]),
+                Paragraph(
+                    f'{per_sqm["peer_avg_count"]} из {result["peer_count"]}', styles["note"],
+                ),
+            ],
+            Paragraph(per_sqm["own_display"], styles["cell_right"]),
+            Paragraph(per_sqm["deviation_display"], styles["cell_right"]),
+        ],
+    ]
+    table = Table(data, colWidths=[label_w, rest_w, rest_w, rest_w])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    story.append(Paragraph("Средняя стоимость по видам работ", styles["subheading"]))
+    work_label_w = min(180.0, page_width * 0.3)
+    work_rest = (page_width - work_label_w) / 3
+    work_data = [[
+        Paragraph("Вид работ", styles["head"]),
+        Paragraph("средний ₽/м²", styles["head"]),
+        Paragraph(f'{_esc(project_name)}, ₽/м²', styles["head"]),
+        Paragraph("отклонение", styles["head"]),
+    ]]
+    for row in result["works"]:
+        work_data.append([
+            Paragraph(row["label"], styles["cell"]),
+            Paragraph(row["peer_avg_display"], styles["cell_right"]),
+            Paragraph(row["own_display"], styles["cell_right"]),
+            Paragraph(row["deviation_display"], styles["cell_right"]),
+        ])
+    work_table = Table(
+        work_data, colWidths=[work_label_w, work_rest, work_rest, work_rest], repeatRows=1,
+    )
+    work_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(work_table)
+    return story
+
+
+def build_class_average_pdf(result, project_name) -> bytes:
+    """«Сравнить со средним по классу» — тот же блок, что на экране, одним
+    файлом. ``result`` — то, что вернул
+    ``comparison.build_class_average_comparison``; вызывающий отвечает за
+    то, чтобы он не был None — файл без данных на этой странице не бывает.
+    """
+    _ensure_fonts()
+    styles = _styles()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=PAGE_SIZE, title="Сравнение со средним по классу",
+        leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
+    )
+    page_width = PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
+
+    story = [Paragraph("Сравнение со средним по классу", styles["title"])]
+    story += _class_average_block(result, project_name, styles, page_width)
+
+    doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
+    return buffer.getvalue()
+
+
 # --- справка по одному объекту ----------------------------------------------
 #
 # Тот же набор карточек, что на странице проекта, минус сама смета: там,

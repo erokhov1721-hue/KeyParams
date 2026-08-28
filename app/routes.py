@@ -359,6 +359,32 @@ def compare_vs_average():
     )
 
 
+@bp.route("/compare/vs-average/pdf", methods=["GET"])
+def compare_vs_average_pdf():
+    root = _projects_root()
+    all_slugs = storage.list_project_slugs(root)
+    passports = {slug: _safe_passport(root, slug) for slug in all_slugs}
+    slug = request.args.get("slug")
+    if slug not in passports:
+        return redirect(url_for("main.compare_vs_average"))
+
+    adjustments = comparison.adjustments_from_args(request.args)
+    costs = _section_costs(root, all_slugs)
+    result = comparison.build_class_average_comparison(slug, passports, costs, adjustments)
+    if result is None:
+        # Нечего класть в файл — назад на страницу, она сама объяснит, почему
+        # (нет класса дома или пар того же класса), а не отдаст пустой PDF.
+        return redirect(url_for("main.compare_vs_average", slug=slug))
+
+    project_name = passports[slug].get("project_name") or slug
+    pdf_bytes = pdf_export.build_class_average_pdf(result, project_name)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=sravnenie_so_srednim.pdf"},
+    )
+
+
 @bp.route("/projects/new", methods=["GET"])
 def new_project_form():
     return render_template("new_project.html", error=None)

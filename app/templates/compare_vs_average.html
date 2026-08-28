@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Сравнить со средним по классу{% endblock %}
+{% block main_extra_class %}container-wide{% endblock %}
+{% block header_actions %}
+{% if result %}
+<a class="btn btn-secondary"
+   href="{{ url_for('main.compare_vs_average_pdf', **request.args.to_dict()) }}" download>Сохранить в PDF</a>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
