@@ -10,8 +10,8 @@ from flask import (
 
 from . import (
     comparison, cost_increase, estimate, estimate_sections, excel_report, extractors,
-    passport as passport_module, pdf_export, project_filter, storage, upload_guard,
-    workbook_cache,
+    passport as passport_module, pdf_export, pdf_reader, project_filter, storage,
+    upload_guard, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -659,6 +659,13 @@ def upload_project_cover(slug):
 
 @bp.route("/projects/<slug>/contract-terms", methods=["POST"])
 def upload_contract_terms(slug):
+    """Заменить протокол условий.
+
+    Файл сначала разбирается во временном месте и только при успехе занимает
+    место старого — как и у ДГП со сметой: файл, чья подпись PDF настоящая,
+    но содержимое повреждено, не должен стирать протокол, который уже
+    успешно читался.
+    """
     root = _projects_root()
     if slug not in storage.list_project_slugs(root):
         abort(404)
@@ -676,13 +683,24 @@ def upload_contract_terms(slug):
         abort(400)
 
     dest = storage.contract_terms_path(root, slug)
-    storage.save_upload(pdf_file, dest)
+    tmp = dest.with_name(dest.name + ".upload")
+    pdf_file.save(tmp)
 
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
-    extracted, filled, problem = passport_module.build_contract_terms(
-        dest, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
-    )
+    try:
+        extracted, filled, problem = passport_module.build_contract_terms(
+            tmp, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
+        )
+    except pdf_reader.PdfReadError as e:
+        current_app.logger.warning("Протокол отклонён: %s", e)
+        tmp.unlink(missing_ok=True)
+        return redirect(url_for(
+            "main.project_page", slug=slug,
+            problem=passport_module.CONTRACT_PROBLEM_UNREADABLE,
+        ))
+
+    tmp.replace(dest)
     data.update(extracted)
     data["contract_auto_fields"] = filled
     passport_module.save_passport(data, path)

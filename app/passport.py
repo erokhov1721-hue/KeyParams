@@ -185,6 +185,7 @@ def build_passport(project_name: str, dgp_path, tz_path) -> dict:
 
 CONTRACT_PROBLEM_NOTHING_FOUND = "nothing_found"
 CONTRACT_PROBLEM_COLUMN_UNKNOWN = "column_unknown"
+CONTRACT_PROBLEM_UNREADABLE = "unreadable"
 
 # Below this much text, an engine has not read the page — it has returned the
 # few stray marks it could make out. A protocol page holds thousands of
@@ -225,6 +226,10 @@ def vat_for_year(year_signed):
 # already been down and failed, and typing the four values in is quicker than
 # either.
 CONTRACT_PROBLEM_MESSAGES = {
+    CONTRACT_PROBLEM_UNREADABLE: (
+        "Не удалось прочитать файл — убедитесь, что это корректный PDF. "
+        "Прежний протокол оставлен на месте."
+    ),
     CONTRACT_PROBLEM_NOTHING_FOUND: (
         "Файл прочитан, но ни одно условие распознать не удалось. "
         "Впишите значения вручную."

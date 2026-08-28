@@ -1798,6 +1798,39 @@ def test_contract_terms_upload_saves_vat_from_recognition(tmp_path, monkeypatch)
     assert "vat" in saved["contract_auto_fields"]
 
 
+def test_an_unreadable_contract_terms_upload_is_refused_and_the_old_one_kept(tmp_path, monkeypatch):
+    # The file passes the signature check (it starts with "%PDF") but is not
+    # a real PDF underneath, so pdfplumber itself fails once the upload gets
+    # to build_contract_terms — that must not be allowed to replace a
+    # protocol that was already read successfully.
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+    _stub_scan_returning(monkeypatch, {"performance_bond_pct": "3%"}, None)
+    _upload_contract_terms(client, slug)
+    dest = storage.contract_terms_path(tmp_path, slug)
+    original = dest.read_bytes()
+    saved_before = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+
+    def broken_read(path):
+        raise passport_module.pdf_reader.PdfReadError("boom")
+    monkeypatch.setattr(passport_module.pdf_reader, "read_pdf_text", broken_read)
+
+    resp = _upload_contract_terms(client, slug, follow=False)
+
+    assert f"problem={passport_module.CONTRACT_PROBLEM_UNREADABLE}" in resp.headers["Location"]
+    assert dest.read_bytes() == original
+    assert not dest.with_name(dest.name + ".upload").exists()
+    saved_after = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved_after == saved_before
+
+    body = client.get(f"/projects/{slug}?problem={passport_module.CONTRACT_PROBLEM_UNREADABLE}") \
+        .get_data(as_text=True)
+    assert "Прежний протокол оставлен на месте" in body
+
+
 # --- contract-terms PDF as part of project creation ---
 
 def _dgp_bytes_signed_in(year):
