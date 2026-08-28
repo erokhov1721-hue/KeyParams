@@ -498,7 +498,24 @@ def _sections_from_offer(ws):
     sections = []
     unmatched = []
     started = False
+    # Past the offer's own "ИТОГО": one offer appended, right after its
+    # bottom line, a second table restating a few of its sections (facade,
+    # finishing, landscaping) with a cost breakdown underneath each — an
+    # "own value, then its unnumbered parts" shape identical to a normal
+    # section, just with no item numbers on the parts. Reading those parts
+    # as more sections of their own (the flat rule below, meant for a
+    # standalone unnumbered addition like "Дополнительные работы") added
+    # each one's cost a second time on top of the section it belongs to.
+    # Past this point only a row that is itself numbered is a section in
+    # its own right; its unnumbered parts are already inside its total.
+    past_total = False
     for row in range(header.row + 2, ws.max_row + 1):
+        if _cell_text(ws, row, 1).startswith("итого"):
+            if past_total:
+                break
+            past_total = True
+            continue
+
         number = ws.cell(row=row, column=header.section_col).value
         item = ws.cell(row=row, column=header.item_col).value if header.item_col else None
         article = ws.cell(row=row, column=header.article_col).value
@@ -509,9 +526,10 @@ def _sections_from_offer(ws):
         # offer this was written against, "Дополнительные работы" sits there
         # with 12.7 million against it, and skipping it would have left the
         # report 12.7 million short of the offer's own bottom line. The
-        # "ИТОГО" rows below look the same but name themselves in the margin
-        # rather than in a column this reads, so they fall out on their own.
-        is_extra = started and number is None and item is None
+        # "ИТОГО" rows themselves look the same but name themselves in the
+        # margin rather than in a column this reads, so they fall out on
+        # their own.
+        is_extra = not past_total and started and number is None and item is None
         if not (is_section or is_extra):
             continue
 

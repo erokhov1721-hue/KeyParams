@@ -196,6 +196,67 @@ def test_the_closing_total_rows_are_not_counted(tmp_path):
     assert totals == {"excavation": 200.0}
 
 
+def test_a_backup_breakdown_after_the_итого_row_is_not_double_counted(tmp_path):
+    # One offer appended, right after its "ИТОГО", a second table restating
+    # one of its sections (a numbered row, its own total) with the cost
+    # broken down underneath into unnumbered parts that sum back to it.
+    # Reading those parts as more standalone additions — the rule meant for
+    # a section-less row like "Дополнительные работы" — added that
+    # section's cost a second time on top of what it already contributed.
+    wb = _offer([
+        (1, 1, "1. Котлован", "Котлован", 200.0),
+    ])
+    ws = wb.active
+    ws.cell(row=12, column=1, value="ИТОГО, руб. с учетом НДС")
+    ws.cell(row=12, column=12, value=200.0)
+    # The backup table: "2. Гидроизоляция" restated with its own total,
+    # then the two unnumbered parts that make it up.
+    ws.cell(row=14, column=2, value=2)
+    ws.cell(row=14, column=4, value="Гидроизоляция")
+    ws.cell(row=14, column=8, value=1)
+    ws.cell(row=14, column=12, value=50.0)
+    ws.cell(row=15, column=4, value="Праймер")
+    ws.cell(row=15, column=8, value=1)
+    ws.cell(row=15, column=12, value=30.0)
+    ws.cell(row=16, column=4, value="Мембрана")
+    ws.cell(row=16, column=8, value=1)
+    ws.cell(row=16, column=12, value=20.0)
+    ws.cell(row=17, column=1, value="ИТОГО, руб. с учетом НДС")
+    ws.cell(row=17, column=12, value=50.0)
+    path = _save(wb, tmp_path)
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"excavation": 200.0, "waterproofing": 50.0}
+
+
+def test_a_third_block_after_the_backup_breakdown_is_not_counted(tmp_path):
+    # Nothing in this codebase's real estimates goes three blocks deep — if
+    # one ever does, the safer failure is to stop reading rather than to
+    # guess at a second unfamiliar shape.
+    wb = _offer([
+        (1, 1, "1. Котлован", "Котлован", 200.0),
+    ])
+    ws = wb.active
+    ws.cell(row=12, column=1, value="ИТОГО, руб. с учетом НДС")
+    ws.cell(row=12, column=12, value=200.0)
+    ws.cell(row=14, column=2, value=2)
+    ws.cell(row=14, column=4, value="Гидроизоляция")
+    ws.cell(row=14, column=8, value=1)
+    ws.cell(row=14, column=12, value=50.0)
+    ws.cell(row=15, column=1, value="ИТОГО, руб. с учетом НДС")
+    ws.cell(row=15, column=12, value=50.0)
+    ws.cell(row=17, column=2, value=3)
+    ws.cell(row=17, column=4, value="Кровля")
+    ws.cell(row=17, column=8, value=1)
+    ws.cell(row=17, column=12, value=999.0)
+    path = _save(wb, tmp_path)
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"excavation": 200.0, "waterproofing": 50.0}
+
+
 def test_the_totals_column_is_the_one_under_the_total_cost_heading(tmp_path):
     # Both headings have a "Всего" beneath them; picking the unit-price one
     # would report 1 rouble per section.
