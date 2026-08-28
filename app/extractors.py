@@ -1,5 +1,6 @@
 import math
 import re
+from decimal import Decimal, InvalidOperation
 
 GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\s*«[^»]+»')
 # The title page always states the object's address as "расположенный по
@@ -82,6 +83,23 @@ _NUMBER_BODY_RE = re.compile(r'^\d[\d\s ]*([.,]\d+)?$')
 _MINUS_CHARS = '-−'
 
 
+def _parsed_number_body(text):
+    """(body, negative) — ``text`` normalized down to a plain numeral
+    string and its sign, or (None, None) if it doesn't name one number
+    cleanly. Shared by ``parse_number`` and ``parse_money``, which only
+    differ in what they convert the body to."""
+    if text is None:
+        return None, None
+    t = text.strip()
+    if t in ('', '-', '—', '–', '−'):
+        return None, None
+    negative = t[0] in _MINUS_CHARS
+    body = t[1:].strip() if negative or t[0] == '+' else t
+    if not _NUMBER_BODY_RE.match(body):
+        return None, None
+    return WHITESPACE_RE.sub('', body).replace(',', '.'), negative
+
+
 def parse_number(text):
     """The number ``text`` names in full, or None if it doesn't name one
     cleanly.
@@ -93,22 +111,39 @@ def parse_number(text):
     number is worse than a missing one. A leading typographic minus is
     still read as negative, and a result too large to be a real quantity
     (``inf``) is refused the same as anything else that doesn't parse.
+
+    Returns ``float`` — fine for a physical quantity (an area, a volume, a
+    coefficient), which is approximate by nature. Money goes through
+    ``parse_money`` instead: summed across many estimate lines, a float's
+    binary rounding compounds in a way a single area or percentage never
+    accumulates enough terms to.
     """
-    if text is None:
+    body, negative = _parsed_number_body(text)
+    if body is None:
         return None
-    t = text.strip()
-    if t in ('', '-', '—', '–', '−'):
-        return None
-    negative = t[0] in _MINUS_CHARS
-    body = t[1:].strip() if negative or t[0] == '+' else t
-    if not _NUMBER_BODY_RE.match(body):
-        return None
-    body = WHITESPACE_RE.sub('', body).replace(',', '.')
     try:
         value = float(body)
     except ValueError:
         return None
     if not math.isfinite(value):
+        return None
+    return -value if negative else value
+
+
+def parse_money(text):
+    """Like ``parse_number``, but returns ``Decimal`` — for a rouble
+    amount, which must not pick up a binary float's rounding on the way in
+    from a document on top of whatever Excel's own float64 storage already
+    cost it. See ``parse_number`` for what counts as a cleanly-written
+    number; the two share that rule and differ only in what they convert
+    the body to.
+    """
+    body, negative = _parsed_number_body(text)
+    if body is None:
+        return None
+    try:
+        value = Decimal(body)
+    except InvalidOperation:
         return None
     return -value if negative else value
 

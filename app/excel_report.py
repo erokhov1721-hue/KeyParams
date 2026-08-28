@@ -12,6 +12,7 @@ recalculates.
 import logging
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
@@ -217,7 +218,7 @@ def estimate_costs(root, slug):
 
     totals, sources = {}, {}
     for section in sections:
-        totals[section.key] = totals.get(section.key, 0.0) + section.amount
+        totals[section.key] = totals.get(section.key, Decimal("0")) + section.amount
         sources.setdefault(section.key, []).append(section.name)
     return totals, sources, unmatched
 

@@ -29,6 +29,7 @@ in two ("ВИС - механические системы", "ВИС - Элект
 import logging
 import re
 from collections import namedtuple
+from decimal import Decimal
 
 import openpyxl
 
@@ -159,17 +160,28 @@ def _named(value):
 
 
 def _amount(value):
-    """The number in a money cell, or None if the cell holds no number.
+    """The number in a money cell, as ``Decimal``, or None if the cell
+    holds no number.
 
     A zero is a number like any other: a kind of work that wasn't in the
     estimate at all starts at zero, and that zero is the whole reason its
-    increase can't be stated as a percentage.
+    increase can't be stated as a percentage. Decimal because this gets
+    compared against ``estimate_sections.read_section_totals`` (Decimal
+    itself, for the same reason) and summed across every kind of work into
+    a report total — a float's rounding would compound across both.
     """
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    return extractors.parse_number(str(value))
+        return Decimal(str(value))
+    return extractors.parse_money(str(value))
+
+
+def _as_decimal(value):
+    """``value`` as ``Decimal``, unchanged if it already is one — for
+    normalizing a caller-supplied number (``Line.was``/``now``,
+    ``estimate_totals``) regardless of what type it actually arrived as."""
+    return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
 Header = namedtuple("Header", "row name_col was_col now_col")
@@ -273,7 +285,7 @@ def _lines_from_sheet(ws, header) -> list:
         now = ws.amount_at(row, header.now_col)
         if was is None and now is None:
             continue
-        lines.append(Line(name, was or 0.0, now or 0.0))
+        lines.append(Line(name, was or Decimal("0"), now or Decimal("0")))
     return lines
 
 
@@ -283,10 +295,13 @@ def _percent(baseline, current):
     Work the baseline priced at nothing grew from nothing, and the share by which
     nothing grew is not a number. Saying "+100%" there, or quietly writing a 0,
     would both read as a fact about the work rather than about the arithmetic.
+
+    Converts to float for the division: a percentage is a ratio, not an
+    amount that gets summed, and doesn't need Decimal's precision.
     """
     if not baseline:
         return None if current else 0.0
-    return (current / baseline - 1.0) * 100.0
+    return (float(current) / float(baseline) - 1.0) * 100.0
 
 
 def _current(was, now, baseline):
@@ -325,7 +340,12 @@ def build_report(lines, estimate_totals=None) -> Report:
     the report says as much through ``from_estimate`` rather than presenting the
     two as the same thing.
     """
-    estimate_totals = estimate_totals or {}
+    # Normalized to Decimal regardless of what the caller passed in: the
+    # workbook's own was/now are Decimal (see _amount), and comparing or
+    # subtracting a mismatched Decimal/float pair below would raise.
+    estimate_totals = {
+        key: _as_decimal(value) for key, value in (estimate_totals or {}).items()
+    }
     from_estimate = bool(estimate_totals)
 
     gathered, unmatched = {}, []
@@ -334,19 +354,21 @@ def build_report(lines, estimate_totals=None) -> Report:
         if key is None:
             unmatched.append(line.name)
             continue
-        was, now, sources = gathered.get(key, (0.0, 0.0, []))
-        gathered[key] = (was + line.was, now + line.now, sources + [line.name])
+        was, now, sources = gathered.get(key, (Decimal("0"), Decimal("0"), []))
+        gathered[key] = (
+            was + _as_decimal(line.was), now + _as_decimal(line.now), sources + [line.name],
+        )
 
     rows = []
     for key in estimate_sections.CATEGORY_KEYS:
         if key not in gathered and key not in estimate_totals:
             continue
-        was, now, sources = gathered.get(key, (0.0, 0.0, []))
+        was, now, sources = gathered.get(key, (Decimal("0"), Decimal("0"), []))
         estimate = estimate_totals.get(key)
         # Work the estimate never priced starts from nothing, so every rouble of
         # it is increase. Work priced with no estimate to compare against starts
         # from "было", which is the only earlier figure there is.
-        baseline = (estimate or 0.0) if from_estimate else was
+        baseline = (estimate or Decimal("0")) if from_estimate else was
         current, source = _current(was, now, baseline)
         # Ноль по смете и ноль в файле — строка, которая ничего не сообщает.
         # В таблице от неё только «0 · 0 · 0 %», и среди настоящих цифр это
@@ -374,7 +396,7 @@ def build_report(lines, estimate_totals=None) -> Report:
     total = Row(
         key=None, label="Итого", sources=[],
         was=sum(row.was for row in rows), now=sum(row.now for row in rows),
-        estimate=sum(row.estimate or 0.0 for row in rows) if from_estimate else None,
+        estimate=sum(row.estimate or Decimal("0") for row in rows) if from_estimate else None,
         baseline=baseline_total, current=current_total,
         delta=current_total - baseline_total,
         percent=_percent(baseline_total, current_total),

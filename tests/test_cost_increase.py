@@ -77,8 +77,23 @@ def test_reads_the_sections_of_a_real_file():
         "preparation", "excavation", "waterproofing", "concrete", "partitions",
         "facade", "roof", "finishing", "lifts", "landscaping", "technology", "rd",
     }
-    assert rows["waterproofing"].delta == pytest.approx(13340083.64)
+    assert float(rows["waterproofing"].delta) == pytest.approx(13340083.64)
     assert rows["waterproofing"].percent == pytest.approx(12.1, abs=0.05)
+
+
+def test_the_was_and_now_totals_sum_exactly_not_with_a_floats_rounding_drift():
+    # 100000.10 + 200000.20 + 300000.05 drifts to 600000.3500000001 summed
+    # as float — read as Decimal (see cost_increase._amount), it doesn't.
+    from decimal import Decimal
+    report = _report([
+        ("Котлован 1", 100000.10, 100000.10),
+        ("Котлован 2", 200000.20, 200000.20),
+        ("Котлован 3", 300000.05, 300000.05),
+    ])
+    row = _by_key(report)["excavation"]
+
+    assert row.was == Decimal("600000.35")
+    assert isinstance(row.was, Decimal)
 
 
 def test_the_two_vis_rows_become_one_line_of_engineering_systems():
@@ -92,8 +107,8 @@ def test_the_two_vis_rows_become_one_line_of_engineering_systems():
 
     assert [row.key for row in report.rows] == ["utilities"]
     row = report.rows[0]
-    assert row.was == pytest.approx(1940018286.19)
-    assert row.now == pytest.approx(1950018286.19)
+    assert float(row.was) == pytest.approx(1940018286.19)
+    assert float(row.now) == pytest.approx(1950018286.19)
     assert row.sources == [
         "ВИС - механические системы",
         "ВИС - Электрические и слаботочные системы",
@@ -199,7 +214,7 @@ def test_work_that_was_not_in_the_estimate_has_no_percentage():
     report = _report([("Благоустройство, дороги", 0, 207987892.97)])
 
     assert report.rows[0].percent is None
-    assert report.rows[0].delta == pytest.approx(207987892.97)
+    assert float(report.rows[0].delta) == pytest.approx(207987892.97)
     assert cost_increase.format_percent(None) is None
 
 
@@ -285,7 +300,7 @@ def test_work_the_estimate_never_priced_is_increase_to_the_last_rouble():
 
     assert rows["landscaping"].estimate is None
     assert rows["landscaping"].baseline == 0.0
-    assert rows["landscaping"].delta == pytest.approx(207987892.97)
+    assert float(rows["landscaping"].delta) == pytest.approx(207987892.97)
     # Процента нет: доля, на которую выросло ничто, — не число.
     assert rows["landscaping"].percent is None
 

@@ -61,6 +61,35 @@ def test_parse_number_em_dash_alone_is_still_none():
     assert extractors.parse_number("—") is None
 
 
+# --- parse_money ---
+
+def test_parse_money_returns_a_decimal_not_a_float():
+    from decimal import Decimal
+    assert extractors.parse_money("1 234,56") == Decimal("1234.56")
+
+
+def test_parse_money_does_not_pick_up_float_rounding():
+    # The whole point: a value float can't represent exactly must still
+    # come out exact from Decimal parsing.
+    from decimal import Decimal
+    assert extractors.parse_money("10067050887.72") == Decimal("10067050887.72")
+
+
+def test_parse_money_reads_a_typographic_minus():
+    from decimal import Decimal
+    assert extractors.parse_money("−500") == Decimal("-500")
+
+
+def test_parse_money_rejects_the_same_garbage_parse_number_does():
+    assert extractors.parse_money("12abc34") is None
+    assert extractors.parse_money("1e400") is None
+
+
+def test_parse_money_empty_is_none():
+    assert extractors.parse_money("") is None
+    assert extractors.parse_money(None) is None
+
+
 # --- extract_general_contractor (synthetic) ---
 
 def test_extract_general_contractor_synthetic():

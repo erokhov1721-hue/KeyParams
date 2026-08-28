@@ -2,6 +2,7 @@ import json
 import os
 import re
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from . import (
@@ -478,12 +479,16 @@ def format_number(value):
     """Space-group a number's thousands for readability (10067050887.72 ->
     "10 067 050 887.72"), dropping ".00" for whole numbers. Passes through
     unchanged if ``value`` isn't a number, so it's safe to call on any
-    passport field without checking the field's type first."""
+    passport field without checking the field's type first. A ``Decimal``
+    (money, kept exact through its own arithmetic) is formatted the same
+    as the equal float — display rounding to two places doesn't need the
+    precision that arithmetic does."""
     if value is None:
         return None
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, (int, float, Decimal)):
         return value
-    formatted = f"{value:,.0f}" if float(value).is_integer() else f"{value:,.2f}"
+    value = float(value)
+    formatted = f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
     return formatted.replace(',', ' ')
 
 

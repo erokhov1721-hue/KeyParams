@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import openpyxl
 from openpyxl import Workbook
 
@@ -113,6 +115,21 @@ def test_totals_are_read_per_section(tmp_path):
     assert totals == {"preparation": 100.0, "excavation": 200.0}
 
 
+def test_totals_sum_exactly_not_with_a_floats_rounding_drift(tmp_path):
+    # 100000.10 + 200000.20 + 300000.05 drifts to 600000.3500000001 summed
+    # as float — read as Decimal, it doesn't.
+    path = _save(_offer([
+        (1, 1, "1. Подготовительные работы", "Подготовка", 100000.10),
+        (2, 2, "1. Подготовительные работы", "Подготовка 2", 200000.20),
+        (3, 3, "1. Подготовительные работы", "Подготовка 3", 300000.05),
+    ]), tmp_path)
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals["preparation"] == Decimal("600000.35")
+    assert isinstance(totals["preparation"], Decimal)
+
+
 def test_the_lot_header_row_is_not_counted_as_a_section(tmp_path):
     # An offer opens with the lot itself: a section number, no article name,
     # and the whole offer as its total.
@@ -136,7 +153,7 @@ def test_a_section_named_only_in_the_works_column_is_still_read(tmp_path):
 
     totals = estimate_sections.read_section_totals(path)
 
-    assert totals["utilities"] == 1908214707.4
+    assert totals["utilities"] == Decimal("1908214707.4")
 
 
 def test_a_section_that_costs_nothing_is_a_zero_not_a_gap(tmp_path):

@@ -422,6 +422,20 @@ def test_estimate_totals_fill_the_cost_lines(tmp_path):
     assert ws["F22"].value.startswith("=")
 
 
+def test_estimate_totals_write_the_exact_decimal_sum_not_a_floats_drift(tmp_path):
+    # 100000.10 + 200000.20 + 300000.05 drifts to 600000.3500000001 if
+    # summed as float before ever reaching the cell — Decimal, it doesn't.
+    from decimal import Decimal
+    costs = {"rd": Decimal("100000.10") + Decimal("200000.20") + Decimal("300000.05")}
+    ws = _build([{
+        "passport": _passport("П", total_area_sqm=1000.0),
+        "cover": None,
+        "costs": costs,
+    }], tmp_path)
+
+    assert ws["E16"].value == 600000.35
+
+
 def test_mr_lines_are_filled_from_the_estimate_too(tmp_path):
     ws = _build([{
         "passport": _passport("П", total_area_sqm=1000.0),

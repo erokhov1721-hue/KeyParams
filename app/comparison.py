@@ -206,6 +206,26 @@ def _money(value):
     return format_number(round(value)) if value is not None else None
 
 
+def _as_float_costs(costs_by_slug):
+    """``costs_by_slug`` (``Decimal`` money, straight from
+    ``estimate_sections``/``excel_report.estimate_costs``) converted to
+    plain ``float``.
+
+    Everything this module does with a cost from here on is a ratio or a
+    derived display value already — a VAT/inflation factor, a ₽/м² rate, a
+    deviation from another project's figure, a share of a total — never a
+    sum across many estimate lines that would compound a float's rounding
+    the way the review flagged. That summation already happened upstream,
+    in Decimal, where the many terms actually are; converting once at the
+    door here keeps the rest of this module's arithmetic exactly what it
+    was before Decimal existed anywhere in this codebase.
+    """
+    return {
+        slug: {key: float(value) for key, value in costs.items()}
+        for slug, costs in (costs_by_slug or {}).items()
+    }
+
+
 def _source_vat(passport):
     """The rate the estimate was priced at.
 
@@ -320,7 +340,7 @@ def build_section_table(slugs, passports, costs_by_slug, adjustments):
     Returns None if not one of the chosen projects has an estimate: a table of
     nothing but dashes only takes up the screen.
     """
-    costs_by_slug = costs_by_slug or {}
+    costs_by_slug = _as_float_costs(costs_by_slug)
     if not any(costs_by_slug.get(slug) for slug in slugs):
         return None
 
@@ -447,7 +467,7 @@ def build_pair_cards(left, right, passports, costs_by_slug, adjustments):
     if left not in passports or right not in passports:
         return None
 
-    costs_by_slug = costs_by_slug or {}
+    costs_by_slug = _as_float_costs(costs_by_slug)
     sides = []
     for slug in (left, right):
         passport = passports[slug]
@@ -585,12 +605,15 @@ def _project_increase(slug, passport, report, adjustments):
         _source_vat(passport), passport.get("year_signed"), adjustments,
     )
     total = report.total
-    delta = total.delta * factor
+    # cost_increase.Row's money fields are Decimal (see cost_increase._amount)
+    # — converted to float here, at the door into this module's own ratio-
+    # and-factor arithmetic, same as _as_float_costs does for estimate costs.
+    delta = float(total.delta) * factor
     area = passport.get("total_area_sqm") or None
     return {
         "slug": slug,
         "name": passport.get("project_name") or slug,
-        "baseline": total.baseline * factor,
+        "baseline": float(total.baseline) * factor,
         "delta": delta,
         "area": area,
         "per_sqm": delta / area if area else None,
@@ -635,7 +658,7 @@ def _work_rows(slugs, reports, factors, areas):
                 "projects_up": 0,
                 "percents": [],
             })
-            entry["delta"] += row.delta * factors[slug]
+            entry["delta"] += float(row.delta) * factors[slug]
             entry["area"] += areas.get(slug) or 0.0
             entry["areas_known"] = entry["areas_known"] and bool(areas.get(slug))
             entry["projects_total"] += 1
@@ -958,7 +981,7 @@ def build_averages_table(slugs, passports, costs_by_slug, adjustments, group_by=
     if not slugs:
         return None
 
-    costs_by_slug = costs_by_slug or {}
+    costs_by_slug = _as_float_costs(costs_by_slug)
     groups = _grouped_slugs(slugs, passports, group_by)
     rows = [
         _averages_row(label, group_slugs, passports, costs_by_slug, adjustments)

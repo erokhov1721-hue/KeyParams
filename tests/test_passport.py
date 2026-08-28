@@ -38,6 +38,11 @@ def test_format_number_leaves_non_numeric_string_untouched():
     assert passport.format_number("Бизнес") == "Бизнес"
 
 
+def test_format_number_formats_a_decimal_the_same_as_the_equal_float():
+    from decimal import Decimal
+    assert passport.format_number(Decimal("10067050887.72")) == "10 067 050 887.72"
+
+
 def test_price_per_sqm_computed_from_price_and_total_area():
     data = {"contract_price_rub": 10067050887.72, "total_area_sqm": 67413.0}
     assert passport.price_per_sqm(data) == 10067050887.72 / 67413.0

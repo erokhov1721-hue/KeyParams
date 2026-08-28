@@ -15,6 +15,7 @@ are the industry's and stay put.
 import logging
 import re
 from collections import namedtuple
+from decimal import Decimal
 from pathlib import Path
 
 from . import extractors, workbook_cache
@@ -139,13 +140,10 @@ class _CheckedSheet:
     def __getattr__(self, name):
         return getattr(self._ws, name)
 
-    def amount_at(self, row, column):
-        """The number in this cell — via ``_amount`` — or None if it is
-        genuinely empty. Raises ``FormulaWithoutCacheError`` if the cell
-        holds an uncached formula instead."""
+    def _parsed_at(self, row, column, parse):
         value = self._ws.cell(row=row, column=column).value
         if value is not None:
-            return _amount(value)
+            return parse(value)
         raw = self._ws_formulas.cell(row=row, column=column).value
         if isinstance(raw, str) and raw.startswith("="):
             coord = self._ws.cell(row=row, column=column).coordinate
@@ -156,6 +154,19 @@ class _CheckedSheet:
                 'ещё раз.'
             )
         return None
+
+    def amount_at(self, row, column):
+        """The number in this cell, as ``float`` — via ``_amount`` — or
+        None if it is genuinely empty. Raises ``FormulaWithoutCacheError``
+        if the cell holds an uncached formula instead. For a quantity (a
+        volume, an area) — ``money_at`` is the one for a cost total."""
+        return self._parsed_at(row, column, _amount)
+
+    def money_at(self, row, column):
+        """Like ``amount_at``, but as ``Decimal`` — for a cost total,
+        which gets summed across many rows and must not pick up a
+        binary float's rounding on top of that."""
+        return self._parsed_at(row, column, _decimal_amount)
 
 
 def _checked_sheets(path, error_type=None):
@@ -280,6 +291,23 @@ def _amount(value):
     return extractors.parse_number(str(value))
 
 
+def _decimal_amount(value):
+    """Like ``_amount``, but as ``Decimal`` — for a cost total. openpyxl
+    hands back a plain ``float`` for a numeric cell regardless (Excel's own
+    storage is float64 too, so this can't undo whatever precision was
+    already lost getting the number into the spreadsheet in the first
+    place) — ``Decimal(str(value))`` at least stops at the float's own
+    shortest round-tripping decimal rather than spelling out its exact
+    binary value, so summing many of these together doesn't compound a
+    second layer of rounding on top of Excel's.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    return extractors.parse_money(str(value))
+
+
 def classify(name: str):
     """The report line a section with this name belongs to, or None."""
     text = LEADING_NUMBER_RE.sub("", str(name or "").strip().lower())
@@ -306,7 +334,7 @@ def read_section_totals(path) -> dict:
     """
     totals = {}
     for section in read_sections(path):
-        totals[section.key] = totals.get(section.key, 0.0) + section.amount
+        totals[section.key] = totals.get(section.key, Decimal("0")) + section.amount
     return totals
 
 
@@ -391,7 +419,7 @@ def _sections_from_levels(ws):
     sections, unmatched = [], []
     current_key = current_name = None
     current_own = None      # сумма, записанная на самой строке раздела
-    total = 0.0
+    total = Decimal("0")
     pending = None          # (собственная сумма подраздела, сумма его частей)
 
     def close_subsection():
@@ -411,10 +439,10 @@ def _sections_from_levels(ws):
                 current_key, current_name,
                 current_own if current_own is not None else total,
             ))
-        current_key, current_own, total = None, None, 0.0
+        current_key, current_own, total = None, None, Decimal("0")
 
     for row in range(header.row + 1, ws.max_row + 1):
-        amount = ws.amount_at(row, header.total_col)
+        amount = ws.money_at(row, header.total_col)
         first = _named(ws.cell(row=row, column=header.first).value)
         second = _named(ws.cell(row=row, column=header.second).value)
         third = (
@@ -435,7 +463,7 @@ def _sections_from_levels(ws):
             continue
         if second:
             close_subsection()
-            pending = (amount, 0.0)
+            pending = (amount, Decimal("0"))
         elif pending is not None and amount is not None:
             own, parts = pending
             pending = (own, parts + amount)
@@ -504,7 +532,7 @@ def _sections_from_offer(ws):
         )
         if not name:
             continue
-        amount = ws.amount_at(row, header.total_col)
+        amount = ws.money_at(row, header.total_col)
         if amount is None:
             continue
         key = classify(name)
