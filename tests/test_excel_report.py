@@ -172,7 +172,7 @@ def test_contract_terms_reach_the_sheet(tmp_path):
     )], tmp_path)
 
     assert ws["B36"].value == "Паспорт договора"
-    assert ws["B37"].value == "Срок СМР"
+    assert ws["B37"].value == "Срок СМР (мес.)"
     assert ws["E37"].value == "30 месяцев"
     assert ws["E40"].value == "5%"
 

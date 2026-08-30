@@ -26,7 +26,7 @@ def test_the_terms_table_puts_the_contract_conditions_side_by_side():
     terms = comparison.build_terms_table(["a", "b"], passports)
 
     rows = {row["label"]: row["cells"] for row in terms["rows"]}
-    assert rows["Срок СМР"] == ["33 (тридцать три месяца)", "38 мес"]
+    assert rows["Срок СМР (мес.)"] == ["33 (тридцать три месяца)", "38 мес"]
     assert rows["Performance bond, %"] == ["3%", "—"]
     assert rows["НДС"] == ["—", "20%"]
 
@@ -86,7 +86,7 @@ def test_a_figure_alone_does_not_switch_a_correction_on():
 
 def test_switches_turn_the_corrections_on():
     adjustments = comparison.adjustments_from_args({
-        "vat_on": "1", "vat": "22",
+        "vat_mode": "custom", "vat": "22",
         "inflation_on": "1", "inflation": "12", "year": "2030",
     })
 
@@ -96,8 +96,28 @@ def test_switches_turn_the_corrections_on():
     assert adjustments.applied is True
 
 
-def test_a_switch_with_an_unreadable_figure_falls_back_to_the_default():
-    adjustments = comparison.adjustments_from_args({"vat_on": "1", "vat": "абв"})
+def test_no_vat_mode_in_the_address_means_own_rate():
+    # Neither of the three radios reaching the address (a fresh visit, or
+    # someone editing the query string by hand) reads the same as the
+    # explicit "own rate" choice — never as "bring to a rate" with no rate
+    # to bring it to.
+    adjustments = comparison.adjustments_from_args({})
+
+    assert adjustments.vat_mode == "own"
+    assert adjustments.vat_rate is None
+
+
+def test_the_net_of_vat_mode_needs_no_figure_of_its_own():
+    # "без НДС" is a target of exactly 0% — the mode alone says so, with no
+    # accompanying ``vat`` figure required the way "custom" needs one.
+    adjustments = comparison.adjustments_from_args({"vat_mode": "net"})
+
+    assert adjustments.vat_rate == 0.0
+    assert adjustments.applied is True
+
+
+def test_a_custom_vat_mode_with_an_unreadable_figure_falls_back_to_the_default():
+    adjustments = comparison.adjustments_from_args({"vat_mode": "custom", "vat": "абв"})
 
     assert adjustments.vat_rate == comparison.DEFAULT_VAT_RATE
 
@@ -105,7 +125,7 @@ def test_a_switch_with_an_unreadable_figure_falls_back_to_the_default():
 def test_an_out_of_range_vat_rate_falls_back_to_the_default():
     # ?vat=99999 parses fine as a number but isn't a tax rate — treated the
     # same as an unreadable figure, not carried through into the maths.
-    adjustments = comparison.adjustments_from_args({"vat_on": "1", "vat": "99999"})
+    adjustments = comparison.adjustments_from_args({"vat_mode": "custom", "vat": "99999"})
 
     assert adjustments.vat_rate == comparison.DEFAULT_VAT_RATE
 
@@ -134,6 +154,12 @@ def test_the_fields_show_the_defaults_while_switched_off():
     assert adjustments.inflation_display == "12"
 
 
+def test_vat_mode_reads_back_which_of_the_three_scenarios_is_active():
+    assert Adjustments().vat_mode == "own"
+    assert Adjustments(vat_rate=0.0).vat_mode == "net"
+    assert Adjustments(vat_rate=22.0).vat_mode == "custom"
+
+
 # --- множитель проекта ---
 
 def test_without_corrections_nothing_is_multiplied():
@@ -154,6 +180,20 @@ def test_the_same_vat_rate_changes_nothing():
     factor, _notes = comparison.project_factor("22%", "2026", VAT_22)
 
     assert factor == 1.0
+
+
+def test_a_target_of_zero_strips_vat_to_the_net_amount():
+    # The "без НДС" scenario: two projects signed under different VAT rates
+    # (20% pre-2026, 22% from 2026 — see passport.VAT_RATE_CHANGE_YEAR) both
+    # land on their own net-of-VAT figure once brought to a 0% target.
+    net_of_vat = Adjustments(vat_rate=0.0)
+
+    factor_20, notes_20 = comparison.project_factor("20%", "2020", net_of_vat)
+    factor_22, notes_22 = comparison.project_factor("22%", "2026", net_of_vat)
+
+    assert round(1200.0 * factor_20, 6) == 1000.0
+    assert round(1220.0 * factor_22, 6) == 1000.0
+    assert notes_20 == notes_22 == []
 
 
 def test_an_unknown_vat_rate_is_left_alone_and_said_so():

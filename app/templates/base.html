@@ -10,12 +10,22 @@
      every load for someone who picked the light one. #}
   <script>
     (function () {
+      var root = document.documentElement;
       try {
         var saved = localStorage.getItem('theme');
         if (saved === 'light' || saved === 'dark') {
-          document.documentElement.setAttribute('data-theme', saved);
+          root.setAttribute('data-theme', saved);
         }
       } catch (e) {}
+      // Тема оформления (цветовая палитра, отдельно от светлого/тёмного
+      // переключателя выше) — пока только «Изумруд», выбор делается в
+      // «Настройках» в боковой панели. Атрибут проставляется уже сейчас,
+      // чтобы будущие темы могли переопределять цвета в CSS с первого кадра.
+      var uiTheme = 'emerald';
+      try {
+        uiTheme = localStorage.getItem('ui-theme') || uiTheme;
+      } catch (e) {}
+      root.setAttribute('data-ui-theme', uiTheme);
     })();
   </script>
 </head>
@@ -95,6 +105,13 @@
         <p class="sidebar-empty">Проектов пока нет</p>
         {% endif %}
       </nav>
+      <button type="button" class="sidebar-toggle" id="sidebar-settings-btn" title="Настройки">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span class="sidebar-toggle-text">Настройки</span>
+      </button>
       <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M15 6l-6 6 6 6"/>
@@ -125,6 +142,51 @@
       </main>
     </div>
   </div>
+
+  {# Настройки — общее модальное окно на всё приложение, а не часть какой-то
+     одной страницы: список тем будет расти, и открываться он должен
+     одинаково из любого места, а не только с той страницы, где его завели
+     первым. #}
+  <div class="settings-backdrop" id="settings-backdrop" hidden></div>
+  <div class="settings-modal" id="settings-modal" role="dialog" aria-modal="true"
+       aria-labelledby="settings-title" hidden>
+    <div class="settings-modal-head">
+      <h2 id="settings-title">Настройки</h2>
+      <button type="button" class="settings-close" id="settings-close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="settings-section">
+      <h3 class="settings-section-title">Тема оформления</h3>
+      <p class="settings-section-sub">Список будет расти — пока можно выбрать из двух.</p>
+      <label class="theme-option">
+        <input type="radio" name="ui-theme" value="emerald">
+        <span class="theme-option-swatch" aria-hidden="true"></span>
+        <span class="theme-option-body">
+          <span class="theme-option-name">Изумруд</span>
+          <span class="theme-option-desc">
+            Нынешнее оформление — тёмно-бирюзовые тона с изумрудным акцентом.
+            Светлый и тёмный варианты переключаются кнопкой в шапке.
+          </span>
+        </span>
+      </label>
+      <label class="theme-option">
+        <input type="radio" name="ui-theme" value="mr">
+        <span class="theme-option-swatch theme-option-swatch-mr" aria-hidden="true"></span>
+        <span class="theme-option-body">
+          <span class="theme-option-name">MR</span>
+          <span class="theme-option-desc">
+            Корпоративный стиль MR — тёмная боковая панель всегда, а рабочая
+            область светлая или тёмная, тоже кнопкой в шапке — фиолетовый
+            акцент в обоих случаях.
+          </span>
+        </span>
+      </label>
+    </div>
+  </div>
+
   <script>
     (function () {
       var sidebar = document.getElementById('sidebar');
@@ -149,6 +211,62 @@
         try {
           localStorage.setItem('theme', next);
         } catch (e) {}
+      });
+    })();
+
+    (function () {
+      var openBtn = document.getElementById('sidebar-settings-btn');
+      var backdrop = document.getElementById('settings-backdrop');
+      var modal = document.getElementById('settings-modal');
+      var closeBtn = document.getElementById('settings-close');
+      var root = document.documentElement;
+      if (!openBtn || !backdrop || !modal) return;
+
+      function open() {
+        backdrop.hidden = false;
+        modal.hidden = false;
+        document.body.classList.add('no-scroll');
+      }
+      function close() {
+        backdrop.hidden = true;
+        modal.hidden = true;
+        document.body.classList.remove('no-scroll');
+      }
+
+      openBtn.addEventListener('click', open);
+      if (closeBtn) closeBtn.addEventListener('click', close);
+      backdrop.addEventListener('click', close);
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !modal.hidden) close();
+      });
+
+      var themeInputs = modal.querySelectorAll('input[name="ui-theme"]');
+
+      // Which card looks selected follows the radio's own checked state —
+      // read once from the attribute the <head> script already set (so a
+      // saved choice shows correctly without waiting on localStorage a
+      // second time), then kept in sync on every change.
+      function markSelected() {
+        themeInputs.forEach(function (input) {
+          input.closest('.theme-option').classList.toggle('is-selected', input.checked);
+        });
+      }
+
+      var current = root.getAttribute('data-ui-theme') || 'emerald';
+      themeInputs.forEach(function (input) {
+        input.checked = input.value === current;
+      });
+      markSelected();
+
+      themeInputs.forEach(function (input) {
+        input.addEventListener('change', function () {
+          if (!input.checked) return;
+          root.setAttribute('data-ui-theme', input.value);
+          try {
+            localStorage.setItem('ui-theme', input.value);
+          } catch (e) {}
+          markSelected();
+        });
       });
     })();
   </script>

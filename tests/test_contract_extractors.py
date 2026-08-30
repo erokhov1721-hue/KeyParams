@@ -90,25 +90,28 @@ def test_bank_guarantee_included_is_read_as_included():
 
 # --- аванс и срок ---
 
-def test_advance_payment_takes_the_rest_of_the_row():
+def test_advance_payment_takes_only_the_first_figure_of_the_row():
+    # "30% максимальная сумма не закрытого аванса 20%" is one condition's
+    # number followed by a different condition's — only the first is the
+    # actual advance percentage, and it keeps its own "%" but none of the
+    # surrounding sentence.
     text = "3 Аванс, % 30% максимальная сумма не закрытого аванса 20%"
 
-    assert contract_extractors.extract_advance_payment(text) == (
-        "30% максимальная сумма не закрытого аванса 20%"
-    )
+    assert contract_extractors.extract_advance_payment(text) == "30%"
 
 
 def test_smr_term_is_the_number_of_months():
-    # Срок — это число месяцев, а не абзац вокруг него. Значение из-за
-    # переноса стоит над своей подписью.
+    # Срок — это число месяцев, а не абзац вокруг него, и приходит как
+    # голое число, без единицы. Значение из-за переноса стоит над своей
+    # подписью.
     text = "30 месяца, с даты передачи первой захватки\n1 Срок выполнения СМР, месяц"
 
-    assert contract_extractors.extract_smr_term(text) == "30 мес"
+    assert contract_extractors.extract_smr_term(text) == "30"
 
 
 def test_smr_term_survives_a_mangled_unit():
     # Настоящий протокол VEER UB9: распознавание прочло «мес» как «мас».
-    # Единицу пишем сами, из документа берём только число.
+    # Единица не переносится в паспорт вовсе — оттуда берётся только число.
     text = (
         "п1п Наименование Верейская UB9\n"
         "38 мас с даты передачи первой захватки с ртом\n"
@@ -116,7 +119,7 @@ def test_smr_term_survives_a_mangled_unit():
         "лередачи площадки под строительство\n"
     )
 
-    assert contract_extractors.extract_smr_term(text) == "38 мес"
+    assert contract_extractors.extract_smr_term(text) == "38"
 
 
 def test_smr_term_is_not_taken_from_a_number_that_is_not_months():
@@ -127,7 +130,7 @@ def test_smr_term_is_not_taken_from_a_number_that_is_not_months():
         "с учетом поэтапной передачи котлована\n"
     )
 
-    assert contract_extractors.extract_smr_term(text) == "35 мес"
+    assert contract_extractors.extract_smr_term(text) == "35"
 
 
 def test_smr_term_of_a_clause_ignores_whatever_stands_above_it():
@@ -141,17 +144,16 @@ def test_smr_term_of_a_clause_ignores_whatever_stands_above_it():
         "1.2. Срок выполнения работ, мес.: 33 (тридцать три месяца) до момента\n"
     )
 
-    assert contract_extractors.extract_smr_term(text) == "33 мес"
+    assert contract_extractors.extract_smr_term(text) == "33"
 
 
-def test_smr_term_keeps_the_text_when_no_number_can_be_made_out():
-    # Ничего не разобрав, лучше отдать как есть: человек прочтёт сам, а
-    # выдуманного числа в паспорте не появится.
+def test_smr_term_is_none_when_no_number_can_be_made_out():
+    # Ничего не разобрав, лучше вернуть None: человек впишет число сам, а
+    # предложение там, где полагается быть цифре, — не то, что нужно
+    # паспорту.
     text = "по графику производства работ\n1 Срок выполнения СМР, месяц"
 
-    term = contract_extractors.extract_smr_term(text)
-
-    assert "по графику" in term
+    assert contract_extractors.extract_smr_term(text) is None
 
 
 def test_smr_term_is_none_when_the_row_is_absent():
@@ -174,11 +176,12 @@ JOIS_CLAUSES = """- 24 мес. (2 года) — отделочные работ�
 
 def test_advance_is_read_from_a_clause_with_the_figure_above_it():
     # Not every protocol is a table: in a written-out one the value lands on
-    # the line above its own clause.
+    # the line above its own clause — "Авансы до 20%" — and only that figure
+    # with its own "%" comes back, not the sentence that follows the clause
+    # itself.
     value = contract_extractors.extract_advance_payment(JOIS_CLAUSES)
 
-    assert "до 20%" in value
-    assert "на ОБС" in value
+    assert value == "20%"
 
 
 def test_bank_guarantee_of_a_clause_reads_the_answer_above_it():
@@ -201,9 +204,7 @@ def test_the_table_wording_still_wins_where_it_is_present():
         "4 Банковская гарантия на возврат аванса Не включено\n"
     )
 
-    assert contract_extractors.extract_advance_payment(text) == (
-        "30% максимальная сумма не закрытого аванса 20%"
-    )
+    assert contract_extractors.extract_advance_payment(text) == "30%"
     assert contract_extractors.extract_bank_guarantee(text) == "Не включено"
 
 

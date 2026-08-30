@@ -257,6 +257,25 @@ def test_the_class_average_pdf_shows_the_comparison():
     assert "50,0" in text
 
 
+def test_the_class_average_pdf_puts_the_chart_on_its_own_page():
+    passports = {
+        "a": {"project_name": "Проспект мира", "building_class": "Бизнес",
+              "total_area_sqm": 1_000.0},
+        "b": {"project_name": "Б", "building_class": "Бизнес", "total_area_sqm": 1_000.0},
+    }
+    costs = {"a": {"facade": 1_500_000.0}, "b": {"facade": 1_000_000.0}}
+    result = comparison.build_class_average_comparison("a", passports, costs, NONE)
+
+    pdf_bytes = pdf_export.build_class_average_pdf(result, "Проспект мира")
+    pages = _page_texts(pdf_bytes)
+
+    assert len(pages) == 2
+    assert "Средняя стоимость по видам работ" in pages[0]
+    assert "Сравнение на графике" in pages[1]
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        assert len(pdf.pages[1].images) >= 1
+
+
 # --- справка по одному объекту ----------------------------------------------
 
 def _project_passport(**fields):

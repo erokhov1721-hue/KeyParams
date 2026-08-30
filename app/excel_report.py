@@ -287,8 +287,8 @@ WORK_LABELS = [estimate_sections.CATEGORY_LABELS[key] for key in WORK_KEYS]
 MR_LABELS = [estimate_sections.CATEGORY_LABELS[key] for key in MR_KEYS]
 
 TERMS_LABELS = [
-    ("smr_term", "Срок СМР"),
-    ("advance_payment", "Аванс"),
+    ("smr_term", "Срок СМР (мес.)"),
+    ("advance_payment", "Аванс %"),
     ("bank_guarantee", "Банковская гарантия на возврат аванса"),
     ("performance_bond_pct", "Performance bond, %"),
 ]

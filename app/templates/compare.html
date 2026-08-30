@@ -188,13 +188,30 @@
 
   <form class="adjust-form" method="get" action="{{ url_for('main.compare_projects') }}">
     {% for slug in slugs %}<input type="hidden" name="slug" value="{{ slug }}">{% endfor %}
-    <label class="adjust-toggle">
-      <input type="checkbox" name="vat_on" value="1" {{ 'checked' if adjustments.vat_rate is not none }}>
-      <span>Привести НДС к ставке</span>
-      <input class="adjust-input" type="text" name="vat" inputmode="decimal"
-             value="{{ adjustments.vat_display }}">
-      <span class="adjust-unit">%</span>
-    </label>
+    <div class="adjust-radio-group">
+      <span class="adjust-radio-group-label">НДС</span>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="own"
+               {{ 'checked' if adjustments.vat_mode == 'own' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Ставка — из паспорта договора (ДГП), а если протокол не загружен, по году подписания.">своя ставка</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="net"
+               {{ 'checked' if adjustments.vat_mode == 'net' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Из суммы каждого проекта вычитается его собственная ставка НДС — остаётся чистая стоимость без налога.">без НДС</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="custom"
+               {{ 'checked' if adjustments.vat_mode == 'custom' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Все проекты приводятся к одной ставке, заданной вручную рядом, — удобно сравнивать, даже если в договорах ставки разные.">единая ставка</span>
+        <input class="adjust-input" type="text" name="vat" inputmode="decimal"
+               value="{{ adjustments.vat_display }}">
+        <span class="adjust-unit">%</span>
+      </label>
+    </div>
     <label class="adjust-toggle">
       <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
       <span>Учитывать инфляцию</span>
@@ -576,8 +593,8 @@
 
   <form class="pair-form" method="get" action="{{ url_for('main.compare_projects') }}">
     {% for slug in slugs %}<input type="hidden" name="slug" value="{{ slug }}">{% endfor %}
-    {% if adjustments.vat_rate is not none %}
-    <input type="hidden" name="vat_on" value="1">
+    <input type="hidden" name="vat_mode" value="{{ adjustments.vat_mode }}">
+    {% if adjustments.vat_mode == 'custom' %}
     <input type="hidden" name="vat" value="{{ adjustments.vat_display }}">
     {% endif %}
     {% if adjustments.inflation is not none %}
@@ -689,6 +706,22 @@
       });
     });
   });
+</script>
+
+{# Typing a rate into "единая ставка" means that's the mode meant — without
+   this, editing the number while "своя ставка" or "без НДС" is still
+   checked would submit a figure the form quietly ignores. #}
+<script>
+  (function () {
+    var group = document.querySelector('.adjust-radio-group');
+    if (!group) return;
+    var customRadio = group.querySelector('input[value="custom"]');
+    var customInput = group.querySelector('.adjust-input');
+    if (!customRadio || !customInput) return;
+    customInput.addEventListener('input', function () {
+      customRadio.checked = true;
+    });
+  })();
 </script>
 
 {% endblock %}

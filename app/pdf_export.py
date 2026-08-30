@@ -27,6 +27,8 @@ from reportlab.platypus import (
 )
 from PIL import Image as PILImage
 
+from . import chart_render
+
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
 # text is drawn, or Cyrillic characters render as blank boxes.
@@ -1083,6 +1085,45 @@ def _class_average_block(result, project_name, styles, page_width):
     return story
 
 
+def _fitted_chart_image(png_bytes, max_width, max_height):
+    """A rendered chart PNG as a reportlab flowable, scaled to fit the page.
+
+    ``chart_render`` sizes its canvas in inches at its own fixed DPI, not in
+    reportlab's points, and the category count it scales by has nothing to
+    do with this page's own dimensions — so the natural size is computed
+    from the PNG's own pixel dimensions and shrunk (never enlarged: a small
+    chart blown up past its own resolution would just look soft) to fit
+    what the page has left.
+    """
+    with PILImage.open(BytesIO(png_bytes)) as pil_image:
+        width_px, height_px = pil_image.size
+    natural_width = width_px * 72.0 / chart_render.DPI
+    natural_height = height_px * 72.0 / chart_render.DPI
+    ratio = min(max_width / natural_width, max_height / natural_height, 1.0)
+    image = Image(BytesIO(png_bytes), width=natural_width * ratio, height=natural_height * ratio)
+    image.hAlign = "CENTER"
+    return image
+
+
+def _class_average_chart_block(result, project_name, styles, page_width, page_height):
+    """Тот же комбо-график, что и на экране (``chart_render``), на своей
+    странице — рядом с таблицами он либо не помещается по высоте, либо
+    сталкивает их на страницу дальше в произвольном месте."""
+    png_bytes = chart_render.render_class_average_chart(result["chart"], project_name)
+    heading = [
+        Paragraph("Сравнение на графике", styles["heading"]),
+        Paragraph(
+            "Столбики — доля от самого большого значения на графике; линия — "
+            f'отклонение «{_esc(project_name)}» от средней по классу, %.',
+            styles["sub"],
+        ),
+    ]
+    heading_height = sum(style.spaceBefore + style.leading + style.spaceAfter
+                         for style in (styles["heading"], styles["sub"]))
+    image = _fitted_chart_image(png_bytes, page_width, page_height - heading_height)
+    return heading + [image]
+
+
 def build_class_average_pdf(result, project_name) -> bytes:
     """«Сравнить со средним по классу» — тот же блок, что на экране, одним
     файлом. ``result`` — то, что вернул
@@ -1097,9 +1138,12 @@ def build_class_average_pdf(result, project_name) -> bytes:
         leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
     )
     page_width = PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
+    page_height = PAGE_SIZE[1] - doc.topMargin - doc.bottomMargin
 
     story = [Paragraph("Сравнение со средним по классу", styles["title"])]
     story += _class_average_block(result, project_name, styles, page_width)
+    story.append(PageBreak())
+    story += _class_average_chart_block(result, project_name, styles, page_width, page_height)
 
     doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()

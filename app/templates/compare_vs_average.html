@@ -77,13 +77,30 @@
 
   <form class="adjust-form" method="get" action="{{ url_for('main.compare_vs_average') }}">
     <input type="hidden" name="slug" value="{{ selected_slug }}">
-    <label class="adjust-toggle">
-      <input type="checkbox" name="vat_on" value="1" {{ 'checked' if adjustments.vat_rate is not none }}>
-      <span>Привести НДС к ставке</span>
-      <input class="adjust-input" type="text" name="vat" inputmode="decimal"
-             value="{{ adjustments.vat_display }}">
-      <span class="adjust-unit">%</span>
-    </label>
+    <div class="adjust-radio-group">
+      <span class="adjust-radio-group-label">НДС</span>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="own"
+               {{ 'checked' if adjustments.vat_mode == 'own' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Ставка — из паспорта договора (ДГП), а если протокол не загружен, по году подписания.">своя ставка</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="net"
+               {{ 'checked' if adjustments.vat_mode == 'net' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Из суммы каждого проекта вычитается его собственная ставка НДС — остаётся чистая стоимость без налога.">без НДС</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="custom"
+               {{ 'checked' if adjustments.vat_mode == 'custom' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Все проекты приводятся к одной ставке, заданной вручную рядом, — удобно сравнивать, даже если в договорах ставки разные.">единая ставка</span>
+        <input class="adjust-input" type="text" name="vat" inputmode="decimal"
+               value="{{ adjustments.vat_display }}">
+        <span class="adjust-unit">%</span>
+      </label>
+    </div>
     <label class="adjust-toggle">
       <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
       <span>Учитывать инфляцию</span>
@@ -180,32 +197,54 @@
     </table>
   </div>
 
-  <h3 class="pair-subtitle">
-    Сравнение на графике
-    <span class="sections-sub">высота столбика — доля от самого большого значения на графике</span>
-  </h3>
-  <div class="vbar-chart-wrap">
-    <div class="vbar-chart">
-      {% for row in result.chart %}
-      <div class="vbar-group">
-        <div class="vbar-bars">
-          <div class="vbar vbar-peer" style="height: {{ row.peer_pct }}%;">
-            <span class="vbar-value">{{ row.peer_display }}</span>
-          </div>
-          <div class="vbar vbar-own" style="height: {{ row.own_pct }}%;">
-            <span class="vbar-value">{{ row.own_display }}</span>
-          </div>
-        </div>
-        <div class="vbar-label" title="{{ row.label }}">{{ row.label }}</div>
-      </div>
-      {% endfor %}
-    </div>
+  <div class="chart-toggle-row">
+    <h3 class="pair-subtitle">
+      Сравнение на графике
+      <span class="sections-sub">
+        столбики — доля от самого большого значения на графике; линия — отклонение
+        «{{ selected_name }}» от средней по классу, %
+      </span>
+    </h3>
+    <button type="button" class="btn btn-secondary chart-toggle-btn"
+            aria-expanded="false" aria-controls="compare-chart-panel">
+      Показать график
+    </button>
   </div>
-  <div class="vbar-legend">
-    <span class="vbar-legend-item"><i class="vbar-swatch vbar-swatch-peer"></i>Средняя по классу</span>
-    <span class="vbar-legend-item"><i class="vbar-swatch vbar-swatch-own"></i>«{{ selected_name }}»</span>
+  <div class="compare-chart-wrap" id="compare-chart-panel" hidden>
+    <img class="compare-chart-img" src="{{ chart_image }}" alt="Сравнение со средним по классу по видам работ">
   </div>
 </div>
 {% endif %}
 {% endif %}
+
+{# Свёрнут по умолчанию — сам график тяжелее и заметнее двух таблиц над ним,
+   и раскрытым на каждом заходе на страницу превращал бы её в перегруженную. #}
+<script>
+  (function () {
+    var button = document.querySelector('.chart-toggle-btn');
+    var panel = document.getElementById('compare-chart-panel');
+    if (!button || !panel) return;
+
+    button.addEventListener('click', function () {
+      var expanded = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', String(!expanded));
+      button.textContent = expanded ? 'Показать график' : 'Скрыть график';
+      panel.hidden = expanded;
+    });
+  })();
+
+  // Typing a rate into "единая ставка" means that's the mode meant — without
+  // this, editing the number while "своя ставка" or "без НДС" is still
+  // checked would submit a figure the form quietly ignores.
+  (function () {
+    var group = document.querySelector('.adjust-radio-group');
+    if (!group) return;
+    var customRadio = group.querySelector('input[value="custom"]');
+    var customInput = group.querySelector('.adjust-input');
+    if (!customRadio || !customInput) return;
+    customInput.addEventListener('input', function () {
+      customRadio.checked = true;
+    });
+  })();
+</script>
 {% endblock %}

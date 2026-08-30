@@ -49,26 +49,66 @@ ROW_START_RE = re.compile(r'^\d+(?:[.,]\d+)*\.?\s+\S')
 # иначе от «1,5 %» осталось бы «5 %».
 ROW_PERCENT_RE = re.compile(r'([\dЗз]+(?:[.,]\d+)?)\s*%')
 
+# The last stop before a value reaches the passport for smr_term/
+# advance_payment — whatever produced it (a regex over the protocol text, or
+# Claude reading a scanned image) might still hand back a unit word or a
+# trailing clause ("30% максимальная сумма не закрытого аванса 20%" is one
+# condition's sentence, not two numbers to choose between — the first one is
+# the actual figure).
+#
+# Plain digits only — no Cyrillic «З»-as-3 correction here, unlike
+# ROW_PERCENT_RE: that trick is safe only right in front of a "%" sign,
+# where a lone letter truly can't be anything else. Applied to a whole
+# sentence instead of one isolated token, it turns the ordinary letter «з»
+# in an ordinary word — "заакрытого", "аванс за квартал" — into a stray
+# digit, and a sentence is exactly what smr_term/advance_payment values are
+# before this function gets at them.
+BARE_NUMBER_RE = re.compile(r'(\d+(?:[.,]\d+)?)')
+
+
+def bare_number(value):
+    """The first number in ``value``, or None."""
+    if not value:
+        return None
+    m = BARE_NUMBER_RE.search(value)
+    return m.group(1) if m else None
+
+
+def percent_value(value):
+    """``bare_number(value)`` with the "%" put back on — "20%", not "20".
+
+    The unit is dropped from every other numeric contract field (a month
+    count needs no sign of its own), but a percentage without its "%" reads
+    as an unfinished number rather than a whole one, so advance_payment
+    keeps it — the sign, and nothing else the document said around the
+    figure.
+    """
+    number = bare_number(value)
+    return f"{number}%" if number is not None else None
+
 
 def _months(value, label=''):
-    """``"38 мес"`` — столько месяцев, сколько сказано в тексте, или None.
+    """``"38"`` — how many months, as a bare number, or None.
 
-    Единица пишется здесь, а не берётся из документа: распознавание её калечит
-    («38 мас» вместо «38 мес»), тогда как само число читается уверенно. Так в
-    паспорт попадает срок, а не абзац вокруг него.
+    No unit is added: the field is only ever a count of months, so a person
+    reading the passport already knows what the figure means, and a
+    document-scraped word for it — «мес», «мас», «месяч» depending on what
+    recognition made of the page — is exactly the kind of noise the number
+    shouldn't carry.
 
-    Число опознаётся по слову про месяцы рядом с ним. Где слово написано
-    прописью — «33 (тридцать три месяца)» — единицу называет сама подпись
-    условия («…, мес.:»), и тогда годится первое короткое число значения.
+    The number is recognized by the word about months next to it. Where the
+    word is written out — «33 (тридцать три месяца)» — the clause's own
+    label names the unit («…, мес.:»), and then the first short number in
+    the value is the one wanted.
     """
     m = TERM_MONTHS_RE.search(value)
     if m is None and MONTHS_WORD_RE.search(label):
         m = ANY_SHORT_NUMBER_RE.search(value)
-    return f"{int(m.group(1))} мес" if m else None
+    return str(int(m.group(1))) if m else None
 
 
 def extract_smr_term(text):
-    """The term of works in months, e.g. "38 мес".
+    """The term of works in months, as a bare number — e.g. "38".
 
     A clause states its own term after a colon — "1.2. Срок выполнения работ,
     мес.: 33 (тридцать три месяца)" — and that colon is what tells the two
@@ -80,12 +120,14 @@ def extract_smr_term(text):
     A table row carries no colon: there OCR sometimes reorders a wrapped cell
     so the value ends up on the line *before* its label, so that one line of
     context is joined with the anchor line rather than assuming the value
-    follows it.
+    follows it. A row can just as well run the other way — the label first,
+    its figure on the line under it — so the line *after* gets its own turn
+    once the one before has come up empty.
 
-    Either way what is wanted is the figure, and the whole point of the row is
-    how many months it is. Where no figure can be made out the text goes
-    through as it was read — a person can read it themselves, and a number
-    nobody wrote has no business in a passport.
+    Either way what is wanted is the figure. Where no figure can be made out,
+    returns None rather than the sentence around it — a person can type a
+    number themselves, but a sentence where one belongs has no business in a
+    passport field that's supposed to hold just that.
     """
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -93,9 +135,13 @@ def extract_smr_term(text):
             continue
         tail = _clause_tail(line)
         if tail:
-            return _months(tail, label=line) or tail
-        window = ' '.join(l.strip() for l in lines[max(0, i - 1):i + 1] if l.strip())
-        return _months(window) or window or None
+            return _months(tail, label=line)
+        before = ' '.join(l.strip() for l in lines[max(0, i - 1):i + 1] if l.strip())
+        found = _months(before)
+        if found:
+            return found
+        after = ' '.join(l.strip() for l in lines[i:i + 2] if l.strip())
+        return _months(after)
     return None
 
 
@@ -121,9 +167,18 @@ def _clause_tail(line):
 
 
 def extract_advance_payment(text):
+    """The advance-payment percentage, with its sign and nothing else —
+    e.g. "30%".
+
+    A row often runs on past its own figure into an unrelated follow-up
+    clause — "Аванс, % 30% максимальная сумма не закрытого аванса 20%" is
+    one condition's number (30) followed by a different condition's (the cap
+    on the *unclosed* advance) — so only the first number after the anchor
+    is taken, not the sentence around or after it.
+    """
     m = ADVANCE_RE.search(text)
     if m:
-        return m.group(1).strip()
+        return percent_value(m.group(1))
 
     # A protocol written as clauses rather than as a table: the wording is
     # "Авансовый платеж, % от общей стоимости работ:" with the figure on the
@@ -134,7 +189,7 @@ def extract_advance_payment(text):
             continue
         parts = [part for part in (_line_before(lines, i), _clause_tail(line)) if part]
         if parts:
-            return ' '.join(parts)
+            return percent_value(' '.join(parts))
     return None
 
 

@@ -4,6 +4,12 @@
      Without it the class-of-building list opened white while its options
      inherited the field's near-white text, and could not be read at all. */
   color-scheme: dark;
+  /* Native checkboxes/radios (VAT/inflation toggles, the theme picker) tint
+     to whatever the active theme's accent is, instead of the browser's own
+     default blue — one declaration here covers every checkbox and radio in
+     the app, present and future, rather than repeating accent-color on each
+     one that happens to get noticed. */
+  accent-color: var(--accent);
   --bg-900: #0d1d1e;
   --bg-800: #122b2d;
   --bg-700: #1a383a;
@@ -11,15 +17,26 @@
   --accent: #2dd4bf;
   /* Second stop of the progress-bar gradient. */
   --accent-2: #22b8a3;
+  /* A darker/adjacent shade for :hover states that need to read as "pressed"
+     rather than just re-painted — distinct from --accent-2 (which exists for
+     gradients) even though the themes below happen to reuse the same value
+     for both right now. */
+  --accent-hover: var(--accent-2);
   --accent-dim: rgba(45, 212, 191, 0.14);
   --accent-glow: rgba(45, 212, 191, 0.35);
   --accent-ink: #04302c;
   --amber: #f5a623;
   --amber-dim: rgba(245, 166, 35, 0.12);
+  /* Border colour for a status-flagged field — its own token, not just
+     reused --blue/--purple/--amber, because a theme (MR) may want that
+     border a good deal softer than the text/icon colour it pairs with. */
+  --amber-border: var(--amber);
   --blue: #60a5fa;
   --blue-dim: rgba(96, 165, 250, 0.12);
+  --blue-border: var(--blue);
   --purple: #a78bfa;
   --purple-dim: rgba(167, 139, 250, 0.12);
+  --purple-border: var(--purple);
   --red: #f87171;
   --red-dim: rgba(248, 113, 113, 0.12);
   --border: rgba(255, 255, 255, 0.08);
@@ -62,6 +79,7 @@
   --bg-650: #dde5e3;
   --accent: #12705c;
   --accent-2: #1c9a80;
+  --accent-hover: var(--accent-2);
   --accent-dim: rgba(18, 112, 92, 0.10);
   --accent-glow: rgba(18, 112, 92, 0.22);
   --accent-ink: #ffffff;
@@ -70,10 +88,13 @@
      white. These are the same hues at a contrast that works on paper. */
   --amber: #9a5b00;
   --amber-dim: rgba(154, 91, 0, 0.12);
+  --amber-border: var(--amber);
   --blue: #1d4ed8;
   --blue-dim: rgba(29, 78, 216, 0.10);
+  --blue-border: var(--blue);
   --purple: #6d28d9;
   --purple-dim: rgba(109, 40, 217, 0.10);
+  --purple-border: var(--purple);
   --red: #c62828;
   --red-dim: rgba(198, 40, 40, 0.10);
   --border: rgba(16, 43, 39, 0.13);
@@ -290,7 +311,10 @@ a {
   display: none;
 }
 
-.sidebar.is-collapsed .sidebar-toggle svg {
+/* ID, not the shared .sidebar-toggle class: the settings button above it
+   reuses that class for its look, and its gear icon has no "collapsed"
+   state to flip — only the collapse arrow itself does. */
+.sidebar.is-collapsed #sidebar-toggle svg {
   transform: rotate(180deg);
 }
 
@@ -465,7 +489,7 @@ h1 {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), #22b8a3);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: var(--accent-ink);
   box-shadow: 0 0 0 1px var(--accent-glow), 0 8px 24px -8px var(--accent-glow);
 }
@@ -1076,7 +1100,7 @@ select option {
 
 .field-row.is-empty input[type="text"],
 .field-row.is-empty select {
-  border-color: var(--amber);
+  border-color: var(--amber-border);
   background: var(--amber-dim);
 }
 
@@ -1138,7 +1162,7 @@ select option {
 
 .field-row.is-ocr input[type="text"],
 .field-row.is-ocr select {
-  border-color: var(--blue);
+  border-color: var(--blue-border);
   background: var(--blue-dim);
 }
 
@@ -1149,7 +1173,7 @@ select option {
 
 .field-row.is-ai input[type="text"],
 .field-row.is-ai select {
-  border-color: var(--purple);
+  border-color: var(--purple-border);
   background: var(--purple-dim);
 }
 
@@ -1159,7 +1183,7 @@ select option {
 }
 
 .field-row.is-pdf input[type="text"] {
-  border-color: var(--blue);
+  border-color: var(--blue-border);
   background: var(--blue-dim);
 }
 
@@ -1614,6 +1638,66 @@ select option {
   cursor: pointer;
 }
 
+/* Three named VAT scenarios (own rate / net of VAT / one shared rate)
+   instead of a single checkbox next to a figure — one of the three used to
+   only be reachable by typing 0 into a box that read as asking for the
+   third. */
+.adjust-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+
+.adjust-radio-group-label {
+  font-size: 14px;
+  color: var(--text-500);
+}
+
+.adjust-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-100);
+  cursor: pointer;
+}
+
+/* A dashed underline marks the label itself as the thing to hover — no icon
+   needed, and no JS: the explanation is static per option, so a pure-CSS
+   tooltip (content from the attribute) is the whole mechanism. tabindex on
+   the span makes it reachable by keyboard too, where :focus-visible stands
+   in for :hover. */
+.adjust-radio-label {
+  position: relative;
+  border-bottom: 1px dashed var(--text-600);
+  cursor: help;
+}
+
+.adjust-radio-label:hover::after,
+.adjust-radio-label:focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 40;
+  margin-bottom: 8px;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-card);
+  color: var(--text-100);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+}
+
 .adjust-input {
   width: 62px;
   padding: 6px 8px;
@@ -1893,106 +1977,43 @@ select option {
   justify-self: start;
 }
 
-/* --- Сравнение со средним: вертикальная гистограмма ---
+/* Заголовок диаграммы и кнопка-разворот в одной строке — сама диаграмма
+   свёрнута по умолчанию (см. compare_vs_average.html), а строка держит
+   тот же боковой отступ, что у остального в карточке, раз сам заголовок
+   больше не прямой потомок карточки. */
+.chart-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 26px var(--table-edge) 14px;
+}
 
-   Height, not width — the only vertical bar chart on this app, next to
-   the same "one bar, one row" charts everywhere else, because it puts a
-   whole row of categories side by side the way the table above it does,
-   which a stack of horizontal bars can't. .vbar-bars is the one fixed
-   pixel height every bar's own percentage height resolves against. */
-.vbar-chart-wrap {
+.chart-toggle-row > .pair-subtitle {
+  margin: 0;
+}
+
+.chart-toggle-btn {
+  flex-shrink: 0;
+}
+
+/* --- Сравнение со средним: комбо-график (matplotlib) ---
+
+   Rendered server-side as a PNG (see app/chart_render.py) rather than CSS
+   bars: it needs a second, differently-scaled series (the deviation line)
+   alongside the bars, which a div-per-bar layout has no clean way to draw.
+   Its own width is capped in chart_render.py so it fits the card without a
+   scrollbar; max-width here is a second, viewport-side backstop for windows
+   narrower than the card itself. */
+.compare-chart-wrap {
   overflow-x: auto;
 }
 
-.vbar-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 20px;
-  min-width: min-content;
-  padding: 28px 4px 0;
-}
-
-.vbar-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: 0 0 auto;
-  width: 78px;
-}
-
-.vbar-bars {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 5px;
-  height: 190px;
-  width: 100%;
-}
-
-.vbar {
-  position: relative;
-  flex: 1 1 0;
-  min-height: 2px;
-  border-radius: 4px 4px 0 0;
-}
-
-.vbar-peer {
-  background: var(--text-500);
-}
-
-.vbar-own {
-  background: var(--accent);
-}
-
-.vbar-value {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 4px;
-  font-size: 10px;
-  white-space: nowrap;
-  color: var(--text-500);
-}
-
-.vbar-label {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 10px;
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--text-500);
-  text-align: center;
-}
-
-.vbar-legend {
-  display: flex;
-  gap: 20px;
-  margin-top: 16px;
-  font-size: 13px;
-  color: var(--text-100);
-}
-
-.vbar-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.vbar-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
-.vbar-swatch-peer {
-  background: var(--text-500);
-}
-
-.vbar-swatch-own {
-  background: var(--accent);
+.compare-chart-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .pair-grid {
@@ -2654,4 +2675,413 @@ select option {
 
 .works-table .sections-number.is-worse {
   color: var(--red);
+}
+
+/* --- Настройки (модальное окно) ---
+
+   Один экземпляр на всё приложение (см. base.html), а не на страницу —
+   список тем открывается одинаково независимо от того, с какой страницы
+   его вызвали. */
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  backdrop-filter: blur(2px);
+  z-index: 55;
+}
+
+.settings-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 56;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: var(--surface-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 20px 22px 24px;
+}
+
+.settings-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.settings-modal-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-100);
+}
+
+.settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-500);
+  cursor: pointer;
+}
+
+.settings-close:hover {
+  background: var(--bg-700);
+  color: var(--text-100);
+}
+
+.settings-section-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-100);
+}
+
+.settings-section-sub {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-500);
+}
+
+.theme-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.theme-option + .theme-option {
+  margin-top: 8px;
+}
+
+/* Toggled from JS (see base.html) rather than a bare :has(:checked) — this
+   codebase already drives every other on/off visual state (accordions, the
+   chart-collapse button) from a JS-set class, and a theme list that will
+   grow past one entry needs its "which one is picked" state kept in one
+   place either way. */
+.theme-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.theme-option input[type="radio"] {
+  margin: 4px 0 0;
+}
+
+.theme-option-swatch {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #0d1d1e 50%, #2dd4bf 50%);
+}
+
+.theme-option-swatch-mr {
+  background: linear-gradient(160deg, #5b4bc0, #262038);
+}
+
+.theme-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.theme-option-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-100);
+}
+
+.theme-option-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-500);
+}
+
+/* ============================================================================
+   MR THEME — corporate palette, selected in Settings (data-ui-theme="mr").
+
+   Recolours only: every rule below either redefines a custom property that
+   the rest of this file already reads, or repoints a component's colour
+   properties at those same properties — no layout, spacing, radius (other
+   than the two the brief calls out by name), or typography changes.
+
+   Placed at the end of the file on purpose. Its selectors are all scoped
+   under [data-ui-theme="mr"], which already outweighs the plain-class rules
+   above by specificity — but a couple (the sidebar icon, the two
+   simultaneously-scoped button variants) tie with an existing selector's
+   specificity exactly, and a tie is broken by source order. Living last
+   settles those ties without needing to hand-tune specificity everywhere.
+   ============================================================================ */
+
+:root {
+  /* Raw palette — always defined, per the brief, regardless of which theme
+     is active; only the semantic remap below actually switches anything on.
+
+     Muted on a second pass: the first version's --mr-bg carried a violet
+     tint (#EDEAF4) that bled into every neutral surface reading it, and
+     --mr-accent (#6E4BE8) was saturated enough to look neon repeated across
+     bars, badges and icons rather than the handful of primary actions it was
+     meant for. Values below are the toned-down replacements; --mr-bg-sunken
+     and --mr-border-strong are new tokens for the same reason — nested
+     surfaces and hover borders were previously falling back to the accent
+     tint or to accent itself for lack of a neutral option. */
+  --mr-black: #0d0d12;
+  --mr-surface-dark: #1a1a22;
+  --mr-elevated: #22222c;
+  --mr-graphite: #3a3a46;
+  /* The dark workspace's own surface tiers — not the four above, which are
+     the brand's literal "sidebar/topbar" black and stay put everywhere,
+     light workspace included. Изумруд's dark bg-900…650 aren't neutral grey;
+     each one is the same teal as --accent, just pushed to near-black — a
+     signature, not only an accent-button colour. These four repeat that at
+     MR's own accent hue (~248°) instead of teal's (~184°), same lightness
+     steps Изумруд uses (~8%/12%/17%/22%). */
+  --mr-dark-bg: #100e1c;
+  --mr-dark-card: #17142a;
+  --mr-dark-hover: #201b38;
+  --mr-dark-strong: #2a2347;
+  --mr-accent: #5b4bc0;
+  --mr-accent-hover: #473a9e;
+  --mr-accent-soft: #9a8fd6;
+  --mr-accent-tint: #eeedf8;
+  --mr-active-dark: #2a2140;
+  --mr-active-border: #4a3a78;
+  --mr-bg: #ecedf4;
+  --mr-bg-sunken: #e4e6ef;
+  --mr-card: #ffffff;
+  --mr-border: #e2e4ec;
+  --mr-border-strong: #cfd2de;
+  --mr-text: #16161c;
+  --mr-text-muted: #4a4b57;
+  --mr-text-dim: #6c6e7c;
+  --mr-sidebar-text: #c9c6d6;
+  --mr-status-ocr-text: #3d5c99;
+  --mr-status-ocr-bg: #eff3fa;
+  --mr-status-ocr-border: #cbd7ea;
+  --mr-status-ai-border: #d3cfec;
+  --mr-status-manual-text: #8c6b13;
+  --mr-status-manual-bg: #fbf6e9;
+  --mr-status-manual-border: #e7dbb4;
+}
+
+/* MR has both a dark and a light workspace, same as the sun/moon toggle
+   already gives the Изумруд theme — the corporate brief only ever specified
+   the light one in detail, so the dark one below reapplies its own logic
+   (bright/pastel tones for a dark surface, deep/saturated ones for a light
+   surface) using nothing outside the same palette block above.
+
+   Dark is the base case here — [data-ui-theme="mr"] alone, no [data-theme]
+   condition — matching how the app's own default (no data-theme attribute
+   at all) is dark; the light variant just below adds [data-theme="light"]
+   to its selector, exactly mirroring the plain light theme's relationship
+   to the plain dark one at the top of this file. */
+:root[data-ui-theme="mr"] {
+  color-scheme: dark;
+  /* The tinted tiers, not the brand black four above — see their comment.
+     The sidebar re-scopes back to the brand ones itself, further down. */
+  --bg-900: var(--mr-dark-bg);
+  --bg-800: var(--mr-dark-card);
+  --bg-700: var(--mr-dark-hover);
+  --bg-650: var(--mr-dark-strong);
+  /* Accent-soft rather than accent itself — rule 9 reserves it for dark
+     backgrounds, which is exactly the case here, the same reasoning the
+     sidebar (always dark, in both variants) already uses it for. */
+  --accent: var(--mr-accent-soft);
+  --accent-2: var(--mr-accent);
+  --accent-hover: var(--mr-accent);
+  --accent-dim: rgba(154, 143, 214, 0.14);
+  --accent-glow: rgba(154, 143, 214, 0.30);
+  /* Ink goes dark, not white: --accent here is the *pale* end of the
+     palette, so text sitting on top of it needs to be dark to stay
+     readable — the same relationship the dark Изумруд theme has between
+     its own bright accent and its dark ink. */
+  --accent-ink: var(--mr-text);
+  --amber: #f5a623;
+  --amber-dim: rgba(245, 166, 35, 0.12);
+  --amber-border: var(--amber);
+  --blue: #60a5fa;
+  --blue-dim: rgba(96, 165, 250, 0.12);
+  --blue-border: var(--blue);
+  --purple: var(--mr-accent-soft);
+  --purple-dim: rgba(154, 143, 214, 0.14);
+  --purple-border: var(--mr-accent-soft);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --text-100: #ffffff;
+  --text-500: var(--mr-sidebar-text);
+  --text-600: var(--mr-text-dim);
+  /* Same trick Изумруд's own dark theme uses above: the frosted card/topbar
+     colour is just its own tier's RGB with alpha added, not a separate grey —
+     card sits at the --bg-700 tier, topbar one step down at --bg-800. */
+  --surface-card: rgba(32, 27, 56, 0.55);
+  --surface-topbar: rgba(23, 20, 42, 0.6);
+  --overlay: rgba(6, 5, 10, 0.65);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -20px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-ui-theme="mr"][data-theme="light"] {
+  color-scheme: light;
+  --bg-900: var(--mr-bg);
+  --bg-800: var(--mr-card);
+  /* Neutral, not the accent tint: --bg-700 backs plain hover/nested surfaces
+     everywhere (table headers, field backgrounds, progress-bar tracks) —
+     tinting all of them violet was exactly the "bled into everything"
+     problem. The tint stays reserved for actual accent-status badges via
+     --accent-dim/--purple-dim below. */
+  --bg-700: var(--mr-bg-sunken);
+  --bg-650: var(--mr-border-strong);
+  --accent: var(--mr-accent);
+  --accent-2: var(--mr-accent-hover);
+  --accent-hover: var(--mr-accent-hover);
+  --accent-dim: rgba(91, 75, 192, 0.12);
+  --accent-glow: rgba(91, 75, 192, 0.22);
+  --accent-ink: #ffffff;
+  --amber: var(--mr-status-manual-text);
+  --amber-dim: var(--mr-status-manual-bg);
+  --amber-border: var(--mr-status-manual-border);
+  --blue: var(--mr-status-ocr-text);
+  --blue-dim: var(--mr-status-ocr-bg);
+  --blue-border: var(--mr-status-ocr-border);
+  /* "Найдено через AI" is specified as text/fill = the MR accent itself,
+     not a separate hue — unlike the other two themes, where purple and
+     accent are deliberately different colours. */
+  --purple: var(--mr-accent);
+  --purple-dim: var(--mr-accent-tint);
+  --purple-border: var(--mr-status-ai-border);
+  --border: var(--mr-border);
+  --border-soft: rgba(20, 20, 26, 0.06);
+  --text-100: var(--mr-text);
+  --text-500: var(--mr-text-muted);
+  --text-600: var(--mr-text-dim);
+  --surface-card: var(--mr-card);
+  --surface-topbar: #ffffff;
+  --overlay: rgba(20, 20, 26, 0.38);
+  --shadow-card: 0 1px 2px rgba(20, 16, 48, 0.05);
+}
+
+/* The sidebar stays dark under MR too, same trick as the light theme uses
+   above: everything inside already reads these names, so re-scoping them
+   here is the whole job. */
+:root[data-ui-theme="mr"] .sidebar {
+  color: var(--mr-sidebar-text);
+  background: var(--mr-black);
+  --bg-900: var(--mr-black);
+  --bg-800: var(--mr-surface-dark);
+  --bg-700: var(--mr-surface-dark);
+  --accent: var(--mr-accent-soft);
+  --accent-dim: var(--mr-active-dark);
+  --text-100: #ffffff;
+  --text-500: var(--mr-sidebar-text);
+  --text-600: var(--mr-text-dim);
+}
+
+:root[data-ui-theme="mr"] .sidebar-link.is-active {
+  border: 1px solid var(--mr-active-border);
+  /* White specifically, not var(--accent): the base rule colours the active
+     link with --accent, which in the sidebar's own dark scope above is
+     accent-soft — legible, but the brief calls for white here precisely. */
+  color: #ffffff;
+}
+
+/* .sidebar .sidebar-link-icon outranks .sidebar-link.is-active
+   .sidebar-link-icon on specificity (4 selectors to 3), so this applies to
+   an icon whether or not its link is the active one — the brief doesn't
+   ask for a separate treatment for that case. */
+:root[data-ui-theme="mr"] .sidebar .sidebar-link-icon {
+  background: var(--mr-elevated);
+  color: var(--mr-accent-soft);
+  border-radius: 9px;
+}
+
+:root[data-ui-theme="mr"] .btn-primary {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+:root[data-ui-theme="mr"] .btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+:root[data-ui-theme="mr"] .btn-secondary {
+  background: var(--surface-card);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+}
+
+:root[data-ui-theme="mr"] .btn-secondary:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Rule 5 wants these readable as links at rest, not only on hover — the
+   other two themes keep them muted until hovered instead. */
+:root[data-ui-theme="mr"] .back-link,
+:root[data-ui-theme="mr"] .contract-replace-link {
+  color: var(--accent);
+}
+
+:root[data-ui-theme="mr"] .back-link:hover,
+:root[data-ui-theme="mr"] .contract-replace-link:hover {
+  color: var(--accent-hover);
+}
+
+/* Rule 8: gradients live only on the theme-preview swatches above. This is
+   also the one other gradient left in the app (project bars set their own
+   colour per row via --bar-color; this is only the unstyled fallback), so
+   flattened here — and, per rules 1–2 (accent stays reserved for primary
+   actions and the one compared series a page is actually about), to
+   --mr-graphite rather than --accent: a bar/weight indicator repeats once
+   per row, and a page of a dozen rows in full accent is exactly the
+   "neon" complaint this pass exists to fix. */
+:root[data-ui-theme="mr"] .bar-fill {
+  background: var(--bar-color, var(--mr-graphite));
+}
+
+:root[data-ui-theme="mr"] .sections-weight-fill {
+  background: var(--mr-graphite);
+}
+
+:root[data-ui-theme="mr"] .card,
+:root[data-ui-theme="mr"] .accordion {
+  transition: border-color 0.15s ease;
+}
+
+:root[data-ui-theme="mr"] .card:hover,
+:root[data-ui-theme="mr"] .accordion:hover {
+  border-color: var(--mr-border-strong);
+}
+
+/* The empty run of a progress/deviation track was reading as almost the
+   same colour as the card it sits in, in the dark workspace specifically.
+   Not a bug in the numbers so much as a property of human vision: MR's dark
+   tiers lean on the blue channel for their violet cast, Изумруд's lean on
+   green — and the eye is far less sensitive to blue differences than to
+   green ones (roughly a 10:1 weighting in perceptual-luminance terms), so
+   the same RGB gap between track and card reads as a much fainter contrast
+   here than the equivalent gap does there. A border sidesteps that instead
+   of chasing it with an ever-darker/lighter track colour: white-based, so
+   it adds the same brightness on every channel rather than leaning on hue.
+   inset box-shadow rather than an actual border — some of these tracks are
+   only 4-8px tall, and a real border would eat into that thickness on both
+   edges since it's already the tightest content box border-box allows. */
+:root[data-ui-theme="mr"] .bar-track,
+:root[data-ui-theme="mr"] .sections-weight,
+:root[data-ui-theme="mr"] .works-bar,
+:root[data-ui-theme="mr"] .delta-half {
+  box-shadow: inset 0 0 0 1px var(--border);
 }

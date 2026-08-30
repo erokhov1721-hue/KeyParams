@@ -1,4 +1,6 @@
+import base64
 import io
+import re
 
 from openpyxl import Workbook
 
@@ -758,6 +760,30 @@ def test_compare_pdf_carries_the_terms_table(tmp_path):
 
     assert resp.status_code == 200
     assert seen["terms"]["rows"][0]["cells"] == ["33 мес"]
+
+
+def test_concrete_cost_per_m3_returns_plain_floats(tmp_path, monkeypatch):
+    # Regression: the ratio used to stay a Decimal (from dividing the
+    # Decimal-money cost breakdown by a Decimal-converted volume), and nothing
+    # here ever turned it back into a float — it only surfaced once a project
+    # actually had this data and the PDF chart code, which does plain float
+    # arithmetic on width_pct, hit a real Decimal and raised a TypeError.
+    from decimal import Decimal
+
+    from app import routes
+
+    monkeypatch.setattr(routes, "_concrete_volume", lambda root, slug, passport: 100.0)
+    monkeypatch.setattr(
+        routes, "_concrete_cost_breakdown",
+        lambda root, slug: (Decimal("500000"), Decimal("300000")),
+    )
+
+    materials, works = routes._concrete_cost_per_m3(tmp_path, ["a"], {"a": {}})
+
+    assert materials == {"a": 5000.0}
+    assert works == {"a": 3000.0}
+    assert isinstance(materials["a"], float)
+    assert isinstance(works["a"], float)
 
 
 def test_compare_projects_pdf_returns_pdf_file(tmp_path):
@@ -2453,7 +2479,7 @@ def test_compare_vs_average_shows_the_class_comparison_for_the_chosen_project(tm
     assert "+50,0 %" in body
 
 
-def test_compare_vs_average_shows_a_vertical_bar_chart_below_the_tables(tmp_path):
+def test_compare_vs_average_shows_a_chart_image_below_the_tables(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     a = _project_with_offer(
@@ -2466,10 +2492,35 @@ def test_compare_vs_average_shows_a_vertical_bar_chart_below_the_tables(tmp_path
 
     body = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
 
-    assert "vbar-chart" in body
     assert "Стоимость за м²" in body
-    # Свой показатель — самое большое число на графике, столбик в 100%.
-    assert "height: 100.0%;" in body
+    assert 'class="compare-chart-img"' in body
+
+    match = re.search(r'src="data:image/png;base64,([^"]+)"', body)
+    assert match is not None
+    png_bytes = base64.b64decode(match.group(1))
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_compare_vs_average_chart_starts_collapsed_behind_a_button(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "Проспект мира", [("6. Фасадные работы", 1_500_000.0)],
+        building_class="Бизнес",
+    )
+    _project_with_offer(
+        tmp_path, "Б", [("6. Фасадные работы", 1_000_000.0)], building_class="Бизнес",
+    )
+
+    body = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
+
+    panel = re.search(
+        r'<div class="compare-chart-wrap"[^>]*id="compare-chart-panel"[^>]*>', body,
+    )
+    assert panel is not None
+    assert "hidden" in panel.group()
+    assert 'class="btn btn-secondary chart-toggle-btn"' in body
+    assert 'aria-controls="compare-chart-panel"' in body
 
 
 def test_compare_vs_average_explains_when_the_object_has_no_class(tmp_path):
@@ -2574,9 +2625,26 @@ def test_section_table_applies_vat_from_the_address(tmp_path):
         tmp_path, "Проект", [("6. Фасадные работы", 1_200_000.0)], year_signed="2025",
     )
 
-    body = client.get(f"/compare?slug={slug}&vat_on=1&vat=22").get_data(as_text=True)
+    body = client.get(f"/compare?slug={slug}&vat_mode=custom&vat=22").get_data(as_text=True)
 
     assert "1 220" in body          # 1 200 × 122/120
+
+
+def test_section_table_strips_vat_to_the_net_amount_in_the_net_of_vat_mode(tmp_path):
+    # The "без НДС" scenario — its own radio value, not a 0 typed into the
+    # "единая ставка" figure. A project signed in 2025 defaults to the
+    # pre-2026 20% rate (see passport.VAT_RATE_CHANGE_YEAR). Shown per m²
+    # like the sibling test above (the fixture's 1 000 m² makes that read
+    # the same as the raw total here), net-of-VAT works out to 1 000.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Проект", [("6. Фасадные работы", 1_200_000.0)], year_signed="2025",
+    )
+
+    body = client.get(f"/compare?slug={slug}&vat_mode=net").get_data(as_text=True)
+
+    assert "1 000" in body          # 1 200 ₽/м² × 100/120
 
 
 def test_section_table_marks_a_project_whose_year_is_unknown(tmp_path):

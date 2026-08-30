@@ -16,6 +16,15 @@ from . import cost_increase, estimate_sections, extractors, passport as passport
 from . import project_filter
 from .passport import format_number
 
+# The three ways to look at money across projects signed under different
+# VAT rates — spelled out as named modes rather than left as "a rate, or
+# None" for the page to puzzle out, because the third mode ("own") and the
+# first ("net", a target of exactly 0%) would otherwise both have to be
+# read off the same falsy-vs-None distinction a stray bug could erase.
+VAT_MODE_OWN = "own"
+VAT_MODE_NET = "net"
+VAT_MODE_CUSTOM = "custom"
+
 DEFAULT_VAT_RATE = 22.0
 DEFAULT_INFLATION = 12.0
 # The year money gets brought to when no other year is chosen — today's, not
@@ -41,6 +50,18 @@ class Adjustments:
     @property
     def applied(self) -> bool:
         return self.vat_rate is not None or self.inflation is not None
+
+    @property
+    def vat_mode(self) -> str:
+        """Which of the three scenarios this is — for the form to show the
+        right radio checked. The maths itself never asks this question, only
+        ``vat_rate``: ``None`` acts on nothing, any number (0 included) is a
+        target every project gets carried to."""
+        if self.vat_rate is None:
+            return VAT_MODE_OWN
+        if self.vat_rate == 0.0:
+            return VAT_MODE_NET
+        return VAT_MODE_CUSTOM
 
     @property
     def vat_display(self) -> str:
@@ -104,22 +125,35 @@ def _percent_in_range(text, low, high):
 def adjustments_from_args(args) -> Adjustments:
     """Read the settings off the page's own address.
 
-    Each correction has its own switch (``vat_on``, ``inflation_on``) rather
-    than being turned on by the presence of a figure: an unticked checkbox
+    VAT reads as one of three named modes (``vat_mode`` — see
+    ``VAT_MODE_OWN``/``VAT_MODE_NET``/``VAT_MODE_CUSTOM``) rather than a
+    checkbox next to a figure: the three read as genuinely different
+    questions ("what did it actually cost", "what would it cost with no tax
+    at all", "what would it cost at one rate everyone shares") and a single
+    on/off switch left the middle one reachable only by typing 0 into a box
+    that looked like it was asking for the third. Missing or unrecognised
+    text here — someone editing the address bar by hand — falls back to
+    "own", the same as never having asked at all.
+
+    Inflation keeps its own switch (``inflation_on``): an unticked checkbox
     submits nothing at all, which is exactly the behaviour wanted, and it
     keeps zero per cent — "bring these to one year, and tell me which ones
     have no year" — distinguishable from no correction at all.
 
-    A switch that is on with an unreadable figure beside it — or one outside
-    a sane range for what it claims to be — falls back to the default rather
-    than silently doing nothing, or worse, feeding the maths a number it
-    can't survive.
+    A switch or mode that's on with an unreadable figure beside it — or one
+    outside a sane range for what it claims to be — falls back to the
+    default rather than silently doing nothing, or worse, feeding the maths
+    a number it can't survive.
     """
-    vat = None
-    if args.get("vat_on"):
+    vat_mode = args.get("vat_mode")
+    if vat_mode == VAT_MODE_NET:
+        vat = 0.0
+    elif vat_mode == VAT_MODE_CUSTOM:
         vat = _percent_in_range(args.get("vat"), *VAT_RATE_RANGE)
         if vat is None:
             vat = DEFAULT_VAT_RATE
+    else:
+        vat = None
 
     inflation = None
     if args.get("inflation_on"):
@@ -1121,5 +1155,7 @@ def _class_average_chart_rows(per_sqm, work_rows):
             "own_value": own,
             "own_display": row["own_display"],
             "own_pct": round(own / max_value * 100, 1) if own else 0,
+            "deviation_pct": row.get("deviation_pct"),
+            "deviation_display": row.get("deviation_display"),
         })
     return chart

@@ -9,9 +9,9 @@ from flask import (
 )
 
 from . import (
-    comparison, cost_increase, estimate, estimate_sections, excel_report, extractors,
-    passport as passport_module, pdf_export, pdf_reader, project_filter, storage,
-    upload_guard, workbook_cache,
+    chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
+    extractors, passport as passport_module, pdf_export, pdf_reader, project_filter,
+    storage, upload_guard, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -340,11 +340,16 @@ def compare_vs_average():
 
     adjustments = comparison.adjustments_from_args(request.args)
     result = None
+    chart_image = None
     if slug is not None:
         costs = _section_costs(root, all_slugs)
         result = comparison.build_class_average_comparison(
             slug, passports, costs, adjustments,
         )
+        if result is not None:
+            chart_image = chart_render.render_class_average_chart_data_uri(
+                result["chart"], project_names[slug],
+            )
 
     return render_template(
         "compare_vs_average.html",
@@ -354,6 +359,7 @@ def compare_vs_average():
         selected_name=project_names.get(slug) if slug else None,
         selected_building_class=passports[slug].get("building_class") if slug else None,
         result=result,
+        chart_image=chart_image,
         adjustments=adjustments,
         has_projects=bool(all_slugs),
     )
@@ -647,10 +653,15 @@ def _concrete_cost_per_m3(root, slugs, passports):
         if not volume:
             continue
         materials, works = _concrete_cost_breakdown(root, slug)
+        # Decimal for the division itself (volume converted to match, so the
+        # divide doesn't mix types) but float once the ratio is final — the
+        # PDF chart machinery downstream does plain float arithmetic on
+        # width_pct, and a stray Decimal there fails with a TypeError
+        # rather than a wrong number.
         if materials is not None:
-            materials_by_slug[slug] = materials / Decimal(str(volume))
+            materials_by_slug[slug] = float(materials / Decimal(str(volume)))
         if works is not None:
-            works_by_slug[slug] = works / Decimal(str(volume))
+            works_by_slug[slug] = float(works / Decimal(str(volume)))
     return materials_by_slug, works_by_slug
 
 

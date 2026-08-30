@@ -49,8 +49,8 @@ BUILDING_CLASS_OPTIONS = ["Эконом", "Комфорт", "Бизнес", "Б�
 CONTRACT_FIELDS = ["smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct", "vat"]
 
 CONTRACT_FIELD_LABELS = {
-    "smr_term": "Срок СМР",
-    "advance_payment": "Аванс",
+    "smr_term": "Срок СМР (мес.)",
+    "advance_payment": "Аванс %",
     "bank_guarantee": "Банковская гарантия",
     "performance_bond_pct": "Performance bond, %",
     "vat": "НДС",
@@ -388,6 +388,13 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
             found, problem = _terms_from_local_ocr(pdf_path, problem, project_name)
 
     data = {field: found.get(field) for field in CONTRACT_FIELDS}
+    # Whichever path found it — the regex path already returns the right
+    # shape, but Claude reading a scanned image isn't bound by that regex
+    # and might still hand back "30 %" or "33 месяца" despite being asked
+    # not to. smr_term is a bare count of months; advance_payment keeps its
+    # "%" (a percentage with the sign stripped reads as unfinished).
+    data["smr_term"] = contract_extractors.bare_number(data["smr_term"])
+    data["advance_payment"] = contract_extractors.percent_value(data["advance_payment"])
 
     # Decide the warning on what the document itself gave up, before the VAT
     # rule adds a field of its own — otherwise a known signing year would
