@@ -1977,25 +1977,29 @@ select option {
   justify-self: start;
 }
 
-/* Заголовок диаграммы и кнопка-разворот в одной строке — сама диаграмма
-   свёрнута по умолчанию (см. compare_vs_average.html), а строка держит
-   тот же боковой отступ, что у остального в карточке, раз сам заголовок
-   больше не прямой потомок карточки. */
+/* Раньше здесь была сетка с теми же процентами, что в <colgroup> таблицы,
+   плюс gap: 12px между колонками — и это было ошибкой: gap в CSS Grid
+   добавляет расстояние ПОВЕРХ процентных треков, а не отнимает его у них,
+   так что 26+18+18+18+20 = 100% плюс 4×12px газа требовали больше места,
+   чем было в контейнере. Пятая колонка (и кнопка в ней) уезжала вправо
+   ровно на эти лишние 48px — в самой таблице между колонками никакого
+   gap нет, gap там взяться неоткуда.
+
+   Заменил на простой flex без процентных колонок: .btn-wrap — общий класс
+   у обёртки и здесь, и у «Пересчитать» (см. .table-footer ниже), с
+   одинаковыми width/margin-left/padding в обоих местах. margin-left: auto
+   на .btn-wrap прижимает его к правому краю независимо от того, что перед
+   ним — заголовку тут даже не нужна фиксированная ширина. */
 .chart-toggle-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin: 26px var(--table-edge) 14px;
+  padding: 0 16px;
 }
 
 .chart-toggle-row > .pair-subtitle {
   margin: 0;
-}
-
-.chart-toggle-btn {
-  flex-shrink: 0;
 }
 
 /* --- Сравнение со средним: комбо-график (matplotlib) ---
@@ -2675,6 +2679,72 @@ select option {
 
 .works-table .sections-number.is-worse {
   color: var(--red);
+}
+
+/* Ширина всех пяти колонок works-table задаётся раз, через <colgroup> в
+   разметке (26/18/18/18/20%) — эти правила только про выравнивание и
+   перенос текста, ширину здесь больше не трогаем: два источника ширины на
+   одну колонку — это и была причина неровных промежутков между столбцами. */
+/* Селектор с двумя классами, не один — .sections-table th, .sections-table
+   td задают text-align: right с более высокой специфичностью, и одиночный
+   .works-exclude-col проигрывал бы им: подпись оставалась прижатой вправо,
+   а чекбокс ниже — центрирован через flex (justify-content, а не
+   text-align, поэтому та гонка его не касалась) — отсюда и расхождение
+   между ними. */
+.sections-table th.works-exclude-col,
+.sections-table td.works-exclude-col {
+  min-width: 110px;
+  text-align: center;
+}
+
+/* «учитывать» — самое длинное слово заголовка — должно помещаться на своей
+   строке целиком, без переноса внутри слова: снимаем те же
+   overflow-wrap/word-break/hyphens, что .sections-table thead th разрешает
+   всем остальным заголовкам. */
+.sections-table thead th.works-exclude-col {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+  text-wrap: balance;
+}
+
+.works-exclude-label {
+  display: flex;
+  justify-content: center;
+}
+
+/* width: 100% обязателен: .adjust-form — flex-контейнер, и без этой
+   ширины сам div сжимался бы по контенту и оставался среди других
+   элементов строки настроек — .btn-wrap внутри тогда было бы негде
+   прижимать к правому краю. */
+.table-footer {
+  display: flex;
+  width: 100%;
+  margin-top: 12px;
+}
+
+/* Общий класс для обёрток обеих кнопок («Пересчитать» — .table-footer
+   выше, «Показать график» — .chart-toggle-row) — важно, чтобы у обеих
+   были совпадающие width/margin-left/padding: это единственное, что
+   держит их на одной вертикальной оси, независимо от длины текста внутри
+   самой кнопки. 20% — та же доля, что у последней колонки таблицы
+   («Не учитывать в расчёте»); .table-footer и .chart-toggle-row уже
+   приведены к одинаковой полной ширине и одному и тому же отступу от
+   края карточки, так что 20% в обоих местах — один и тот же пиксельный
+   размер, а margin-left: auto прижимает обёртку к общему правому краю. */
+.btn-wrap {
+  display: flex;
+  justify-content: center;
+  width: 20%;
+  margin-left: auto;
+  padding: 0;
+}
+
+.btn-wrap > .btn {
+  margin-left: 0;
+  margin-right: 0;
+  float: none;
+  text-align: center;
 }
 
 /* --- Настройки (модальное окно) ---

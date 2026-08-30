@@ -4,7 +4,7 @@
 {% block header_actions %}
 {% if result %}
 <a class="btn btn-secondary"
-   href="{{ url_for('main.compare_vs_average_pdf', **request.args.to_dict()) }}" download>Сохранить в PDF</a>
+   href="{{ url_for('main.compare_vs_average_pdf', **request.args.to_dict(flat=False)) }}" download>Сохранить в PDF</a>
 {% endif %}
 {% endblock %}
 {% block content %}
@@ -111,91 +111,110 @@
              value="{{ adjustments.target_year }}">
     </label>
     <button type="submit" class="btn btn-secondary">Применить</button>
+
+    <div class="sections-table-wrap">
+      <table class="sections-table">
+        <thead>
+          <tr>
+            <th class="sections-label-col">Показатель</th>
+            <th>Средняя по классу</th>
+            <th>«{{ selected_name }}»</th>
+            <th>Отклонение</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="sections-label-col">
+              <span class="sections-label">Стоимость за м²</span>
+            </td>
+            <td class="sections-value">
+              <span class="sections-number">{{ result.per_sqm.peer_avg_display }}</span>
+              <span class="avg-count-note">{{ result.per_sqm.peer_avg_count }} из {{ result.peer_count }}</span>
+            </td>
+            <td class="sections-value">
+              <span class="sections-number">{{ result.per_sqm.own_display }}</span>
+            </td>
+            <td class="sections-value">
+              <span class="sections-number">{{ result.per_sqm.deviation_display }}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="pair-subtitle">
+      Средняя стоимость по видам работ
+      <span class="sections-sub">по убыванию средней стоимости; столбцы можно отсортировать</span>
+    </h3>
+    <div class="sections-table-wrap">
+      <table class="sections-table works-table">
+        <colgroup>
+          <col style="width: 26%">
+          <col style="width: 18%">
+          <col style="width: 18%">
+          <col style="width: 18%">
+          <col style="width: 20%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="sections-label-col">
+              <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+                Вид работ<span class="sections-arrow"></span>
+              </button>
+            </th>
+            <th>
+              <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+                средний ₽/м²<span class="sections-arrow"></span>
+              </button>
+            </th>
+            <th>
+              <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
+                «{{ selected_name }}», ₽/м²<span class="sections-arrow"></span>
+              </button>
+            </th>
+            <th>
+              <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
+                Отклонение<span class="sections-arrow"></span>
+              </button>
+            </th>
+            <th class="works-exclude-col">Не учитывать в&nbsp;расчёте</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in result.works %}
+          <tr>
+            <td class="sections-label-col" data-sort-value="{{ row.label }}">
+              <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+            </td>
+            <td class="sections-value"
+                data-sort-value="{{ row.peer_avg if row.peer_avg is not none else -1 }}">
+              <span class="sections-number">{{ row.peer_avg_display }}</span>
+            </td>
+            <td class="sections-value"
+                data-sort-value="{{ row.own_value if row.own_value is not none else -1 }}">
+              <span class="sections-number">{{ row.own_display }}</span>
+            </td>
+            <td class="sections-value"
+                data-sort-value="{{ row.deviation_pct if row.deviation_pct is not none else -9999 }}">
+              <span class="sections-number">{{ row.deviation_display }}</span>
+            </td>
+            <td class="works-exclude-col">
+              <label class="works-exclude-label">
+                <input type="checkbox" name="exclude_work" value="{{ row.key }}"
+                       {{ 'checked' if row.key in excluded_work_keys }}>
+              </label>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="table-footer">
+      <div class="btn-wrap">
+        <button type="submit" class="btn btn-secondary">Пересчитать</button>
+      </div>
+    </div>
   </form>
-
-  <div class="sections-table-wrap">
-    <table class="sections-table">
-      <thead>
-        <tr>
-          <th class="sections-label-col">Показатель</th>
-          <th>Средняя по классу</th>
-          <th>«{{ selected_name }}»</th>
-          <th>Отклонение</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="sections-label-col">
-            <span class="sections-label">Стоимость за м²</span>
-          </td>
-          <td class="sections-value">
-            <span class="sections-number">{{ result.per_sqm.peer_avg_display }}</span>
-            <span class="avg-count-note">{{ result.per_sqm.peer_avg_count }} из {{ result.peer_count }}</span>
-          </td>
-          <td class="sections-value">
-            <span class="sections-number">{{ result.per_sqm.own_display }}</span>
-          </td>
-          <td class="sections-value">
-            <span class="sections-number">{{ result.per_sqm.deviation_display }}</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <h3 class="pair-subtitle">
-    Средняя стоимость по видам работ
-    <span class="sections-sub">по убыванию средней стоимости; столбцы можно отсортировать</span>
-  </h3>
-  <div class="sections-table-wrap">
-    <table class="sections-table works-table">
-      <thead>
-        <tr>
-          <th class="sections-label-col">
-            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
-              Вид работ<span class="sections-arrow"></span>
-            </button>
-          </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
-              средний ₽/м²<span class="sections-arrow"></span>
-            </button>
-          </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
-              «{{ selected_name }}», ₽/м²<span class="sections-arrow"></span>
-            </button>
-          </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
-              Отклонение<span class="sections-arrow"></span>
-            </button>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in result.works %}
-        <tr>
-          <td class="sections-label-col" data-sort-value="{{ row.label }}">
-            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
-          </td>
-          <td class="sections-value"
-              data-sort-value="{{ row.peer_avg if row.peer_avg is not none else -1 }}">
-            <span class="sections-number">{{ row.peer_avg_display }}</span>
-          </td>
-          <td class="sections-value"
-              data-sort-value="{{ row.own_value if row.own_value is not none else -1 }}">
-            <span class="sections-number">{{ row.own_display }}</span>
-          </td>
-          <td class="sections-value"
-              data-sort-value="{{ row.deviation_pct if row.deviation_pct is not none else -9999 }}">
-            <span class="sections-number">{{ row.deviation_display }}</span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
 
   <div class="chart-toggle-row">
     <h3 class="pair-subtitle">
@@ -205,10 +224,12 @@
         «{{ selected_name }}» от средней по классу, %
       </span>
     </h3>
-    <button type="button" class="btn btn-secondary chart-toggle-btn"
-            aria-expanded="false" aria-controls="compare-chart-panel">
-      Показать график
-    </button>
+    <div class="btn-wrap">
+      <button type="button" class="btn btn-secondary chart-toggle-btn"
+              aria-expanded="false" aria-controls="compare-chart-panel">
+        Показать график
+      </button>
+    </div>
   </div>
   <div class="compare-chart-wrap" id="compare-chart-panel" hidden>
     <img class="compare-chart-img" src="{{ chart_image }}" alt="Сравнение со средним по классу по видам работ">

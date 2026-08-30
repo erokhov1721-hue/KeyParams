@@ -1163,6 +1163,31 @@ def test_class_average_comparison_chart_scales_every_bar_to_one_shared_max():
     assert chart["roof"]["own_pct"] == pytest.approx(round(200.0 / 1400.0 * 100.0, 1))
 
 
+def test_excluded_work_keys_drop_that_type_everywhere_on_the_page():
+    passports = {
+        "a": _passport("А", building_class="Бизнес", total_area_sqm=1000.0),
+        "b": _passport("Б", building_class="Бизнес", total_area_sqm=1000.0),
+    }
+    costs = {
+        "a": {"facade": 1_200_000.0, "roof": 100_000.0},
+        "b": {"facade": 1_000_000.0, "roof": 50_000.0},
+    }
+
+    result = comparison.build_class_average_comparison(
+        "a", passports, costs, NONE, {"roof"},
+    )
+
+    assert "roof" not in {row["key"] for row in result["works"]}
+    assert "roof" not in {row["key"] for row in result["chart"]}
+    assert "facade" in {row["key"] for row in result["works"]}
+    # "Стоимость за м²" считается заново без "roof" у обеих сторон — как
+    # будто этого раздела не было в смете вовсе: у "a" остаётся только
+    # facade (1 200 000 / 1000), у пера "b" — тоже только facade (1 000 000
+    # / 1000), а не сумма всей сметы, как до исключения.
+    assert result["per_sqm"]["own_display"] == "1 200 ₽/м²"
+    assert result["per_sqm"]["peer_avg_display"] == "1 000 ₽/м²"
+
+
 def test_the_work_breakdown_is_not_affected_by_the_group_switch():
     passports = {
         "a": _passport("А", total_area_sqm=1000.0, general_contractor="X"),

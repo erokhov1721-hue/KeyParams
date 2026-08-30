@@ -37,6 +37,13 @@ def _selected_compare_slugs(root):
     ))
 
 
+def _excluded_work_keys():
+    return {
+        key for key in request.args.getlist("exclude_work")
+        if key in estimate_sections.CATEGORY_KEYS
+    }
+
+
 def _safe_passport(root, slug):
     """The project's passport, or an empty one if the file can't be read.
 
@@ -339,12 +346,13 @@ def compare_vs_average():
         slug = None
 
     adjustments = comparison.adjustments_from_args(request.args)
+    excluded_work_keys = _excluded_work_keys()
     result = None
     chart_image = None
     if slug is not None:
         costs = _section_costs(root, all_slugs)
         result = comparison.build_class_average_comparison(
-            slug, passports, costs, adjustments,
+            slug, passports, costs, adjustments, excluded_work_keys,
         )
         if result is not None:
             chart_image = chart_render.render_class_average_chart_data_uri(
@@ -361,6 +369,7 @@ def compare_vs_average():
         result=result,
         chart_image=chart_image,
         adjustments=adjustments,
+        excluded_work_keys=excluded_work_keys,
         has_projects=bool(all_slugs),
     )
 
@@ -376,7 +385,9 @@ def compare_vs_average_pdf():
 
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, all_slugs)
-    result = comparison.build_class_average_comparison(slug, passports, costs, adjustments)
+    result = comparison.build_class_average_comparison(
+        slug, passports, costs, adjustments, _excluded_work_keys(),
+    )
     if result is None:
         # Нечего класть в файл — назад на страницу, она сама объяснит, почему
         # (нет класса дома или пар того же класса), а не отдаст пустой PDF.

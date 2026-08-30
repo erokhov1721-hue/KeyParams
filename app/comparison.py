@@ -1045,7 +1045,9 @@ def _deviation(own_value, peer_avg):
     return {"deviation_pct": pct, "deviation_display": cost_increase.format_percent(pct)}
 
 
-def build_class_average_comparison(slug, passports, costs_by_slug, adjustments):
+def build_class_average_comparison(
+    slug, passports, costs_by_slug, adjustments, excluded_work_keys=None,
+):
     """One object's own cost against the portfolio average of every other
     object sharing its building class — "Средняя стоимость за м²" and each
     work type's ₽/м², each with the object's own figure and how many
@@ -1056,6 +1058,16 @@ def build_class_average_comparison(slug, passports, costs_by_slug, adjustments):
     ``building_class`` — a "бизнес" object is only ever measured against
     other "бизнес" objects, never the whole portfolio at once, which would
     average across price tiers that were never meant to be compared.
+
+    ``excluded_work_keys`` — work-type keys (``estimate_sections.CATEGORY_KEYS``)
+    dropped from every project's estimate before anything on this page is
+    computed — as if that section had never been in the smeta at all. Not
+    just the row in the per-work-type table (and its bar on the chart):
+    "Стоимость за м²" is rebuilt the same way, so a checked-off work type
+    disappears from every figure on the page at once. Comparing "at equal
+    terms" — some system a peer's estimate happens to be missing, say —
+    means removing it everywhere, not leaving it baked into one number
+    while it vanishes from another right next to it.
 
     None if the object itself carries no building class (nothing to match
     peers by) or no other loaded project shares it — there is then no
@@ -1075,6 +1087,11 @@ def build_class_average_comparison(slug, passports, costs_by_slug, adjustments):
         return None
 
     costs_by_slug = _as_float_costs(costs_by_slug)
+    if excluded_work_keys:
+        costs_by_slug = {
+            s: {k: v for k, v in costs.items() if k not in excluded_work_keys}
+            for s, costs in costs_by_slug.items()
+        }
     peer_average = _averages_row(
         building_class, peer_slugs, passports, costs_by_slug, adjustments,
     )
