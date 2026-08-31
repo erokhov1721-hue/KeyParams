@@ -35,6 +35,7 @@ NOTE_NO_ESTIMATE = "смета не загружена"
 NOTE_NO_AREA = "рубли, не ₽/м²: общая площадь неизвестна"
 NOTE_NO_VAT = "без поправки на НДС: ставка неизвестна"
 NOTE_NO_YEAR = "без поправки на инфляцию: год подписания неизвестен"
+NOTE_NO_INCREASE = "без файла удорожания"
 
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
@@ -284,7 +285,7 @@ def _source_vat(passport):
     return passport_module.vat_for_year(parse_year(passport.get("year_signed")))
 
 
-def _column(slug, passport, costs, adjustments):
+def _column(slug, passport, costs, adjustments, extra_note=None):
     factor, notes = project_factor(
         _source_vat(passport), passport.get("year_signed"), adjustments,
     )
@@ -293,6 +294,8 @@ def _column(slug, passport, costs, adjustments):
         notes.insert(0, NOTE_NO_ESTIMATE)
     elif not area:
         notes.insert(0, NOTE_NO_AREA)
+    if extra_note:
+        notes.append(extra_note)
     return {
         "slug": slug,
         "name": passport.get("project_name") or slug,
@@ -368,18 +371,57 @@ def _add_deviations(cells):
         _add_bar(cell)
 
 
-def build_section_table(slugs, passports, costs_by_slug, adjustments):
+def _apply_increase(slugs, costs_by_slug, reports):
+    """``costs_by_slug`` with every section swapped for its cost-increase
+    figure — the workbook's "стало" where a section was restated, the
+    estimate's own figure everywhere else — so "with additional works"
+    means exactly the same thing here as it does on the удорожание block.
+
+    A project with no cost-increase file keeps its estimate figures as they
+    are (there is nothing to add them to) and gets ``NOTE_NO_INCREASE`` so
+    the unchanged number isn't mistaken for "no additional works happened".
+    """
+    reports = reports or {}
+    merged = dict(costs_by_slug)
+    notes = {}
+    for slug in slugs:
+        costs = costs_by_slug.get(slug)
+        report = reports.get(slug)
+        if report is None:
+            if costs:
+                notes[slug] = NOTE_NO_INCREASE
+            continue
+        merged[slug] = {
+            **(costs or {}), **{row.key: float(row.current) for row in report.rows},
+        }
+    return merged, notes
+
+
+def build_section_table(
+    slugs, passports, costs_by_slug, adjustments, reports=None, use_increase=False,
+):
     """The section-by-section comparison, or None when there is nothing to show.
 
     Returns None if not one of the chosen projects has an estimate: a table of
     nothing but dashes only takes up the screen.
+
+    ``use_increase`` swaps each project's estimate figures for its
+    cost-increase workbook's current ones (see ``_apply_increase``) — the
+    same underlying figures the удорожание block already computes from
+    ``reports``, just folded into this table instead of shown apart from it.
     """
     costs_by_slug = _as_float_costs(costs_by_slug)
+    increase_notes = {}
+    if use_increase:
+        costs_by_slug, increase_notes = _apply_increase(slugs, costs_by_slug, reports)
     if not any(costs_by_slug.get(slug) for slug in slugs):
         return None
 
     columns = [
-        _column(slug, passports[slug], costs_by_slug.get(slug) or {}, adjustments)
+        _column(
+            slug, passports[slug], costs_by_slug.get(slug) or {}, adjustments,
+            extra_note=increase_notes.get(slug),
+        )
         for slug in slugs
     ]
 
@@ -426,6 +468,7 @@ def build_section_table(slugs, passports, costs_by_slug, adjustments):
         "rows": rows,
         "total": {"label": "Итого СМР", "cells": total},
         "adjustments": adjustments,
+        "use_increase": use_increase,
     }
 
 

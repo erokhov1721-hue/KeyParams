@@ -221,6 +221,11 @@
       <input class="adjust-input adjust-year" type="text" name="year" inputmode="numeric"
              value="{{ adjustments.target_year }}">
     </label>
+    <label class="adjust-toggle">
+      <input type="checkbox" name="increase_on" value="1" {{ 'checked' if sections.use_increase }}>
+      <span tabindex="0"
+            data-tooltip="Стоимость раздела берётся из файла удорожания («стало»), а не только из сметы — там, где для проекта есть загруженный файл. Раздел, который файл не переписал, остаётся по смете.">С учётом удорожания</span>
+    </label>
     <button type="submit" class="btn btn-secondary">Применить</button>
   </form>
 

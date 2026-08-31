@@ -568,6 +568,57 @@ def test_a_share_under_ten_per_cent_keeps_one_decimal():
     assert roof["share_display"] == "1,6%"
 
 
+# --- переключатель «с учётом удорожания» ---
+
+def test_with_the_toggle_off_the_cost_increase_file_is_ignored():
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport(total_area_sqm=None)}, {"a": {"roof": 100.0}}, NONE,
+        reports={"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
+    )
+
+    roof = next(row for row in table["rows"] if row["key"] == "roof")
+    assert roof["cells"][0]["value"] == 100.0
+    assert table["use_increase"] is False
+
+
+def test_with_the_toggle_on_a_restated_section_uses_its_current_figure():
+    # «Кровля» переписана файлом удорожания на 130; фасада файл не касается
+    # вовсе, и его цифра остаётся сметной.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport(total_area_sqm=None)},
+        {"a": {"roof": 100.0, "facade": 200.0}}, NONE,
+        reports={"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
+        use_increase=True,
+    )
+
+    roof = next(row for row in table["rows"] if row["key"] == "roof")
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert roof["cells"][0]["value"] == 130.0
+    assert facade["cells"][0]["value"] == 200.0
+    assert table["total"]["cells"][0]["value"] == 330.0
+    assert table["use_increase"] is True
+
+
+def test_a_project_without_a_cost_increase_file_gets_a_note_when_the_toggle_is_on():
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport()}, {"a": {"roof": 100.0}}, NONE,
+        reports={"a": None}, use_increase=True,
+    )
+
+    assert comparison.NOTE_NO_INCREASE in table["columns"][0]["notes"]
+
+
+def test_no_note_when_a_missing_cost_increase_file_does_not_matter():
+    # Переключатель выключен — молчание файла удорожания ни на что не влияет,
+    # и пометка о нём только сбивала бы с толку.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport()}, {"a": {"roof": 100.0}}, NONE,
+        reports={"a": None},
+    )
+
+    assert comparison.NOTE_NO_INCREASE not in table["columns"][0]["notes"]
+
+
 # --- удорожание по проектам ---
 
 def _report(rows, estimate=None):

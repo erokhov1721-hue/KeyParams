@@ -170,6 +170,11 @@ def compare_projects():
     }
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, slugs)
+    # Прочитано один раз и передаётся и в таблицу разделов (если включена
+    # поправка на удорожание), и в блок «Удорожание проектов» ниже — второе
+    # чтение тех же файлов ничего нового не даёт.
+    increase_reports = _increase_reports(root, slugs, costs)
+    use_increase = bool(request.args.get("increase_on"))
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
@@ -197,10 +202,13 @@ def compare_projects():
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
-        sections=comparison.build_section_table(slugs, passports, costs, adjustments),
+        sections=comparison.build_section_table(
+            slugs, passports, costs, adjustments,
+            reports=increase_reports, use_increase=use_increase,
+        ),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
-            slugs, passports, _increase_reports(root, slugs, costs), adjustments,
+            slugs, passports, increase_reports, adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments, group_by=group_by,
@@ -290,6 +298,8 @@ def compare_projects_pdf():
     # расходятся, а виновата в этом выгрузка.
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, slugs)
+    increase_reports = _increase_reports(root, slugs, costs)
+    use_increase = bool(request.args.get("increase_on"))
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
@@ -309,11 +319,14 @@ def compare_projects_pdf():
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
-        sections=comparison.build_section_table(slugs, passports, costs, adjustments),
+        sections=comparison.build_section_table(
+            slugs, passports, costs, adjustments,
+            reports=increase_reports, use_increase=use_increase,
+        ),
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
-            slugs, passports, _increase_reports(root, slugs, costs), adjustments,
+            slugs, passports, increase_reports, adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments,
