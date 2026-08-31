@@ -108,6 +108,37 @@ def test_extract_general_contractor_not_found():
     assert extractors.extract_general_contractor(dgp) is None
 
 
+def test_extract_general_contractor_spelled_out_org_form():
+    # Настоящий ДГП «Nicole 1»: Генподрядчик назван не аббревиатурой, а
+    # полным наименованием организационно-правовой формы — "Акционерное
+    # общество «Фодд»" вместо "АО «Фодд»".
+    dgp = DocxContent(
+        paragraphs=[
+            "Акционерное общество «Фодд», являющееся действующим членом "
+            "саморегулируемой организации, в лице Генерального директора "
+            "Громова О.Г., действующего на основании Устава, именуемое в "
+            "дальнейшем «Генподрядчик», с третьей стороны,"
+        ],
+        tables=[],
+    )
+    assert extractors.extract_general_contractor(dgp) == "АО «Фодд»"
+
+
+def test_extract_general_contractor_prefers_abbreviation_over_full_form():
+    # Where both appear in the same sentence, the existing abbreviated-form
+    # match must keep winning — this fallback must never change behaviour
+    # for the many contracts that already parse correctly.
+    dgp = DocxContent(
+        paragraphs=[
+            "Общество с ограниченной ответственностью «Ромашка» (ООО "
+            "«Ромашка»), именуемое в дальнейшем «Генподрядчик», с третьей "
+            "стороны,"
+        ],
+        tables=[],
+    )
+    assert extractors.extract_general_contractor(dgp) == "ООО «Ромашка»"
+
+
 # --- extract_address (synthetic) ---
 
 def _dgp_with_address(line):
@@ -160,6 +191,57 @@ def test_extract_address_not_found_without_a_thoroughfare():
     assert extractors.extract_address(dgp) is None
 
 
+def test_extract_address_object_definition_without_raspolozhenniy():
+    # Настоящий ДГП «Nicole 1»: определение «Объекта» называет адрес без
+    # слова "расположенный" — "«Объект» -«...» по адресу: ..." — и улица
+    # написана в обратном порядке, название перед типом ("Никольская ул."
+    # вместо "ул. Никольская").
+    dgp = _dgp_with_address(
+        '«Объект» -«Многофункциональный комплекс с квартирами» по адресу: '
+        'г. Москва, Никольская ул., д. 10/2, стр. 2 АВ, строительство '
+        'которого осуществляется в соответствии с Техническим заданием.'
+    )
+    assert extractors.extract_address(dgp) == "г. Москва, ул. Никольская 10/2"
+
+
+def test_extract_address_prefers_the_last_stage_of_a_composite_object():
+    # Настоящий ДГП «Nicole 1»: «Объект» определён как совокупность Этапа 1
+    # («Объект 1» — нежилое здание на реконструкции по одному адресу) и
+    # Этапа 2 («Объект 2» — многофункциональный комплекс по другому адресу).
+    # Этап 1 назван (и адресован) в тексте раньше, но паспорту нужен адрес
+    # итогового, большего комплекса — Этапа 2.
+    dgp = DocxContent(
+        paragraphs=[
+            '2.3.1. Этап 1 - результатом Работ Этапа 1 будет являться '
+            '«Нежилое здание», создание которого осуществляется в результате '
+            'реконструкции здания с кадастровым номером 77:01:0001010:1029, '
+            'расположенного по адресу Российская Федерация, город Москва, '
+            'переулок Большой Черкасский, дом 4, строение 1 '
+            '(по тексту – «Объект 1»).',
+            '2.3.2. Этап 2 - результатом Работ Этапа 2 будет являться '
+            '«Многофункциональный комплекс с квартирами» по адресу: '
+            'г. Москва, Никольская ул., д. 10/2, стр. 2 АВ '
+            '(по тексту – «Объект 2»)',
+            'Здесь и по тексту Договора «Объект» в совокупности означает '
+            'Объект 1 и Объект 2.',
+        ],
+        tables=[],
+    )
+    assert extractors.extract_address(dgp) == "г. Москва, ул. Никольская 10/2"
+
+
+def test_extract_address_ignores_unrelated_po_adresu_when_no_object_definition():
+    # A party's own postal address elsewhere in the contract must never be
+    # picked up as the Объект's address just because it also says "по
+    # адресу" — only a paragraph naming «Объект» itself is trusted for the
+    # no-"расположенный" fallback.
+    dgp = _dgp_with_address(
+        "с обязательным направлением копии по адресу: 119571, Москва, "
+        "Ленинский пр-кт, д. 148"
+    )
+    assert extractors.extract_address(dgp) is None
+
+
 # --- extract_contract_price (synthetic) ---
 
 def test_extract_contract_price_found():
@@ -178,6 +260,31 @@ def test_extract_contract_price_found():
 def test_extract_contract_price_not_found():
     dgp = DocxContent(paragraphs=["Ничего релевантного здесь нет."], tables=[])
     assert extractors.extract_contract_price(dgp) is None
+
+
+def test_extract_contract_price_split_into_vat_and_non_vat_parts():
+    # Настоящий ДГП «Nicole 1»: вместо одной итоговой суммы цена договора
+    # разбита на облагаемую и не облагаемую НДС части, каждая со своей
+    # формулировкой "составляющей сумму в размере ... руб.".
+    dgp = DocxContent(
+        paragraphs=[
+            "Цена Работ, выполняемых Генподрядчиком по настоящему Договору "
+            "(Цена Договора), формируется в порядке, указанном ниже в "
+            "настоящем разделе 5 Договора и состоит из двух частей:",
+            "– части, облагаемой НДС, составляющей сумму в размере "
+            "23 845 966 061,18 руб. (Двадцать три миллиарда...), в том "
+            "числе НДС, исчисляемый в соответствии со статьей 164 НК РФ",
+            "- части, не облагаемой НДС, на основании пп.15 п.2 ст.149 "
+            "Налогового Кодекса Российской Федерации, составляющей сумму "
+            "в размере 408 656 003,51 руб. (Четыреста восемь миллионов...)",
+            "Цена Работ, указанная в Договоре, является твердой и не "
+            "подлежит изменению.",
+            "Где-то дальше по тексту тоже упомянута сумму в размере "
+            "999 999,00 руб., но это уже не часть цены договора.",
+        ],
+        tables=[],
+    )
+    assert extractors.extract_contract_price(dgp) == pytest.approx(24254622064.69)
 
 
 # --- extract_signing_year (synthetic) ---
@@ -213,6 +320,17 @@ def test_extract_signing_year_prefers_dated_preamble_over_standalone_line():
         tables=[],
     )
     assert extractors.extract_signing_year(dgp) == "2025"
+
+
+def test_extract_signing_year_found_city_and_year_on_one_line():
+    # Настоящий ДГП «Nicole 1»: обложка называет город и год одной строкой,
+    # без слова "г." перед городом и без отдельной строки под один год —
+    # "Москва, 2024 год".
+    dgp = DocxContent(
+        paragraphs=["ДОГОВОР ГЕНЕРАЛЬНОГО ПОДРЯДА", "Москва, 2024 год"],
+        tables=[],
+    )
+    assert extractors.extract_signing_year(dgp) == "2024"
 
 
 def test_extract_signing_year_found_uppercase_city():

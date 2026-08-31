@@ -3,6 +3,24 @@ import re
 from decimal import Decimal, InvalidOperation
 
 GENERAL_CONTRACTOR_ORG_RE = re.compile(r'\b(?:ООО|АО|ЗАО|ПАО|ОАО)\s*«[^»]+»')
+# A contract that names the Генподрядчик's legal form in full rather than by
+# its usual abbreviation — "Акционерное общество «Фодд»" instead of "АО
+# «Фодд»" — never matches the pattern above at all, so this is a separate
+# fallback rather than an extra alternative inside it: adding the full forms
+# there would make one of them win over an abbreviation appearing later in
+# the same sentence, changing what every contract that already has both
+# gets back.
+ORG_FULL_FORM_TO_ABBREVIATION = {
+    'Общество с ограниченной ответственностью': 'ООО',
+    'Акционерное общество': 'АО',
+    'Закрытое акционерное общество': 'ЗАО',
+    'Публичное акционерное общество': 'ПАО',
+    'Открытое акционерное общество': 'ОАО',
+}
+GENERAL_CONTRACTOR_ORG_FULL_RE = re.compile(
+    r'\b(' + '|'.join(re.escape(form) for form in ORG_FULL_FORM_TO_ABBREVIATION)
+    + r')\s*«([^»]+)»'
+)
 # The title page always states the object's address as "расположенный по
 # адресу: г. <city>, <district boilerplate>, ул. <street>, <plot-number
 # boilerplate> NN[/NN] (кадастровый номер ...)." — only the city and the
@@ -20,6 +38,28 @@ ADDRESS_STREET_TYPES = (
 ADDRESS_STREET_RE = re.compile(
     rf'\b(({ADDRESS_STREET_TYPES})\.?)\s+([^,()\n]+)', re.IGNORECASE,
 )
+# Some contracts name the street before its type instead of after — "Никольская
+# ул." rather than "ул. Никольская" — tried only once the order above finds
+# nothing, so a document using the usual order never has its match changed.
+ADDRESS_STREET_REVERSED_RE = re.compile(
+    rf'([^,()\n]+?)\s+(({ADDRESS_STREET_TYPES})\.?)(?=[,.\n]|$)', re.IGNORECASE,
+)
+# The «Объект» term's own definition, for a contract that names the address
+# without "расположенный" in front of it — "«Объект» - «...» по адресу: г.
+# Москва, ...". Scoped to a paragraph that names «Объект» itself so a
+# party's own postal address elsewhere in the contract (e.g. in the
+# "Уведомления" section) is never mistaken for the Объект's.
+OBJECT_TERM_ADDRESS_RE = re.compile(r'«Объект».*?по\s+адресу\s*:?', re.IGNORECASE | re.DOTALL)
+# A contract that builds the Объект up out of several numbered construction
+# stages — "Этап 1" defining «Объект 1», "Этап 2" defining «Объект 2», each
+# with its own address, and a separate clause saying «Объект» means all of
+# them "в совокупности" — has no single address of its own to read off; the
+# passport shows the last (largest) stage's address rather than an earlier,
+# smaller stage that merely happens to be defined — and addressed — first in
+# the document. Each stage's own defining sentence ends "...(по тексту –
+# «Объект N»)."
+STAGE_OBJECT_LABEL_RE = re.compile(r'по\s+тексту\s*[–—-]\s*«Объект\s*(\d+)»', re.IGNORECASE)
+PLAIN_ADDRESS_RE = re.compile(r'по\s+адресу\s*:?', re.IGNORECASE)
 # The house or plot number, and only when it comes directly after the street
 # name. Anchored rather than searched: the same sentence usually ends with a
 # cadastral number ("кадастровый номер земельного участка 77:02:0019010:7241"),
@@ -38,10 +78,26 @@ QUOTED_DATE_RE = re.compile(r'«\s*\d{1,2}\s*»\s*[а-яё]+\s+(20\d{2})\s*г', 
 # "2025 г." — a common convention below the parties' names on a Russian
 # contract's title page, used as a fallback when there's no dated preamble.
 STANDALONE_YEAR_RE = re.compile(r'^(20\d{2})\s*(?:год|г\.?)\s*$', re.IGNORECASE)
+# A cover page that names the year alongside the city on the same line —
+# "Москва, 2024 год" — rather than as a line on its own (STANDALONE_YEAR_RE
+# above) or as part of a dated preamble.
+CITY_YEAR_LINE_RE = re.compile(r'^[А-ЯЁ][а-яё]+\s*,\s*(20\d{2})\s*(?:год|г\.?)\s*$', re.IGNORECASE)
 PRICE_RE = re.compile(
     r'Цена\s+(?:Работ|Договора)\b.{0,150}?составляет\s+(?:сумму\s+)?'
     r'([\d\s\xa0]+[.,]\d{2})\s*руб',
     re.IGNORECASE,
+)
+# A contract that splits the price into a VAT-inclusive and a VAT-exempt
+# part instead of stating one total up front — "...состоит из двух частей:
+# – части, облагаемой НДС, составляющей сумму в размере X руб. ... - части,
+# не облагаемой НДС, ..., составляющей сумму в размере Y руб." The total is
+# the sum of every part that follows the anchor, stopping at the first
+# paragraph that names none — later in the same section other rouble
+# figures turn up (compensation formulas, material-price thresholds) that
+# are not parts of this sum.
+SPLIT_PRICE_ANCHOR_RE = re.compile(r'состоит\s+из\s+\S+\s+частей', re.IGNORECASE)
+SPLIT_PRICE_PART_RE = re.compile(
+    r'сумму\s+в\s+размере\s+([\d\s\xa0]+[.,]\d{2})\s*руб', re.IGNORECASE,
 )
 BUILDING_CLASS_RE = re.compile(
     r'класс[а-яё\s«»"\'-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
@@ -154,25 +210,69 @@ def extract_general_contractor(dgp):
             match = GENERAL_CONTRACTOR_ORG_RE.search(para)
             if match:
                 return match.group(0)
+            match = GENERAL_CONTRACTOR_ORG_FULL_RE.search(para)
+            if match:
+                abbreviation = ORG_FULL_FORM_TO_ABBREVIATION[match.group(1)]
+                return f"{abbreviation} «{match.group(2)}»"
+    return None
+
+
+def _staged_object_address_window(dgp):
+    best_n, best_para = None, None
+    for para in dgp.paragraphs:
+        m = STAGE_OBJECT_LABEL_RE.search(para)
+        if not m:
+            continue
+        n = int(m.group(1))
+        if best_n is None or n > best_n:
+            best_n, best_para = n, para
+    if best_para is None:
+        return None
+    anchor = PLAIN_ADDRESS_RE.search(best_para)
+    return best_para[anchor.end():anchor.end() + 400] if anchor else None
+
+
+def _bare_object_term_address_window(dgp):
+    for para in dgp.paragraphs:
+        if '«Объект»' not in para:
+            continue
+        anchor = OBJECT_TERM_ADDRESS_RE.search(para)
+        return para[anchor.end():anchor.end() + 400] if anchor else None
     return None
 
 
 def extract_address(dgp):
-    text = '\n'.join(dgp.paragraphs)
-    anchor = ADDRESS_ANCHOR_RE.search(text)
-    if not anchor:
+    window = _staged_object_address_window(dgp)
+
+    if window is None:
+        text = '\n'.join(dgp.paragraphs)
+        anchor = ADDRESS_ANCHOR_RE.search(text)
+        if anchor:
+            window = text[anchor.end():anchor.end() + 400]
+
+    if window is None:
+        window = _bare_object_term_address_window(dgp)
+
+    if window is None:
         return None
-    window = text[anchor.end():anchor.end() + 400]
 
     city_match = ADDRESS_CITY_RE.search(window)
-    street_match = ADDRESS_STREET_RE.search(window)
-    if not city_match or not street_match:
+    if not city_match:
         return None
 
+    street_match = ADDRESS_STREET_RE.search(window)
+    if street_match:
+        street_type = street_match.group(1)
+        # Trailing punctuation belongs to the sentence, not to the street name.
+        street_name = street_match.group(3).strip(' .;')
+    else:
+        street_match = ADDRESS_STREET_REVERSED_RE.search(window)
+        if not street_match:
+            return None
+        street_type = street_match.group(2)
+        street_name = street_match.group(1).strip(' .;,')
+
     city = city_match.group(1)
-    street_type = street_match.group(1)
-    # Trailing punctuation belongs to the sentence, not to the street name.
-    street_name = street_match.group(3).strip(' .;')
     address = f"г. {city}, {street_type} {street_name}"
 
     plot_match = ADDRESS_PLOT_RE.match(window[street_match.end():])
@@ -184,6 +284,25 @@ def extract_contract_price(dgp):
         m = PRICE_RE.search(para)
         if m:
             return parse_number(m.group(1))
+
+    paragraphs = dgp.paragraphs
+    for i, para in enumerate(paragraphs):
+        if not SPLIT_PRICE_ANCHOR_RE.search(para):
+            continue
+        total = 0.0
+        found_any = False
+        for tail in paragraphs[i:]:
+            parts = SPLIT_PRICE_PART_RE.findall(tail)
+            if not parts:
+                if found_any:
+                    break
+                continue
+            for value in parts:
+                number = parse_number(value)
+                if number is not None:
+                    total += number
+                    found_any = True
+        return total if found_any else None
     return None
 
 
@@ -196,7 +315,8 @@ def extract_signing_year(dgp):
                     return m.group(1)
             break
     for para in dgp.paragraphs:
-        m = STANDALONE_YEAR_RE.match(para.strip())
+        stripped = para.strip()
+        m = STANDALONE_YEAR_RE.match(stripped) or CITY_YEAR_LINE_RE.match(stripped)
         if m:
             return m.group(1)
     return None
