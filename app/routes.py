@@ -11,7 +11,7 @@ from flask import (
 from . import (
     chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
     extractors, passport as passport_module, pdf_export, pdf_reader, project_filter,
-    storage, upload_guard, workbook_cache,
+    storage, upload_guard, vis_reestr, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -400,6 +400,93 @@ def compare_vs_average_pdf():
         mimetype="application/pdf",
         headers={"Content-Disposition": "attachment; filename=sravnenie_so_srednim.pdf"},
     )
+
+
+def _parse_query_date(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+@bp.route("/predicted-overrun", methods=["GET"])
+def predicted_overrun():
+    root = _projects_root()
+    path = storage.reestr_vis_path(root)
+    date_from_raw = request.args.get("date_from", "")
+    date_to_raw = request.args.get("date_to", "")
+    date_from = _parse_query_date(date_from_raw)
+    date_to = _parse_query_date(date_to_raw)
+
+    def render(**extra):
+        return render_template(
+            "predicted_overrun.html",
+            date_from=date_from_raw, date_to=date_to_raw,
+            reestr_problem=vis_reestr.PROBLEM_MESSAGES.get(request.args.get("reestr_problem")),
+            format_number=passport_module.format_number,
+            **extra,
+        )
+
+    if not path.exists():
+        return render(has_file=False, error=None)
+
+    try:
+        records = vis_reestr.parse_records_cached(path)
+        analytics = vis_reestr.build_analytics(records, date_from, date_to)
+    except vis_reestr.VisReestrError as e:
+        return render(has_file=True, error=str(e))
+
+    analytics["requests_by_object"] = vis_reestr.finalize_requests_by_object(
+        analytics["requests_by_object"][:15]
+    )
+    analytics["price_increase"] = vis_reestr.finalize_price_increase(
+        analytics["price_increase"][:10]
+    )
+    analytics["by_type"] = vis_reestr.finalize_breakdown(analytics["by_type"])
+    analytics["by_status"] = vis_reestr.finalize_breakdown(analytics["by_status"])
+
+    return render(has_file=True, error=None, analytics=analytics)
+
+
+@bp.route("/predicted-overrun/upload", methods=["POST"])
+def upload_vis_reestr():
+    """Загрузить или заменить файл реестра претензий ВИС.
+
+    Тот же порядок, что и у файла удорожания проекта: сначала файл читается
+    и только потом сохраняется, чтобы неудачная замена не стирала прежний,
+    рабочий файл.
+    """
+    root = _projects_root()
+    xlsx_file = request.files.get("reestr_file")
+    if not xlsx_file or not xlsx_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.predicted_overrun", reestr_problem=code))
+
+    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return refuse("format")
+
+    data = xlsx_file.read()
+    if len(data) > MAX_COST_INCREASE_SIZE:
+        return refuse("too_big")
+    if not upload_guard.is_office_zip(io.BytesIO(data)):
+        return refuse("format")
+    try:
+        vis_reestr.parse_records(io.BytesIO(data))
+    except vis_reestr.VisReestrError as e:
+        current_app.logger.warning("Файл реестра ВИС отклонён: %s", e)
+        return refuse("unreadable")
+
+    dest = storage.reestr_vis_path(root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".upload")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    workbook_cache.invalidate(dest)
+    return redirect(url_for("main.predicted_overrun"))
 
 
 @bp.route("/projects/new", methods=["GET"])

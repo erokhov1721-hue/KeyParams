@@ -67,6 +67,20 @@ def cost_increase_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "udorozhanie.xlsx"
 
 
+# The claims-registry workbook behind "Прогнозируемое удорожание" — one
+# shared file, not tied to any project, so it lives in its own directory
+# alongside the per-project ones rather than inside one of them.
+# ``list_project_slugs`` only picks up directories that have a passport.json
+# (see below), so this sits safely next to the real projects without ever
+# being mistaken for one.
+def reestr_vis_dir(root: Path) -> Path:
+    return root / "_reestr_vis"
+
+
+def reestr_vis_path(root: Path) -> Path:
+    return reestr_vis_dir(root) / "reestr_vis.xlsx"
+
+
 COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 

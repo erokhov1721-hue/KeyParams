@@ -76,6 +76,18 @@
               <span class="sidebar-link-text">Сравнить со средним</span>
             </a>
           </li>
+          <li class="sidebar-item">
+            <a class="sidebar-link {{ 'is-active' if request.endpoint == 'main.predicted_overrun' else '' }}"
+               href="{{ url_for('main.predicted_overrun') }}">
+              <span class="sidebar-link-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M23 6l-9.5 9.5-5-5L1 18"/>
+                  <path d="M17 6h6v6"/>
+                </svg>
+              </span>
+              <span class="sidebar-link-text">Прогнозируемое удорожание</span>
+            </a>
+          </li>
         </ul>
         <div class="sidebar-section-title">Проекты</div>
         {% if sidebar_slugs %}
