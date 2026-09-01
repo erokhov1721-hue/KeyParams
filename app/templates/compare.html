@@ -179,7 +179,15 @@
 {% if sections %}
 <div class="card sections-card">
   <div class="sections-head">
-    <h2 class="chart-title">Стоимость по разделам{% if sections.columns[0].per_sqm %}, ₽/м²{% endif %}</h2>
+    <div class="sections-head-row">
+      <h2 class="chart-title">Стоимость по разделам{% if sections.columns[0].per_sqm %}, ₽/м²{% endif %}</h2>
+      <button type="button" class="sections-collapse-toggle" aria-expanded="true">
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+        <span class="sections-collapse-toggle-text">Свернуть</span>
+      </button>
+    </div>
     <p class="sections-sub">
       Доля — от итога базового проекта. Отклонение — к базовому проекту,
       шкала ±50%. Базовый — «{{ sections.columns[0].name }}».
@@ -225,6 +233,11 @@
       <input type="checkbox" name="increase_on" value="1" {{ 'checked' if sections.use_increase }}>
       <span tabindex="0"
             data-tooltip="Стоимость раздела берётся из файла удорожания («стало»), а не только из сметы — там, где для проекта есть загруженный файл. Раздел, который файл не переписал, остаётся по смете.">С учётом удорожания</span>
+    </label>
+    <label class="adjust-toggle">
+      <input type="checkbox" name="vis_overrun_on" value="1" {{ 'checked' if sections.use_vis_overrun }}>
+      <span tabindex="0"
+            data-tooltip="К «Инженерным системам» прибавляется прогнозируемое удорожание из реестра претензий ВИС («Прогнозируемое удорожание» в меню) — там, где название проекта совпало с объектом в реестре.">Прогноз удорожания</span>
     </label>
     <button type="submit" class="btn btn-secondary">Применить</button>
   </form>
@@ -319,7 +332,15 @@
 {% if averages %}
 <div class="card sections-card">
   <div class="sections-head">
-    <h2 class="chart-title">Средние показатели по объектам</h2>
+    <div class="sections-head-row">
+      <h2 class="chart-title">Средние показатели по объектам</h2>
+      <button type="button" class="sections-collapse-toggle" aria-expanded="true">
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+        <span class="sections-collapse-toggle-text">Свернуть</span>
+      </button>
+    </div>
     <p class="sections-sub">
       По {{ slugs | length }} выбранным объектам, с поправками на НДС и
       инфляцию, если они включены выше. Стоимость за м² — портфельная:
@@ -362,6 +383,7 @@
         </tr>
       </thead>
       <tbody>
+        {% if averages_group_by %}
         {% for row in averages.rows %}
         <tr>
           <td class="sections-label-col">
@@ -378,7 +400,26 @@
           </td>
         </tr>
         {% endfor %}
+        {% endif %}
       </tbody>
+      {# Свёрнутая по группам разбивка прячется, но общий итог по всей
+         выборке остаётся виден — так же, как «Итого СМР» в таблице разделов
+         выше. Без группировки строка ровно одна и совпадает с этим итогом:
+         дублировать её в подвале незачем. #}
+      <tfoot>
+        <tr>
+          <td class="sections-label-col">{{ averages.total.label }}</td>
+          <td class="sections-value"><span class="sections-number">{{ averages.total.count }}</span></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ averages.total.per_sqm_display }}</span>
+            <span class="avg-count-note">{{ averages.total.per_sqm_count }} из {{ averages.total.count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ averages.total.contract_display }}</span>
+            <span class="avg-count-note">{{ averages.total.contract_count }} из {{ averages.total.count }}</span>
+          </td>
+        </tr>
+      </tfoot>
     </table>
   </div>
 
@@ -690,6 +731,22 @@
           })
           .forEach(function (row) { body.appendChild(row); });
       });
+    });
+  });
+</script>
+
+{# Свернуть «Стоимость по разделам» до заголовков объектов и итога СМР —
+   таблица разделов длинная, а после первого чтения нужен обычно только
+   итог; строки и колонка доли скрываются через класс, без перезагрузки. #}
+<script>
+  document.querySelectorAll('.sections-collapse-toggle').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var card = button.closest('.sections-card');
+      var expanded = button.getAttribute('aria-expanded') === 'true';
+      card.classList.toggle('is-collapsed', expanded);
+      button.setAttribute('aria-expanded', String(!expanded));
+      button.querySelector('.sections-collapse-toggle-text').textContent =
+        expanded ? 'Развернуть' : 'Свернуть';
     });
   });
 </script>

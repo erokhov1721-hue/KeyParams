@@ -1658,6 +1658,48 @@ select option {
   color: var(--text-500);
 }
 
+.sections-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sections-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-500);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sections-collapse-toggle:hover {
+  color: var(--text-100);
+  border-color: var(--text-500);
+}
+
+.sections-collapse-toggle .accordion-chevron {
+  transition: transform 0.15s ease;
+}
+
+.sections-collapse-toggle[aria-expanded="false"] .accordion-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Свёрнутая карточка разделов: остаются только заголовки объектов (шапка) и
+   строка «Итого СМР» (подвал) — доля в смете и построчная разбивка прячутся,
+   их не нужно видеть, когда важен только итог. */
+.sections-card.is-collapsed .sections-weight-col,
+.sections-card.is-collapsed .sections-table tbody {
+  display: none;
+}
+
 .adjust-form {
   display: flex;
   flex-wrap: wrap;
