@@ -10,8 +10,8 @@ from flask import (
 
 from . import (
     chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
-    extractors, passport as passport_module, pdf_export, pdf_reader, project_filter,
-    storage, upload_guard, vis_reestr, workbook_cache,
+    extractors, investor_summary, passport as passport_module, pdf_export, pdf_reader,
+    project_filter, storage, upload_guard, vis_reestr, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -175,6 +175,10 @@ def compare_projects():
     # чтение тех же файлов ничего нового не даёт.
     increase_reports = _increase_reports(root, slugs, costs)
     use_increase = bool(request.args.get("increase_on"))
+    vis_overrun = comparison.vis_overrun_by_slug(
+        slugs, passports, _vis_price_increase_rows(root),
+    )
+    use_vis_overrun = bool(request.args.get("vis_overrun_on"))
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
@@ -205,6 +209,7 @@ def compare_projects():
         sections=comparison.build_section_table(
             slugs, passports, costs, adjustments,
             reports=increase_reports, use_increase=use_increase,
+            vis_overrun_by_slug=vis_overrun, use_vis_overrun=use_vis_overrun,
         ),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
@@ -281,6 +286,26 @@ def _section_costs(root, slugs):
     return {slug: excel_report.estimate_costs(root, slug)[0] for slug in slugs}
 
 
+def _vis_price_increase_rows(root):
+    """The VIS claims registry's per-object cost-overrun forecast —
+    ``[{"name": ..., "sum": Decimal}, ...]`` — or ``[]`` when the registry
+    hasn't been uploaded or can't be read.
+
+    Empty rather than an error: this only feeds one optional toggle on the
+    comparison page, so a missing or broken registry should leave that
+    toggle inert (no project matches anything) rather than take the whole
+    comparison down the way an unreadable estimate would.
+    """
+    path = storage.reestr_vis_path(root)
+    if not path.exists():
+        return []
+    try:
+        records = vis_reestr.parse_records_cached(path)
+    except vis_reestr.VisReestrError:
+        return []
+    return vis_reestr.build_analytics(records)["price_increase"]
+
+
 @bp.route("/compare/pdf", methods=["GET"])
 def compare_projects_pdf():
     root = _projects_root()
@@ -300,6 +325,10 @@ def compare_projects_pdf():
     costs = _section_costs(root, slugs)
     increase_reports = _increase_reports(root, slugs, costs)
     use_increase = bool(request.args.get("increase_on"))
+    vis_overrun = comparison.vis_overrun_by_slug(
+        slugs, passports, _vis_price_increase_rows(root),
+    )
+    use_vis_overrun = bool(request.args.get("vis_overrun_on"))
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
@@ -322,6 +351,7 @@ def compare_projects_pdf():
         sections=comparison.build_section_table(
             slugs, passports, costs, adjustments,
             reports=increase_reports, use_increase=use_increase,
+            vis_overrun_by_slug=vis_overrun, use_vis_overrun=use_vis_overrun,
         ),
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
@@ -500,6 +530,32 @@ def upload_vis_reestr():
     tmp.replace(dest)
     workbook_cache.invalidate(dest)
     return redirect(url_for("main.predicted_overrun"))
+
+
+@bp.route("/investors", methods=["GET"])
+def investor_summary_page():
+    """Сводка для инвесторов: смета, прогнозируемое и подписанное
+    удорожание по каждому объекту, и дельта между ними — по всем
+    объектам сразу, а не только по выбранным для сравнения.
+    """
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    passports = {slug: _safe_passport(root, slug) for slug in slugs}
+    # Смета читается один раз на объект и переиспользуется для отчёта по
+    # удорожанию (ему нужна та же цифра как база для сравнения) — иначе
+    # тяжёлый xlsx на каждый объект разбирался бы дважды подряд.
+    estimate_totals = {slug: _estimate_totals(root, slug) for slug in slugs}
+    table = investor_summary.build_table(
+        slugs,
+        {slug: passports[slug].get("project_name") or slug for slug in slugs},
+        estimate_totals,
+        {
+            slug: _cost_increase_report(root, slug, estimate_totals[slug])
+            for slug in slugs
+        },
+        comparison.vis_overrun_by_slug(slugs, passports, _vis_price_increase_rows(root)),
+    )
+    return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
 
 
 @bp.route("/projects/new", methods=["GET"])
@@ -776,18 +832,26 @@ def _concrete_cost_per_m3(root, slugs, passports):
     return materials_by_slug, works_by_slug
 
 
-def _cost_increase_report(root, slug):
+def _cost_increase_report(root, slug, estimate_totals=None):
     """Удорожание по видам работ, или None, если читать нечего.
 
     None и там, где файл есть, но прочитать его не удалось: файл, который
     после загрузки успели поправить в Excel, не должен ронять всю страницу
     проекта — на ней, кроме удорожания, есть и паспорт, и смета.
+
+    ``estimate_totals`` — сюда можно передать уже прочитанную смету
+    проекта, если вызывающий код и так её только что читал (страница
+    сводки по удорожанию читает смету каждого объекта отдельно): смета
+    — тяжёлый xlsx, и второй раз его разбирать ради той же цифры незачем.
+    Не передан — читается здесь же, как раньше.
     """
     path = storage.cost_increase_path(root, slug)
     if not path.exists():
         return None
+    if estimate_totals is None:
+        estimate_totals = _estimate_totals(root, slug)
     try:
-        return cost_increase.read_report(path, _estimate_totals(root, slug))
+        return cost_increase.read_report(path, estimate_totals)
     except cost_increase.CostIncreaseError as e:
         current_app.logger.warning("Не удалось прочитать файл удорожания: %s", e)
         return None

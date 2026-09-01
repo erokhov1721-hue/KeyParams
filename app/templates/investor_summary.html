@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Сводка по удорожанию{% endblock %}
+{% block main_extra_class %}container-wide{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Сводка по удорожанию</h1>
+    <p class="page-sub">
+      По каждому объекту: смета, прогнозируемое удорожание из реестра
+      претензий ВИС и уже подписанное удорожание. Дельта — сколько из
+      прогноза ещё не закрыто подписью.
+    </p>
+  </div>
+</div>
+
+{% if not has_projects %}
+<div class="card empty-state">
+  <p class="empty-title">Пока нет ни одного объекта</p>
+  <p class="empty-sub">Заведите проект, чтобы он появился в этой сводке.</p>
+  <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+</div>
+{% else %}
+
+<div class="card sections-card">
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">
+            <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
+              Объект<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
+              Смета<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
+              Прогнозируемое удорожание<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
+              Подписанное удорожание<span class="sections-arrow"></span>
+            </button>
+          </th>
+          <th>
+            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">
+              Дельта<span class="sections-arrow"></span>
+            </button>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr>
+          <td class="sections-label-col" data-sort-value="{{ row.label }}">
+            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+          </td>
+          <td class="sections-value{{ ' is-empty' if row.estimate is none }}"
+              data-sort-value="{{ row.estimate if row.estimate is not none else -1 }}">
+            <span class="sections-number">{{ row.estimate_display }}</span>
+          </td>
+          <td class="sections-value{{ ' is-empty' if row.predicted is none }}"
+              data-sort-value="{{ row.predicted if row.predicted is not none else -1 }}">
+            <span class="sections-number">{{ row.predicted_display }}</span>
+          </td>
+          <td class="sections-value{{ ' is-empty' if row.signed is none }}"
+              data-sort-value="{{ row.signed if row.signed is not none else -1 }}">
+            <span class="sections-number">{{ row.signed_display }}</span>
+          </td>
+          <td class="sections-value{{ ' is-empty' if row.delta is none }}"
+              data-sort-value="{{ row.delta if row.delta is not none else -1000000000000 }}">
+            <span class="sections-number {{ 'is-worse' if row.delta and row.delta > 0 else 'is-better' if row.delta and row.delta < 0 }}">{{ row.delta_display }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="sections-label-col">{{ table.total.label }}</td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total.estimate_display }}</span>
+            <span class="avg-count-note">{{ table.total.estimate_count }} из {{ table.total.count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total.predicted_display }}</span>
+            <span class="avg-count-note">{{ table.total.predicted_count }} из {{ table.total.count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total.signed_display }}</span>
+            <span class="avg-count-note">{{ table.total.signed_count }} из {{ table.total.count }}</span>
+          </td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total.delta_display }}</span>
+            <span class="avg-count-note">{{ table.total.delta_count }} из {{ table.total.count }}</span>
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.sections-table').forEach(function (table) {
+    var buttons = table.querySelectorAll('.sections-sort');
+    if (!buttons.length || !table.tBodies.length) return;
+    var body = table.tBodies[0];
+
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        var index = Number(button.dataset.sortIndex);
+        var numeric = button.dataset.sortType === 'number';
+        var descending = button.dataset.order !== 'desc';
+
+        buttons.forEach(function (other) {
+          if (other !== button) { other.removeAttribute('data-order'); }
+        });
+        button.dataset.order = descending ? 'desc' : 'asc';
+
+        Array.from(body.rows)
+          .sort(function (a, b) {
+            var left = a.cells[index].dataset.sortValue;
+            var right = b.cells[index].dataset.sortValue;
+            var result = numeric
+              ? Number(left) - Number(right)
+              : left.localeCompare(right, 'ru');
+            return descending ? -result : result;
+          })
+          .forEach(function (row) { body.appendChild(row); });
+      });
+    });
+  });
+</script>
+
+{% endif %}
+{% endblock %}
