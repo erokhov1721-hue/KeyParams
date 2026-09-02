@@ -2947,6 +2947,10 @@ select option {
   background: linear-gradient(160deg, #5b4bc0, #262038);
 }
 
+.theme-option-swatch-opal {
+  background: linear-gradient(135deg, #f5f5f7 50%, #0071e3 50%);
+}
+
 .theme-option-body {
   display: flex;
   flex-direction: column;
@@ -3237,4 +3241,172 @@ select option {
 :root[data-ui-theme="mr"] .works-bar,
 :root[data-ui-theme="mr"] .delta-half {
   box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* ============================================================================
+   OPAL THEME — adapted from the "Apple" system in marvkr/better-design
+   (registry/apple), selected in Settings (data-ui-theme="opal"). Named for
+   its palette (pearly light surfaces, a cool blue accent), not the source.
+
+   That reference only specifies a light workspace: near-white background,
+   plain white cards with a faint neutral shadow (no colour in it, unlike
+   Изумруд/MR's glow), SF Pro / -apple-system type, and a flat system-blue
+   accent with no gradient or coloured glow on primary buttons. The dark
+   workspace below is this app's own extrapolation, using Apple's own dark
+   system colours (true-black base, systemBlue/Orange/Teal/Purple/Red dark
+   variants) rather than inventing new hues.
+
+   Same structure as the MR block above: a raw palette, then a semantic
+   remap under [data-ui-theme="opal"] (dark, the base case here as
+   everywhere else in this file) and its light variant, then the sidebar
+   re-scope and the handful of component tweaks the reference calls for.
+   Radius is the one non-colour token this theme touches, to match the
+   reference's softer corners — buttons are already a 999px pill app-wide,
+   so nothing to do there. */
+
+:root {
+  --opal-bg: #f5f5f7;
+  --opal-bg-sunken: #ececef;
+  --opal-bg-strong: #e2e2e6;
+  --opal-card: #ffffff;
+  --opal-border: #d2d2d7;
+  --opal-text: #1d1d1f;
+  --opal-text-muted: #6e6e73;
+  --opal-text-dim: #86868b;
+  --opal-black: #000000;
+  --opal-dark-bg: #000000;
+  --opal-dark-card: #1c1c1e;
+  --opal-dark-hover: #2c2c2e;
+  --opal-dark-strong: #3a3a3c;
+  --opal-dark-text: #ffffff;
+  --opal-dark-text-muted: #98989d;
+  --opal-dark-text-dim: #68686d;
+  --opal-accent: #0071e3;
+  --opal-accent-hover: #0077ed;
+  --opal-accent-2: #5ac8fa;
+  --opal-accent-dark: #0a84ff;
+  --opal-accent-dark-hover: #3395ff;
+  --opal-accent-2-dark: #64d2ff;
+  --opal-orange: #ff9500;
+  --opal-orange-dark: #ff9f0a;
+  --opal-teal: #30b0c7;
+  --opal-teal-dark: #40c8e0;
+  --opal-purple: #af52de;
+  --opal-purple-dark: #bf5af2;
+  --opal-red: #ff3b30;
+  --opal-red-dark: #ff453a;
+}
+
+:root[data-ui-theme="opal"] {
+  color-scheme: dark;
+  --bg-900: var(--opal-dark-bg);
+  --bg-800: var(--opal-dark-card);
+  --bg-700: var(--opal-dark-hover);
+  --bg-650: var(--opal-dark-strong);
+  --accent: var(--opal-accent-dark);
+  --accent-2: var(--opal-accent-2-dark);
+  --accent-hover: var(--opal-accent-dark-hover);
+  --accent-dim: rgba(10, 132, 255, 0.16);
+  --accent-glow: rgba(10, 132, 255, 0.35);
+  --accent-ink: #ffffff;
+  --amber: var(--opal-orange-dark);
+  --amber-dim: rgba(255, 159, 10, 0.14);
+  --amber-border: var(--amber);
+  --blue: var(--opal-teal-dark);
+  --blue-dim: rgba(64, 200, 224, 0.14);
+  --blue-border: var(--blue);
+  --purple: var(--opal-purple-dark);
+  --purple-dim: rgba(191, 90, 242, 0.14);
+  --purple-border: var(--purple);
+  --red: var(--opal-red-dark);
+  --red-dim: rgba(255, 69, 58, 0.14);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --text-100: var(--opal-dark-text);
+  --text-500: var(--opal-dark-text-muted);
+  --text-600: var(--opal-dark-text-dim);
+  --surface-card: var(--opal-dark-card);
+  --surface-topbar: rgba(28, 28, 30, 0.85);
+  --overlay: rgba(0, 0, 0, 0.65);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -20px rgba(0, 0, 0, 0.55);
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+}
+
+:root[data-ui-theme="opal"][data-theme="light"] {
+  color-scheme: light;
+  --bg-900: var(--opal-bg);
+  --bg-800: var(--opal-card);
+  --bg-700: var(--opal-bg-sunken);
+  --bg-650: var(--opal-bg-strong);
+  --accent: var(--opal-accent);
+  --accent-2: var(--opal-accent-2);
+  --accent-hover: var(--opal-accent-hover);
+  --accent-dim: rgba(0, 113, 227, 0.10);
+  --accent-glow: rgba(0, 113, 227, 0.22);
+  --accent-ink: #ffffff;
+  --amber: var(--opal-orange);
+  --amber-dim: rgba(255, 149, 0, 0.12);
+  --amber-border: var(--amber);
+  --blue: var(--opal-teal);
+  --blue-dim: rgba(48, 176, 199, 0.12);
+  --blue-border: var(--blue);
+  --purple: var(--opal-purple);
+  --purple-dim: rgba(175, 82, 222, 0.10);
+  --purple-border: var(--purple);
+  --red: var(--opal-red);
+  --red-dim: rgba(255, 59, 48, 0.10);
+  --border: var(--opal-border);
+  --border-soft: rgba(29, 29, 31, 0.06);
+  --text-100: var(--opal-text);
+  --text-500: var(--opal-text-muted);
+  --text-600: var(--opal-text-dim);
+  --surface-card: var(--opal-card);
+  --surface-topbar: rgba(255, 255, 255, 0.85);
+  --overlay: rgba(29, 29, 31, 0.38);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Sidebar stays dark under Opal too, same trick the other two themes use:
+   everything inside already reads these names, so re-scoping them here is
+   the whole job. */
+:root[data-ui-theme="opal"] .sidebar {
+  color: var(--opal-dark-text-muted);
+  background: var(--opal-black);
+  --bg-900: var(--opal-black);
+  --bg-800: var(--opal-dark-card);
+  --bg-700: var(--opal-dark-hover);
+  --accent: var(--opal-accent-dark);
+  --accent-dim: rgba(10, 132, 255, 0.18);
+  --text-100: #ffffff;
+  --text-500: var(--opal-dark-text-muted);
+  --text-600: var(--opal-dark-text-dim);
+}
+
+:root[data-ui-theme="opal"] body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+/* The reference card is a plain opaque surface, not a glass one — blurring
+   nothing behind an opaque background only costs paint time. */
+:root[data-ui-theme="opal"] .card {
+  backdrop-filter: none;
+}
+
+/* Flat fill, no gradient or coloured glow — the reference button is a solid
+   system-blue pill that just lightens on hover and compresses slightly on
+   press. */
+:root[data-ui-theme="opal"] .btn-primary {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+:root[data-ui-theme="opal"] .btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+:root[data-ui-theme="opal"] .btn-primary:active {
+  transform: scale(0.99);
 }
