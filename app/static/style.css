@@ -1241,6 +1241,23 @@ select option {
   padding: 24px 28px;
 }
 
+/* Дашборд сравнения (кнопка «Дашборд» на странице сравнения) — те же
+   графики, но один в ряд вместо сетки в две колонки: здесь их смотрят,
+   а не читают строку за строкой, и места под каждый стоит дать больше. */
+.dashboard-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard-chart-card {
+  padding: 32px 36px;
+}
+
+.dashboard-chart-card .chart-title {
+  font-size: 20px;
+}
+
 .chart-title {
   margin: 0 0 18px;
   font-size: 16px;
@@ -1252,6 +1269,23 @@ select option {
   margin: 0;
   color: var(--text-500);
   font-size: 14px;
+}
+
+.bar-chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+/* Значения, округляющиеся до нуля, в саму гистограмму не идут (см.
+   комментарий у макроса bar_chart_rows) — просто перечислены здесь. */
+.chart-zero-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-500);
+}
+
+.chart-zero-item {
+  font-weight: 600;
 }
 
 /* Прогнозируемое удорожание — реестр претензий ВИС */
@@ -1635,6 +1669,7 @@ select option {
 .sections-card > .adjust-form,
 .sections-card > .stat-tiles,
 .sections-card > .pair-subtitle,
+.sections-card > .sections-head-row,
 .sections-card > .delta-list,
 .sections-card > .avg-group-tabs,
 .compare-card > .sections-head {
@@ -1697,6 +1732,13 @@ select option {
    их не нужно видеть, когда важен только итог. */
 .sections-card.is-collapsed .sections-weight-col,
 .sections-card.is-collapsed .sections-table tbody {
+  display: none;
+}
+
+/* Свёрнутая дельта по разделам в «Сравнении двух объектов» — сама карточка
+   не сворачивается целиком, метрики сверху (пара 1) остаются на месте,
+   прячется только список разделов под ними. */
+.pair-card.is-collapsed .delta-list {
   display: none;
 }
 
@@ -2085,22 +2127,23 @@ select option {
   margin: 0;
 }
 
-/* --- Сравнение со средним: комбо-график (matplotlib) ---
+/* --- Сравнение со средним: комбо-график (Chart.js) ---
 
-   Rendered server-side as a PNG (see app/chart_render.py) rather than CSS
-   bars: it needs a second, differently-scaled series (the deviation line)
-   alongside the bars, which a div-per-bar layout has no clean way to draw.
-   Its own width is capped in chart_render.py so it fits the card without a
-   scrollbar; max-width here is a second, viewport-side backstop for windows
-   narrower than the card itself. */
+   Built client-side on a <canvas> (see the script in
+   compare_vs_average.html) rather than CSS bars: it needs a second,
+   differently-scaled series (the deviation line) alongside the bars, which
+   a div-per-bar layout has no clean way to draw. The wrap's own width is
+   capped in that same script so it fits the card without a scrollbar in
+   the common case; overflow-x here is the backstop for a category count or
+   a window narrow enough to still overflow it. */
 .compare-chart-wrap {
   overflow-x: auto;
 }
 
-.compare-chart-img {
-  display: block;
+.compare-chart-canvas-wrap {
+  position: relative;
+  height: 460px;
   max-width: 100%;
-  height: auto;
 }
 
 .pair-grid {

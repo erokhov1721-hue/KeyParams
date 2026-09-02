@@ -1,13 +1,16 @@
-"""The class-average comparison, drawn as a PNG instead of CSS bars.
+"""The class-average comparison, drawn two different ways for two audiences.
 
-Matplotlib runs headless here (``Agg``) — there is no display in a Flask
-worker process, and the default backend would otherwise try to open one and
-fail. The figure is rendered once per page view and handed to the template
-as a data URI, so the browser needs no extra request and the image can't go
-stale against the tables above it: both come from the same ``chart`` rows.
+On screen it's an interactive Chart.js chart: ``class_average_chart_data``
+shapes the same ``chart`` rows into a JSON-serialisable dict, and the
+template builds the chart client-side, styled from the page's own CSS
+variables so it follows whichever theme is active.
+
+In the PDF export there is no client to run JS on, so ``render_class_average_
+chart`` still draws the same picture as a PNG via matplotlib, headless
+(``Agg`` — there is no display in a Flask worker process, and the default
+backend would otherwise try to open one and fail).
 """
 
-from base64 import b64encode
 from io import BytesIO
 
 import matplotlib
@@ -66,6 +69,28 @@ def _short_label(label):
     while len(words) > 1 and words[-1].lower().strip(",.;") in _DANGLING_WORDS:
         words.pop()
     return " ".join(words).rstrip(" ,;")
+
+
+def class_average_chart_data(chart_rows, own_name):
+    """The same rows, shaped for the interactive Chart.js chart on screen.
+
+    ``deviation_pct`` entries stay ``None`` rather than becoming ``NaN``
+    (unlike the PNG path's own line array): ``None`` survives JSON as
+    ``null``, which is what ``spanGaps: false`` on the client needs to break
+    the line at that point instead of drawing a straight interpolated
+    segment across it. ``has_deviation`` says whether to add the line
+    dataset at all — mirroring the PNG path's own ``any(...)`` check, so a
+    comparison with no deviation figures anywhere doesn't get an empty axis
+    with nothing plotted on it.
+    """
+    return {
+        "labels": [_short_label(row["label"]) for row in chart_rows],
+        "peer_pct": [row["peer_pct"] for row in chart_rows],
+        "own_pct": [row["own_pct"] for row in chart_rows],
+        "deviation_pct": [row.get("deviation_pct") for row in chart_rows],
+        "own_name": own_name,
+        "has_deviation": any(row.get("deviation_pct") is not None for row in chart_rows),
+    }
 
 
 def render_class_average_chart(chart_rows, own_name):
@@ -153,9 +178,3 @@ def render_class_average_chart(chart_rows, own_name):
     fig.savefig(buffer, format="png", transparent=True, bbox_inches="tight")
     plt.close(fig)
     return buffer.getvalue()
-
-
-def render_class_average_chart_data_uri(chart_rows, own_name):
-    """The same chart, ready to drop straight into an ``<img src>``."""
-    png_bytes = render_class_average_chart(chart_rows, own_name)
-    return "data:image/png;base64," + b64encode(png_bytes).decode("ascii")

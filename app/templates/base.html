@@ -30,6 +30,13 @@
   </script>
 </head>
 <body>
+  {# Загружается здесь, а не с defer/async и не только на странице сравнения
+     со средним: не блокирует парсинг <head>, но выполняется раньше любого
+     инлайн-скрипта дальше по странице, которому Chart.js может
+     понадобиться — сейчас это только один график, но так не нужно будет
+     переносить тег при появлении следующего. #}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="{{ url_for('static', filename='charts.js') }}"></script>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="sidebar-logo" href="{{ url_for('main.index') }}" aria-label="На главную">

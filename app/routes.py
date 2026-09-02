@@ -180,11 +180,7 @@ def compare_projects():
     )
     use_vis_overrun = bool(request.args.get("vis_overrun_on"))
     left, right = _pair_choice(slugs)
-    concrete_coefficients = _concrete_coefficients(root, slugs, passports)
-    facade_coefficients = _facade_coefficients(root, slugs, passports)
-    concrete_materials_per_m3, concrete_works_per_m3 = _concrete_cost_per_m3(
-        root, slugs, passports,
-    )
+    charts, colors = _comparison_charts(root, slugs, passports)
     group_by = _averages_group_by(request.args)
     return render_template(
         "compare.html",
@@ -195,14 +191,8 @@ def compare_projects():
         passports=passports,
         fields=passport_module.PASSPORT_FIELDS,
         field_labels=passport_module.FIELD_LABELS,
-        charts=passport_module.build_comparison_charts(
-            passports, slugs,
-            concrete_coefficients=concrete_coefficients,
-            facade_coefficients=facade_coefficients,
-            concrete_materials_per_m3=concrete_materials_per_m3,
-            concrete_works_per_m3=concrete_works_per_m3,
-        ),
-        project_colors=passport_module.project_colors(slugs),
+        charts=charts,
+        project_colors=colors,
         numeric_fields=passport_module.NUMERIC_FIELDS,
         format_number=passport_module.format_number,
         price_per_sqm=passport_module.price_per_sqm,
@@ -222,6 +212,50 @@ def compare_projects():
         averages_group_options=project_filter.GROUPS,
         adjustments=adjustments,
     )
+
+
+@bp.route("/compare/dashboard", methods=["GET"])
+def compare_dashboard():
+    """Те же графики, что и на «Сравнить объекты», без таблиц и формы
+    поправок вокруг — для показа, не для чтения по строкам. НДС и инфляция
+    сюда не попадают: build_comparison_charts их не принимает, эти графики
+    от поправок не зависят."""
+    root = _projects_root()
+    slugs = _selected_compare_slugs(root)
+    if not slugs:
+        return redirect(url_for("main.compare_select"))
+
+    passports = {
+        slug: passport_module.load_passport(storage.passport_path(root, slug))
+        for slug in slugs
+    }
+    charts, colors = _comparison_charts(root, slugs, passports)
+    return render_template(
+        "compare_dashboard.html",
+        slugs=slugs,
+        passports=passports,
+        charts=charts,
+        project_colors=colors,
+    )
+
+
+def _comparison_charts(root, slugs, passports):
+    """``(charts, project_colors)`` для обеих страниц графиков сравнения —
+    «Сравнить объекты» и её дашборда. Общее место, чтобы список графиков и
+    формулы коэффициентов не пришлось держать в двух местах одинаковыми."""
+    concrete_coefficients = _concrete_coefficients(root, slugs, passports)
+    facade_coefficients = _facade_coefficients(root, slugs, passports)
+    concrete_materials_per_m3, concrete_works_per_m3 = _concrete_cost_per_m3(
+        root, slugs, passports,
+    )
+    charts = passport_module.build_comparison_charts(
+        passports, slugs,
+        concrete_coefficients=concrete_coefficients,
+        facade_coefficients=facade_coefficients,
+        concrete_materials_per_m3=concrete_materials_per_m3,
+        concrete_works_per_m3=concrete_works_per_m3,
+    )
+    return charts, passport_module.project_colors(slugs)
 
 
 def _averages_group_by(args):
@@ -391,14 +425,14 @@ def compare_vs_average():
     adjustments = comparison.adjustments_from_args(request.args)
     excluded_work_keys = _excluded_work_keys()
     result = None
-    chart_image = None
+    chart_data = None
     if slug is not None:
         costs = _section_costs(root, all_slugs)
         result = comparison.build_class_average_comparison(
             slug, passports, costs, adjustments, excluded_work_keys,
         )
         if result is not None:
-            chart_image = chart_render.render_class_average_chart_data_uri(
+            chart_data = chart_render.class_average_chart_data(
                 result["chart"], project_names[slug],
             )
 
@@ -410,7 +444,7 @@ def compare_vs_average():
         selected_name=project_names.get(slug) if slug else None,
         selected_building_class=passports[slug].get("building_class") if slug else None,
         result=result,
-        chart_image=chart_image,
+        chart_data=chart_data,
         adjustments=adjustments,
         excluded_work_keys=excluded_work_keys,
         has_projects=bool(all_slugs),

@@ -1,0 +1,27 @@
+{# Одна горизонтальная гистограмма на canvas (Chart.js) вместо CSS-полосок:
+   сам рисунок и подписи значений строит app/static/charts.js из тех же
+   данных, что лежат рядом в <script type="application/json">. Нулевые
+   значения (row.is_zero) в саму гистограмму не идут — полоска нулевой
+   длины на общей шкале рядом с обычными смотрелась бы как не отрисовавшийся
+   баг, поэтому такие строки просто перечисляются отдельной строкой под
+   графиком, как и раньше пунктирной плашкой, только теперь текстом.
+
+   Используется и на странице «Сравнить объекты» (compare.html), и на её
+   дашборде (compare_dashboard.html) — общее место, чтобы разметка и данные
+   графика не разъезжались между двумя страницами. #}
+{% macro bar_chart_rows(rows, project_colors, chart_key) %}
+{% set chart_rows = rows | rejectattr('is_zero') | list %}
+{% set zero_rows = rows | selectattr('is_zero') | list %}
+{% if chart_rows %}
+<div class="bar-chart-canvas-wrap">
+  <canvas id="chart-{{ chart_key }}" role="img"></canvas>
+</div>
+<script id="chart-{{ chart_key }}-data" type="application/json">{{ {"rows": chart_rows, "colors": project_colors} | tojson }}</script>
+{% endif %}
+{% if zero_rows %}
+<p class="chart-zero-note">
+  Без сравнения на графике — значение округляется до нуля:
+  {% for row in zero_rows %}<span class="chart-zero-item">«{{ row.label }}» — {{ row.display }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+</p>
+{% endif %}
+{% endmacro %}

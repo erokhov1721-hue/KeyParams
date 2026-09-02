@@ -1,6 +1,7 @@
-import base64
 import io
+import json
 import re
+import urllib.parse
 
 from openpyxl import Workbook
 
@@ -551,6 +552,20 @@ def test_index_page_shows_project_name_instead_of_slug(tmp_path):
     assert "Проспект Мира — очень длинное имя" in body
 
 
+def _bar_chart_data(body, chart_key):
+    """The rows/colors payload a compare-page bar chart hands its canvas —
+    the values a Chart.js chart draws never land in the response body as
+    plain text the way the old CSS bars did, so tests read them back out of
+    the JSON data island instead."""
+    match = re.search(
+        r'<script id="chart-' + re.escape(chart_key) + r'-data" type="application/json">'
+        r'(.*?)</script>',
+        body, re.DOTALL,
+    )
+    assert match is not None, f"no chart data island for {chart_key!r}"
+    return json.loads(match.group(1))
+
+
 def _make_project_with_passport(root, name, **fields):
     from app import storage, passport as passport_module
 
@@ -643,8 +658,10 @@ def test_compare_projects_shows_price_charts(tmp_path):
     assert "Цена работ по классу жилья" in body
     assert "Цена работ по проектам" in body
     assert "Цена за м² по проектам" in body
-    assert "ПроектА (2024)" in body
-    assert "ПроектБ (Комфорт)" in body
+    by_year_labels = [row["label"] for row in _bar_chart_data(body, "price_by_year")["rows"]]
+    by_class_labels = [row["label"] for row in _bar_chart_data(body, "price_by_class")["rows"]]
+    assert "ПроектА (2024)" in by_year_labels
+    assert "ПроектБ (Комфорт)" in by_class_labels
 
 
 def test_compare_projects_shows_empty_chart_message_without_data(tmp_path):
@@ -706,8 +723,10 @@ def test_compare_projects_price_per_sqm_renders_as_a_bar_chart_like_the_rest(tmp
     body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
 
     assert "kpi-tile" not in body
-    assert "150 ₽" in body
-    assert "100 ₽" in body
+    assert 'id="chart-price_per_sqm"' in body
+    displays = [row["display"] for row in _bar_chart_data(body, "price_per_sqm")["rows"]]
+    assert "150 ₽" in displays
+    assert "100 ₽" in displays
 
 
 def test_compare_page_shows_the_terms_table(tmp_path):
@@ -824,6 +843,53 @@ def test_compare_projects_redirects_to_the_selection_when_none_chosen(tmp_path):
 
     assert resp.status_code == 200
     assert resp.request.path == "/compare/select"
+
+
+def test_compare_dashboard_redirects_to_the_selection_when_none_chosen(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/compare/dashboard", follow_redirects=True)
+
+    assert resp.status_code == 200
+    assert resp.request.path == "/compare/select"
+
+
+def test_compare_dashboard_shows_charts_without_the_tables(tmp_path):
+    # Дашборд — для показа, не для чтения по строкам: те же графики, что и
+    # на «Сравнить объекты», но без таблиц и формы поправок вокруг них.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(
+        tmp_path, "ПроектА", contract_price_rub=100.0, total_area_sqm=1.0,
+    )
+    slug2 = _make_project_with_passport(
+        tmp_path, "ПроектБ", contract_price_rub=150.0, total_area_sqm=1.0,
+    )
+
+    body = client.get(f"/compare/dashboard?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    assert "Дашборд сравнения" in body
+    assert 'id="chart-price_per_sqm"' in body
+    displays = [row["display"] for row in _bar_chart_data(body, "price_per_sqm")["rows"]]
+    assert "150 ₽" in displays
+    assert "Общие сведения" not in body
+    assert "adjust-form" not in body
+
+
+def test_compare_projects_page_links_to_its_dashboard(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug1 = _make_project_with_passport(tmp_path, "ПроектА")
+    slug2 = _make_project_with_passport(tmp_path, "ПроектБ")
+
+    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
+
+    match = re.search(r'href="(/compare/dashboard\?[^"]*)"', body)
+    assert match is not None
+    href = urllib.parse.unquote(match.group(1))
+    assert slug1 in href
+    assert slug2 in href
 
 
 # --- выбор проектов для сравнения живёт на своей странице ---
@@ -1544,8 +1610,10 @@ def test_compare_page_shows_the_concrete_materials_and_works_per_m3_charts(tmp_p
     assert "Материалы за 1 м³ бетона, ₽/м³" in body
     assert "СМР за 1 м³ бетона, ₽/м³" in body
     # (700-50)/50 = 13 ₽/м³ материалов; (300-20)/50 = 5.6 -> округляется до 6 ₽/м³ СМР
-    assert "13 ₽" in body
-    assert "6 ₽" in body
+    materials = [row["display"] for row in _bar_chart_data(body, "concrete_materials_per_m3")["rows"]]
+    works = [row["display"] for row in _bar_chart_data(body, "concrete_works_per_m3")["rows"]]
+    assert "13 ₽" in materials
+    assert "6 ₽" in works
 
 
 def test_project_page_shows_the_concrete_coefficient(tmp_path):
@@ -1805,17 +1873,21 @@ def test_compare_page_shows_the_concrete_facade_and_rebar_coefficient_charts(tmp
     assert "Коэффициент монолита за общую площадь по СП, м³/м²" in body
     assert "Коэффициент фасада за общую площадь по СП, м²(фас)/м²" in body
     assert "Коэффициент арматуры (средний), кг/м³" in body
-    assert passport_module.format_number(0.5) in body      # 500 м³ / 1000 м²
-    assert passport_module.format_number(2.5) in body      # 2500 м² / 1000 м²
-    assert passport_module.format_number(120.5) in body
+    concrete = _bar_chart_data(body, "concrete_coefficient")["rows"]
+    facade = _bar_chart_data(body, "facade_coefficient")["rows"]
+    rebar = _bar_chart_data(body, "rebar_coefficient")["rows"]
+    assert passport_module.format_number(0.5) in [row["display"] for row in concrete]  # 500 м³ / 1000 м²
+    assert passport_module.format_number(2.5) in [row["display"] for row in facade]    # 2500 м² / 1000 м²
+    assert passport_module.format_number(120.5) in [row["display"] for row in rebar]
     # Больше не дублируется строкой в «Общих сведениях» — только график.
     assert body.count("Коэффициент монолита за общую площадь по СП, м³/м²") == 1
 
 
 def test_compare_projects_facade_coefficient_zero_shows_placeholder_not_bar(tmp_path):
     # 0.00 — настоящее значение (площадь фасада вписана нулём), а не "нет
-    # данных": закрашенная нулевая полоска рядом с обычными выглядела бы как
-    # баг, поэтому вместо неё — пунктирная плашка.
+    # данных": в саму гистограмму нулевая строка не идёт (полоска нулевой
+    # длины рядом с обычными выглядела бы как баг), а перечисляется отдельной
+    # строкой текстом под графиком.
     app = create_app(tmp_path)
     client = app.test_client()
     slug1 = _make_project_with_passport(
@@ -1827,7 +1899,10 @@ def test_compare_projects_facade_coefficient_zero_shows_placeholder_not_bar(tmp_
 
     body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
 
-    assert "bar-track is-zero" in body
+    assert 'class="chart-zero-note"' in body
+    assert "«ПроектА» — 0.00" in body
+    rows = _bar_chart_data(body, "facade_coefficient")["rows"]
+    assert [row["label"] for row in rows] == ["ПроектБ"]
 
 
 def test_compare_page_coefficient_charts_say_so_when_data_is_missing(tmp_path):
@@ -2479,7 +2554,7 @@ def test_compare_vs_average_shows_the_class_comparison_for_the_chosen_project(tm
     assert "+50,0 %" in body
 
 
-def test_compare_vs_average_shows_a_chart_image_below_the_tables(tmp_path):
+def test_compare_vs_average_shows_a_chart_canvas_below_the_tables(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     a = _project_with_offer(
@@ -2493,12 +2568,20 @@ def test_compare_vs_average_shows_a_chart_image_below_the_tables(tmp_path):
     body = client.get(f"/compare/vs-average?slug={a}").get_data(as_text=True)
 
     assert "Стоимость за м²" in body
-    assert 'class="compare-chart-img"' in body
+    assert 'id="class-average-chart"' in body
 
-    match = re.search(r'src="data:image/png;base64,([^"]+)"', body)
+    match = re.search(
+        r'<script id="class-average-chart-data" type="application/json">(.*?)</script>',
+        body, re.DOTALL,
+    )
     assert match is not None
-    png_bytes = base64.b64decode(match.group(1))
-    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    chart_data = json.loads(match.group(1))
+    assert chart_data["own_name"] == "Проспект мира"
+    count = len(chart_data["labels"])
+    assert count >= 1
+    assert len(chart_data["peer_pct"]) == count
+    assert len(chart_data["own_pct"]) == count
+    assert len(chart_data["deviation_pct"]) == count
 
 
 def test_compare_vs_average_chart_starts_collapsed_behind_a_button(tmp_path):
@@ -2681,6 +2764,10 @@ def test_compare_page_shows_the_pair_cards(tmp_path):
     assert "2 000 000 000 ₽" in body
     assert "+100,0 %" in body
     assert "Дельта по разделам" in body
+    delta_heading = body.index("Дельта по разделам")
+    delta_row = body.index('class="delta-row"', delta_heading)
+    toggle = body.index("sections-collapse-toggle", delta_heading)
+    assert delta_heading < toggle < delta_row
 
 
 def test_the_pair_can_be_chosen_from_the_page(tmp_path):
@@ -3086,6 +3173,32 @@ def test_the_comparison_shows_the_increase_block(tmp_path):
     assert "Виды работ, которые делают смету дороже" in body
     assert "+30,0 %" in body
     assert "+10,0 %" in body
+
+
+def test_the_works_table_has_its_own_collapse_toggle(tmp_path):
+    # Своя кнопка сворачивания у самой таблицы, а не у всей карточки
+    # «Удорожание проектов» — плитки и диаграмма выше неё сворачиваться не
+    # должны, только длинная таблица видов работ.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_increase(
+        tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_300_000.0)],
+    )
+    b = _project_with_increase(
+        tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
+        [("Кровля", 1_000_000.0, 1_100_000.0)],
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    # У «Средней стоимости по видам работ» (блок средних, выше по странице)
+    # тот же класс works-table — поиск таблицы должен идти от заголовка, а
+    # не с начала страницы, иначе найдётся не та таблица.
+    works_heading = body.index("Виды работ, которые делают смету дороже")
+    table_start = body.index('class="sections-table works-table"', works_heading)
+    toggle = body.index("sections-collapse-toggle", works_heading)
+    assert works_heading < toggle < table_start
 
 
 def test_the_works_table_says_how_often_a_kind_of_work_gets_dearer(tmp_path):

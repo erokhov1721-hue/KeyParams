@@ -232,25 +232,131 @@
     </div>
   </div>
   <div class="compare-chart-wrap" id="compare-chart-panel" hidden>
-    <img class="compare-chart-img" src="{{ chart_image }}" alt="Сравнение со средним по классу по видам работ">
+    <div class="compare-chart-canvas-wrap">
+      <canvas id="class-average-chart" role="img"
+              aria-label="Сравнение со средним по классу по видам работ"></canvas>
+    </div>
+    <script id="class-average-chart-data" type="application/json">{{ chart_data | tojson }}</script>
   </div>
 </div>
 {% endif %}
 {% endif %}
 
 {# Свёрнут по умолчанию — сам график тяжелее и заметнее двух таблиц над ним,
-   и раскрытым на каждом заходе на страницу превращал бы её в перегруженную. #}
+   и раскрытым на каждом заходе на страницу превращал бы её в перегруженную.
+   График строится не сразу, а при первом раскрытии: пока панель скрыта
+   (display: none от атрибута hidden), у canvas нулевой размер, и построенный
+   раньше времени график лёг бы плашмя — а большинство заходов на страницу
+   панель вообще не открывают, так что это ещё и экономия работы. #}
 <script>
   (function () {
     var button = document.querySelector('.chart-toggle-btn');
     var panel = document.getElementById('compare-chart-panel');
     if (!button || !panel) return;
 
+    var chartBuilt = false;
+    function buildChart() {
+      if (chartBuilt) return;
+      chartBuilt = true;
+      var dataEl = document.getElementById('class-average-chart-data');
+      var canvas = document.getElementById('class-average-chart');
+      if (!dataEl || !canvas || typeof Chart === 'undefined') return;
+
+      var chartData = JSON.parse(dataEl.textContent);
+
+      // Тот же принцип, что был у PNG-версии: ширина растёт с числом
+      // категорий, но до предела — дальше столбики просто уплотняются,
+      // а не превращают график в полосу шире страницы. Обёртка вокруг
+      // canvas прокручивается по горизонтали (.compare-chart-wrap) на
+      // случай узкого окна.
+      var wrap = canvas.closest('.compare-chart-canvas-wrap');
+      if (wrap) {
+        var width = Math.min(1400, Math.max(640, chartData.labels.length * 70));
+        wrap.style.width = width + 'px';
+      }
+
+      // Canvas не умеет резолвить var(--...) сам — цвета читаются уже
+      // посчитанными браузером, тем же набором переменных, что и остальная
+      // страница, чтобы график не спорил по цвету с активной темой.
+      var rootStyle = getComputedStyle(document.documentElement);
+      var cssVar = function (name) { return rootStyle.getPropertyValue(name).trim(); };
+      var accentColor = cssVar('--accent');
+      var peerColor = cssVar('--text-500');
+      var deviationColor = cssVar('--amber');
+      var textColor = cssVar('--text-500');
+      var gridColor = cssVar('--border');
+
+      var datasets = [
+        {
+          type: 'bar',
+          label: 'Средняя по классу',
+          data: chartData.peer_pct,
+          backgroundColor: peerColor,
+          yAxisID: 'y',
+        },
+        {
+          type: 'bar',
+          label: '«' + chartData.own_name + '»',
+          data: chartData.own_pct,
+          backgroundColor: accentColor,
+          yAxisID: 'y',
+        },
+      ];
+      // Как и в PNG-версии: если ни у одной категории нет отклонения,
+      // линия вообще не рисуется, а не рисуется пустой.
+      if (chartData.has_deviation) {
+        datasets.push({
+          type: 'line',
+          label: 'Отклонение к средней, %',
+          data: chartData.deviation_pct,
+          borderColor: deviationColor,
+          backgroundColor: deviationColor,
+          yAxisID: 'y1',
+          spanGaps: false,
+          tension: 0,
+          pointRadius: 3,
+        });
+      }
+
+      new Chart(canvas, {
+        type: 'bar',
+        data: { labels: chartData.labels, datasets: datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { color: textColor } },
+          },
+          scales: {
+            x: {
+              ticks: { color: textColor, minRotation: 55, maxRotation: 55 },
+              grid: { color: gridColor },
+            },
+            y: {
+              beginAtZero: true,
+              max: 118,
+              title: { display: true, text: 'Доля от максимума на графике, %', color: textColor },
+              ticks: { color: textColor },
+              grid: { color: gridColor },
+            },
+            y1: {
+              position: 'right',
+              title: { display: true, text: 'Отклонение от средней, %', color: deviationColor },
+              ticks: { color: deviationColor },
+              grid: { drawOnChartArea: false },
+            },
+          },
+        },
+      });
+    }
+
     button.addEventListener('click', function () {
       var expanded = button.getAttribute('aria-expanded') === 'true';
       button.setAttribute('aria-expanded', String(!expanded));
       button.textContent = expanded ? 'Показать график' : 'Скрыть график';
       panel.hidden = expanded;
+      if (!expanded) buildChart();
     });
   })();
 
