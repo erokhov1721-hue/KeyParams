@@ -1,22 +1,34 @@
-{# Одна горизонтальная гистограмма на canvas (Chart.js) вместо CSS-полосок:
-   сам рисунок и подписи значений строит app/static/charts.js из тех же
-   данных, что лежат рядом в <script type="application/json">. Нулевые
-   значения (row.is_zero) в саму гистограмму не идут — полоска нулевой
-   длины на общей шкале рядом с обычными смотрелась бы как не отрисовавшийся
-   баг, поэтому такие строки просто перечисляются отдельной строкой под
-   графиком, как и раньше пунктирной плашкой, только теперь текстом.
+{# Гистограмма сравнения на canvas (Chart.js) вместо CSS-полосок: сам
+   рисунок строит app/static/charts.js из тех же данных, что лежат рядом в
+   <script type="application/json"> — обычные горизонтальные бары по рангу,
+   на любое число проектов (при 2 это просто два бара друг под другом). Ровно
+   при 2 проектах charts.js ещё подписывает под графиком разницу между ними
+   в % — chart-{{ chart_key }}-diff, пустой и скрытый при другом числе строк.
+
+   Нулевые значения (row.is_zero) в саму гистограмму не идут — полоска
+   нулевой длины на общей шкале рядом с обычными смотрелась бы как не
+   отрисовавшийся баг, поэтому такие строки просто перечисляются отдельной
+   строкой под графиком, как и раньше пунктирной плашкой, только теперь
+   текстом.
 
    Используется и на странице «Сравнить объекты» (compare.html), и на её
    дашборде (compare_dashboard.html) — общее место, чтобы разметка и данные
-   графика не разъезжались между двумя страницами. #}
-{% macro bar_chart_rows(rows, project_colors, chart_key) %}
+   графика не разъезжались между двумя страницами.
+
+   lower_is_better — для этой конкретной метрики меньше значит лучше (цена,
+   коэффициенты, расход материалов) или больше значит лучше; определяет
+   направление сортировки строк и то, красным или зелёным красится разница
+   между парой. Задаётся на уровне вызова макроса, а не зашито одним
+   значением в JS. #}
+{% macro bar_chart_rows(rows, project_colors, chart_key, lower_is_better=True) %}
 {% set chart_rows = rows | rejectattr('is_zero') | list %}
 {% set zero_rows = rows | selectattr('is_zero') | list %}
 {% if chart_rows %}
 <div class="bar-chart-canvas-wrap">
   <canvas id="chart-{{ chart_key }}" role="img"></canvas>
 </div>
-<script id="chart-{{ chart_key }}-data" type="application/json">{{ {"rows": chart_rows, "colors": project_colors} | tojson }}</script>
+<p class="chart-diff-note" id="chart-{{ chart_key }}-diff" hidden></p>
+<script id="chart-{{ chart_key }}-data" type="application/json">{{ {"rows": chart_rows, "colors": project_colors, "lower_is_better": lower_is_better} | tojson }}</script>
 {% endif %}
 {% if zero_rows %}
 <p class="chart-zero-note">

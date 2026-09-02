@@ -23,25 +23,25 @@
 </div>
 
 {% set price_tabs = [
-  ("price", "По проектам", "Цена работ по проектам"),
-  ("price_by_year", "По году", "Цена работ по году подписания договора"),
-  ("price_by_class", "По классу", "Цена работ по классу жилья"),
+  ("price", "По проектам", "Цена работ по проектам", True),
+  ("price_by_year", "По году", "Цена работ по году подписания договора", True),
+  ("price_by_class", "По классу", "Цена работ по классу жилья", True),
 ] %}
 <div class="card chart-card chart-card-tabs dashboard-chart-card">
   <div class="chart-tabs-head">
     <h2 class="chart-title">Цена работ</h2>
     <div class="chart-tabs" role="tablist">
-      {% for key, label, full_title in price_tabs %}
+      {% for key, label, full_title, lower_is_better in price_tabs %}
       <button type="button" class="chart-tab{{ ' is-active' if loop.first }}"
               role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}"
               title="{{ full_title }}" data-chart-tab="{{ key }}">{{ label }}</button>
       {% endfor %}
     </div>
   </div>
-  {% for key, label, full_title in price_tabs %}
+  {% for key, label, full_title, lower_is_better in price_tabs %}
   <div class="chart-tab-panel{{ '' if loop.first else ' is-hidden' }}" data-chart-panel="{{ key }}">
     {% if charts[key] %}
-      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key) }}
+      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key, lower_is_better) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
@@ -56,24 +56,24 @@
   <div class="card chart-card dashboard-chart-card">
     <h2 class="chart-title">Цена за м² по проектам</h2>
     {% if charts.price_per_sqm %}
-      {{ chart_macros.bar_chart_rows(charts.price_per_sqm, project_colors, "price_per_sqm") }}
+      {{ chart_macros.bar_chart_rows(charts.price_per_sqm, project_colors, "price_per_sqm", True) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
   </div>
 
   {% set coefficient_charts = [
-    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
-    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
-    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
-    ("concrete_materials_per_m3", "Материалы за 1 м³ бетона, ₽/м³"),
-    ("concrete_works_per_m3", "СМР за 1 м³ бетона, ₽/м³"),
+    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²", True),
+    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²", True),
+    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³", True),
+    ("concrete_materials_per_m3", "Материалы за 1 м³ бетона, ₽/м³", True),
+    ("concrete_works_per_m3", "СМР за 1 м³ бетона, ₽/м³", True),
   ] %}
-  {% for key, title in coefficient_charts %}
+  {% for key, title, lower_is_better in coefficient_charts %}
   <div class="card chart-card dashboard-chart-card">
     <h2 class="chart-title">{{ title }}</h2>
     {% if charts[key] %}
-      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key) }}
+      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key, lower_is_better) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}

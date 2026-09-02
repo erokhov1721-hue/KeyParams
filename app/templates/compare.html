@@ -103,26 +103,30 @@
    разрезах; три отдельные карточки с одинаковыми деньгами только распирали
    страницу, а так это одна карточка с переключателем. Полное описание
    каждого разреза осталось — подсказкой на вкладке. #}
+{# Четвёртый элемент — «меньше значит лучше» для этой метрики: у всех
+   графиков этой страницы (деньги, коэффициенты расхода) он один и тот же,
+   но это свойство самой метрики, а не что-то, что graph.js решает за всех
+   разом, — задаётся здесь, по графику, а не общим правилом в JS. #}
 {% set price_tabs = [
-  ("price", "По проектам", "Цена работ по проектам"),
-  ("price_by_year", "По году", "Цена работ по году подписания договора"),
-  ("price_by_class", "По классу", "Цена работ по классу жилья"),
+  ("price", "По проектам", "Цена работ по проектам", True),
+  ("price_by_year", "По году", "Цена работ по году подписания договора", True),
+  ("price_by_class", "По классу", "Цена работ по классу жилья", True),
 ] %}
 <div class="card chart-card chart-card-tabs">
   <div class="chart-tabs-head">
     <h2 class="chart-title">Цена работ</h2>
     <div class="chart-tabs" role="tablist">
-      {% for key, label, full_title in price_tabs %}
+      {% for key, label, full_title, lower_is_better in price_tabs %}
       <button type="button" class="chart-tab{{ ' is-active' if loop.first }}"
               role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}"
               title="{{ full_title }}" data-chart-tab="{{ key }}">{{ label }}</button>
       {% endfor %}
     </div>
   </div>
-  {% for key, label, full_title in price_tabs %}
+  {% for key, label, full_title, lower_is_better in price_tabs %}
   <div class="chart-tab-panel{{ '' if loop.first else ' is-hidden' }}" data-chart-panel="{{ key }}">
     {% if charts[key] %}
-      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key) }}
+      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key, lower_is_better) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
@@ -134,24 +138,24 @@
   <div class="card chart-card">
     <h2 class="chart-title">Цена за м² по проектам</h2>
     {% if charts.price_per_sqm %}
-      {{ chart_macros.bar_chart_rows(charts.price_per_sqm, project_colors, "price_per_sqm") }}
+      {{ chart_macros.bar_chart_rows(charts.price_per_sqm, project_colors, "price_per_sqm", True) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
   </div>
 
   {% set coefficient_charts = [
-    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²"),
-    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²"),
-    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³"),
-    ("concrete_materials_per_m3", "Материалы за 1 м³ бетона, ₽/м³"),
-    ("concrete_works_per_m3", "СМР за 1 м³ бетона, ₽/м³"),
+    ("concrete_coefficient", "Коэффициент монолита за общую площадь по СП, м³/м²", True),
+    ("facade_coefficient", "Коэффициент фасада за общую площадь по СП, м²(фас)/м²", True),
+    ("rebar_coefficient", "Коэффициент арматуры (средний), кг/м³", True),
+    ("concrete_materials_per_m3", "Материалы за 1 м³ бетона, ₽/м³", True),
+    ("concrete_works_per_m3", "СМР за 1 м³ бетона, ₽/м³", True),
   ] %}
-  {% for key, title in coefficient_charts %}
+  {% for key, title, lower_is_better in coefficient_charts %}
   <div class="card chart-card">
     <h2 class="chart-title">{{ title }}</h2>
     {% if charts[key] %}
-      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key) }}
+      {{ chart_macros.bar_chart_rows(charts[key], project_colors, key, lower_is_better) }}
     {% else %}
     <p class="chart-empty">Недостаточно данных для этого графика.</p>
     {% endif %}
@@ -160,7 +164,7 @@
 </div>
 
 {% if sections %}
-<div class="card sections-card">
+<div class="card sections-card" data-sections-view="heatmap">
   <div class="sections-head">
     <div class="sections-head-row">
       <h2 class="chart-title">Стоимость по разделам{% if sections.columns[0].per_sqm %}, ₽/м²{% endif %}</h2>
@@ -240,7 +244,7 @@
             </button>
           </th>
           {% for column in sections.columns %}
-          <th>
+          <th class="sections-project-col">
             <button type="button" class="sections-sort"
                     data-sort-index="{{ loop.index + 1 }}" data-sort-type="number">
               {{ column.name }}<span class="sections-arrow"></span>
@@ -266,27 +270,19 @@
           </td>
           {% for cell in row.cells %}
           <td class="sections-value{{ ' is-empty' if cell.value is none }}"
-              data-sort-value="{{ cell.value if cell.value is not none else -1 }}">
-            <span class="sections-number">{{ cell.display }}</span>
-            {% if cell.bar %}
-            <div class="dev">
-              <span class="dev-label is-better">{{ cell.deviation_display if cell.bar.side == 'left' }}</span>
-              <div class="dev-track">
-                <div class="dev-half dev-half-left">
-                  {% if cell.bar.side == 'left' %}
-                  <div class="dev-fill is-better{{ ' is-clipped' if cell.bar.clipped }}" style="width: {{ cell.bar.width_pct }}%"></div>
-                  {% endif %}
-                </div>
-                <div class="dev-zero"></div>
-                <div class="dev-half dev-half-right">
-                  {% if cell.bar.side == 'right' %}
-                  <div class="dev-fill is-worse{{ ' is-clipped' if cell.bar.clipped }}" style="width: {{ cell.bar.width_pct }}%"></div>
-                  {% endif %}
-                </div>
-              </div>
-              <span class="dev-label is-worse">{{ cell.deviation_display if cell.bar.side == 'right' }}</span>
-            </div>
-            {% endif %}
+              data-sort-value="{{ cell.value if cell.value is not none else -1 }}"
+              {% if cell.heat_bg %}style="--heat-bg: {{ cell.heat_bg }};"{% endif %}>
+            {# Значение и отклонение — на одной плитке фиксированной ширины
+               ("40 059 +19%"), залитой цветом --heat-bg. Число и процент —
+               разные span'ы: вес держит на себе заливка плитки, а не
+               жирность или цвет текста, поэтому процент мельче и
+               приглушённее числа, не тем же насыщенным красным/синим тоном.
+               У базовой колонки deviation_display пустая строка, так что тут
+               только число — плитка та же, просто без заливки. #}
+            <span class="sections-heat-value">
+              <span class="sections-heat-number">{{ cell.display }}</span>
+              {% if cell.deviation_display %}<span class="sections-heat-percent">{{ cell.deviation_display }}</span>{% endif %}
+            </span>
           </td>
           {% endfor %}
         </tr>
@@ -297,11 +293,13 @@
           <td class="sections-label-col">{{ sections.total.label }}</td>
           <td class="sections-weight-col"></td>
           {% for cell in sections.total.cells %}
-          <td class="sections-value">
-            <span class="sections-number">{{ cell.display }}</span>
-            {% if cell.deviation is not none %}
-            <span class="sections-deviation {{ 'is-worse' if cell.deviation > 0 else 'is-better' }}">{{ cell.deviation_display }}</span>
-            {% endif %}
+          <td class="sections-value"
+              {% if cell.heat_bg %}style="--heat-bg: {{ cell.heat_bg }};"{% endif %}>
+            {# Итоговая строка — та же плитка, что и у обычных разделов выше. #}
+            <span class="sections-heat-value">
+              <span class="sections-heat-number">{{ cell.display }}</span>
+              {% if cell.deviation_display %}<span class="sections-heat-percent">{{ cell.deviation_display }}</span>{% endif %}
+            </span>
           </td>
           {% endfor %}
         </tr>
@@ -309,6 +307,18 @@
     </table>
   </div>
 
+  {# С названием базового проекта, а не общей фразой: цвет тут означает
+     именно «дешевле/дороже него», а не «хорошо/плохо» вообще. #}
+  <div class="sections-heat-legend">
+    <span class="sections-heat-legend-item">
+      <span class="sections-heat-legend-swatch is-savings"></span>
+      экономия относительно «{{ sections.columns[0].name }}»
+    </span>
+    <span class="sections-heat-legend-item">
+      <span class="sections-heat-legend-swatch is-overrun"></span>
+      перерасход относительно «{{ sections.columns[0].name }}»
+    </span>
+  </div>
 </div>
 {% endif %}
 
@@ -670,6 +680,15 @@
   {% if pair.sections %}
   <div class="sections-head-row">
     <h3 class="pair-subtitle">Дельта по разделам <span class="sections-sub">влево — дешевле, вправо — дороже</span></h3>
+    {# Переключатель вида (.sections-view-tabs) — второй вид той же самой уже
+       посчитанной pair.sections, без пересчёта на сервере: строки, порядок и
+       суммы ровно те же, просто нарастающим итогом вместо параллельных баров. #}
+    <div class="sections-view-tabs" role="tablist">
+      <button type="button" class="sections-view-tab is-active" role="tab"
+              aria-selected="true" data-sections-view="bars">По разделам</button>
+      <button type="button" class="sections-view-tab" role="tab"
+              aria-selected="false" data-sections-view="waterfall">Накопительно</button>
+    </div>
     <button type="button" class="sections-collapse-toggle" aria-expanded="true">
       <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="6 9 12 15 18 9"></polyline>
@@ -677,7 +696,7 @@
       <span class="sections-collapse-toggle-text">Свернуть</span>
     </button>
   </div>
-  <div class="delta-list">
+  <div class="delta-list" data-sections-panel="bars">
     {% for row in pair.sections %}
     <div class="delta-row">
       <div class="delta-label">{{ row.label }}</div>
@@ -693,6 +712,10 @@
     </div>
     {% endfor %}
   </div>
+  <div class="bar-chart-canvas-wrap" data-sections-panel="waterfall">
+    <canvas id="pair-sections-waterfall" role="img" data-waterfall></canvas>
+  </div>
+  <script id="pair-sections-waterfall-data" type="application/json">{{ {"rows": pair.sections, "right_name": pair.right.name, "total_display": pair.sections_total_display} | tojson }}</script>
   {% endif %}
 </div>
 {% endif %}
@@ -747,6 +770,176 @@
       button.setAttribute('aria-expanded', String(!expanded));
       button.querySelector('.sections-collapse-toggle-text').textContent =
         expanded ? 'Развернуть' : 'Свернуть';
+    });
+  });
+</script>
+
+{# Накопительно (waterfall) — второй вид «Дельты по разделам»: те же
+   строки, тот же порядок (по |дельта| убыванию — уже пришёл таким с
+   сервера), просто нарастающим итогом вместо параллельных баров от нуля.
+   Строится один раз на canvas (Chart.getChart — тот же приём, что и у
+   charts.js) и лениво, при первом переключении на этот вид: пока панель
+   скрыта через [data-sections-panel], у canvas нулевой размер. #}
+<script>
+  function buildWaterfallChart(canvas) {
+    if (typeof Chart === 'undefined' || Chart.getChart(canvas)) return;
+    var dataEl = document.getElementById(canvas.id + '-data');
+    if (!dataEl) return;
+    var payload = JSON.parse(dataEl.textContent);
+    var rows = payload.rows || [];
+    if (!rows.length) return;
+
+    var rootStyle = getComputedStyle(document.documentElement);
+    var cssVar = function (name) { return rootStyle.getPropertyValue(name).trim(); };
+    var redColor = cssVar('--red');
+    var accentColor = cssVar('--accent');
+    var mutedColor = cssVar('--text-500');
+    var labelColor = cssVar('--text-100');
+    var gridColor = cssVar('--border');
+    var font = '600 12px ' + getComputedStyle(document.body).fontFamily;
+
+    // Нарастающий итог по уже готовому порядку строк — cum[0] = 0, каждая
+    // следующая строка плывёт от предыдущего итога к новому, а не от нуля.
+    var cum = 0;
+    var bars = rows.map(function (row) {
+      var from = cum;
+      cum += row.difference;
+      return { label: row.label, from: from, to: cum, display: row.display, dearer: row.dearer };
+    });
+    var total = cum;
+
+    var labels = bars.map(function (bar) { return bar.label; })
+      .concat(['Итого: «' + payload.right_name + '»' + (total > 0 ? ' дороже' : total < 0 ? ' дешевле' : '')]);
+    var ranges = bars.map(function (bar) { return [bar.from, bar.to]; }).concat([[0, total]]);
+    var displays = bars.map(function (bar) { return bar.display; }).concat([payload.total_display]);
+    var barColors = bars.map(function (bar) { return bar.dearer ? redColor : accentColor; }).concat([mutedColor]);
+
+    // Диапазон осей — от минимального до максимального среди всех
+    // накопленных значений, включая cum = 0 в самом начале; вырожденный
+    // случай (все дельты нулевые, весь ряд стоит на месте) не должен делить
+    // на ноль при переводе значения в проценты.
+    var allValues = [0].concat(bars.map(function (bar) { return bar.to; }));
+    var domainMin = Math.min.apply(null, allValues);
+    var domainMax = Math.max.apply(null, allValues);
+    if (domainMax === domainMin) {
+      domainMin -= 1;
+      domainMax += 1;
+    }
+
+    var wrap = canvas.closest('.bar-chart-canvas-wrap');
+    if (wrap) {
+      wrap.style.height = Math.max(110, labels.length * 40 + 40) + 'px';
+    }
+
+    var measureCtx = canvas.getContext('2d');
+    measureCtx.font = font;
+    var valueGutter = displays.reduce(function (max, text) {
+      return Math.max(max, measureCtx.measureText(text).width);
+    }, 0);
+
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: ranges,
+          backgroundColor: barColors,
+          borderRadius: 3,
+          maxBarThickness: 26,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+          // Подпись значения — фиксированным правым столбцом, а не у края
+          // своего бара: у waterfall бары начинаются и заканчиваются в
+          // разных местах строка от строки, и подпись, приклеенная к краю,
+          // прыгала бы по всей ширине графика вместо того, чтобы стоять в
+          // одну линию, как сейчас у .delta-value.
+          padding: { right: Math.ceil(valueGutter) + 14 },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) { return displays[ctx.dataIndex]; },
+            },
+          },
+        },
+        scales: {
+          x: { min: domainMin, max: domainMax, ticks: { display: false }, grid: { display: false } },
+          y: {
+            ticks: {
+              color: function (ctx) { return ctx.index === bars.length ? labelColor : mutedColor; },
+            },
+            grid: { display: false },
+          },
+        },
+      },
+      plugins: [{
+        id: 'waterfallDecorations',
+        afterDatasetsDraw: function (chart) {
+          var ctx = chart.ctx;
+          var area = chart.chartArea;
+          var scaleX = chart.scales.x;
+          var bars = chart.getDatasetMeta(0).data;
+
+          ctx.save();
+          // Вертикальная линия на нуле — не по центру, а там, где 0
+          // приходится после учёта всего диапазона (включая «Итого»).
+          var zeroX = scaleX.getPixelForValue(0);
+          ctx.strokeStyle = gridColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(zeroX, area.top);
+          ctx.lineTo(zeroX, area.bottom);
+          ctx.stroke();
+
+          // Тонкая граница над строкой «Итого» — отделяет её от разделов
+          // выше, как верхняя граница у аналогичной строки в других местах
+          // страницы.
+          var totalBar = bars[bars.length - 1];
+          var separatorY = totalBar.y - totalBar.height / 2 - 4;
+          ctx.strokeStyle = gridColor;
+          ctx.beginPath();
+          ctx.moveTo(area.left, separatorY);
+          ctx.lineTo(area.right, separatorY);
+          ctx.stroke();
+
+          ctx.fillStyle = labelColor;
+          ctx.font = font;
+          ctx.textBaseline = 'middle';
+          ctx.textAlign = 'right';
+          bars.forEach(function (bar, i) {
+            ctx.fillText(displays[i], area.right, bar.y);
+          });
+          ctx.restore();
+        },
+      }],
+    });
+  }
+</script>
+
+{# По разделам / Накопительно — переключатель вида «Дельты по разделам».
+   При первом переключении на Накопительно строится canvas (см.
+   buildWaterfallChart выше). #}
+<script>
+  document.querySelectorAll('.sections-view-tabs').forEach(function (tabs) {
+    var card = tabs.closest('.sections-card, .pair-card');
+    if (!card) return;
+    var buttons = tabs.querySelectorAll('.sections-view-tab');
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        buttons.forEach(function (other) {
+          other.classList.toggle('is-active', other === button);
+          other.setAttribute('aria-selected', other === button ? 'true' : 'false');
+        });
+        card.dataset.sectionsView = button.dataset.sectionsView;
+        var canvas = card.querySelector('canvas[data-waterfall]');
+        if (canvas) buildWaterfallChart(canvas);
+      });
     });
   });
 </script>

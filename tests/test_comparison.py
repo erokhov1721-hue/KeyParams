@@ -327,6 +327,107 @@ def test_deviation_is_measured_against_the_first_project():
     assert facade["cells"][1]["deviation_display"] == "+50%"
 
 
+def test_heat_fill_is_red_and_maxed_out_at_the_deviation_scale():
+    # +50% is exactly DEVIATION_SCALE — same point the .dev-bar already
+    # clips at, so the heat fill reaches its own ceiling there too.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_500_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["heat_bg"] == (
+        "color-mix(in srgb, var(--red) 40.0%, transparent)"
+    )
+
+
+def test_heat_fill_uses_its_own_fixed_blue_for_a_cost_decrease():
+    # Its own --heat-savings, not --accent: --accent means "the theme's own
+    # accent colour" (teal, indigo, blue depending on which theme/ui-theme
+    # is active) and isn't reliably blue — a heat cell needs the *same*
+    # blue regardless of theme, meaning "cheaper than the base project"
+    # specifically, not "good" in the app's general sense.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 500_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["heat_bg"] == (
+        "color-mix(in srgb, var(--heat-savings) 40.0%, transparent)"
+    )
+
+
+def test_heat_fill_intensity_scales_with_the_size_of_the_deviation():
+    # +10% is a fifth of the way to the 50% ceiling — the mix should land a
+    # fifth of the way between the floor (8%) and the ceiling (40%).
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_100_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["heat_bg"] == (
+        "color-mix(in srgb, var(--red) 14.4%, transparent)"
+    )
+
+
+def test_heat_fill_does_not_grow_past_the_deviation_scale():
+    # +200% is way past the ±50% scale (already clipped in the .dev-bar) —
+    # the fill should cap at the same maximum as an exact +50%, not keep
+    # getting more solid with every extra percentage point past that.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 3_000_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["heat_bg"] == (
+        "color-mix(in srgb, var(--red) 40.0%, transparent)"
+    )
+
+
+def test_heat_fill_is_maximal_when_a_value_drops_to_zero():
+    # A real value going to zero (not "no data") is a full −100% deviation —
+    # already computed correctly by _add_deviations without any division by
+    # the (zero) target, so the heat fill just reads it like any other
+    # deviation: maxed out, on the "cheaper" side.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 9_752.0}, "b": {"facade": 0.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["deviation_display"] == "−100%"
+    assert facade["cells"][1]["heat_bg"] == (
+        "color-mix(in srgb, var(--heat-savings) 40.0%, transparent)"
+    )
+
+
+def test_heat_fill_is_absent_from_the_base_column():
+    # The base column is the reference point, not part of the heat scale —
+    # it stays plain text even in heatmap view.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_500_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][0]["heat_bg"] is None
+
+
+def test_heat_fill_is_absent_without_a_deviation():
+    # A project missing this section entirely has no figure and nothing to
+    # compare — no fill, same as no bar.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["heat_bg"] is None
+
+
 def test_the_total_line_adds_the_sections_up():
     table = comparison.build_section_table(
         ["a"], {"a": _passport(total_area_sqm=1000.0)},
@@ -498,6 +599,29 @@ def test_the_section_deltas_are_sorted_by_size():
     roof = next(row for row in cards["sections"] if row["key"] == "roof")
     assert roof["dearer"] is False
     assert roof["width_pct"] == 5.0
+
+
+def test_sections_total_display_sums_the_deltas_the_same_way_each_row_does():
+    # facade +200 ₽/м², roof −10 ₽/м² -> +190 ₽/м², formatted the same way
+    # (_signed) as every row's own display — the waterfall's "Итого" row
+    # reads this field directly instead of re-deriving it in JS.
+    cards = _pair(
+        left_fields={"total_area_sqm": 1_000.0},
+        right_fields={"total_area_sqm": 1_000.0},
+        left_costs={"facade": 100_000.0, "roof": 50_000.0},
+        right_costs={"facade": 300_000.0, "roof": 40_000.0},
+    )
+
+    assert cards["sections_total_display"] == "+190 ₽/м²"
+
+
+def test_sections_total_display_is_empty_without_section_data():
+    cards = _pair(
+        left_fields={"total_area_sqm": 1_000.0}, right_fields={"total_area_sqm": 1_000.0},
+    )
+
+    assert cards["sections"] == []
+    assert cards["sections_total_display"] == ""
 
 
 def test_sections_are_compared_in_roubles_when_an_area_is_missing():

@@ -120,6 +120,55 @@ def test_the_charts_include_the_concrete_facade_and_rebar_coefficients():
     assert "Коэффициент арматуры" in charts_text
 
 
+def _two_projects(price_a, price_b):
+    fields = {
+        "address": None, "year_signed": None, "building_class": None,
+        "general_contractor": None, "underground_area_sqm": None,
+        "aboveground_area_sqm": None, "total_area_sqm": 1_000.0,
+    }
+    return {
+        "a": {"project_name": "ПроектА", "contract_price_rub": price_a, **fields},
+        "b": {"project_name": "ПроектБ", "contract_price_rub": price_b, **fields},
+    }
+
+
+def test_the_charts_note_a_zero_value_project_instead_of_a_sliver_bar():
+    # 0 — настоящее значение (цена вписана нулём), не «нет данных»: полоска
+    # нулевой длины рядом с обычными смотрелась бы как не отрисовавшийся
+    # баг, поэтому вместо неё — строка текстом под таблицей, как на экране.
+    passports = _two_projects(0.0, 150_000.0)
+    charts = passport_module.build_comparison_charts(passports, ["a", "b"])
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a", "b"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+    )
+
+    charts_text = "\n".join(_page_texts(pdf_bytes)[1:])
+    assert "Без сравнения на графике" in charts_text
+    assert "ПроектА" in charts_text
+
+
+def test_the_charts_show_the_percent_difference_between_exactly_two_projects():
+    # Тот же способ и тот же знак/цвет, что и в «Сравнении двух объектов»:
+    # 150 ₽/м² против 100 ₽/м² — рост, а для цены меньше значит лучше,
+    # поэтому разница красная (цвет текстом не проверяется, только цифра).
+    passports = _two_projects(100_000.0, 150_000.0)
+    charts = passport_module.build_comparison_charts(passports, ["a", "b"])
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a", "b"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+    )
+
+    charts_text = "\n".join(_page_texts(pdf_bytes)[1:])
+    assert "Разница: +50,0 %" in charts_text
+
+
 def _increase_report(rows):
     """Отчёт по удорожанию из готовых строк (название, было, стало) — тем же
     ``build_report``, что и в тестах ``comparison``: подделка данных здесь

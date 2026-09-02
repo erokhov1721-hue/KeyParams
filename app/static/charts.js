@@ -1,10 +1,17 @@
-/* Общая гистограмма для графиков сравнения (страницы «Сравнить объекты» и
-   её дашборда) — один canvas на график, данные лежат рядом в
-   <script type="application/json"> (см. макрос bar_chart_rows в
-   _bar_chart_macro.html). Строится один раз на canvas: Chart.getChart
-   возвращает уже существующий график, если он там есть, так что повторный
-   вызов (например, при возврате на уже открытую вкладку) его не
-   пересоздаёт.
+/* Гистограммы сравнения (страницы «Сравнить объекты» и её дашборда) — один
+   canvas на график, данные лежат рядом в <script type="application/json">
+   (см. макрос bar_chart_rows в _bar_chart_macro.html). Строится один раз на
+   canvas: Chart.getChart возвращает уже существующий график, если он там
+   есть, так что повторный вызов (например, при возврате на уже открытую
+   вкладку) его не пересоздаёт.
+
+   Один вид на любое число проектов — обычные горизонтальные бары по рангу
+   (отсортированные, без пометки, какой проект лучше); при 2 проектах это
+   просто два бара друг под другом, и под ними — разница между ними в %,
+   тем же способом, что и в остальных таблицах сравнения (знак, цвет,
+   запятая вместо точки). Был ещё «торнадо»-вид для ровно 2 проектов (два
+   бара от общей оси в разные стороны) и бейдж «лучший» у ранговых — оба
+   убраны по прямой просьбе: не понравились визуально.
 
    Вкладки «Цена работ» — особый случай: у canvas скрытой вкладки
    (display: none от .is-hidden) в момент построения нулевой размер, поэтому
@@ -17,26 +24,26 @@
    самой страницы (canvas'ы и их данные), так что на момент выполнения
    скрипта без этого их бы ещё не было в документе. */
 document.addEventListener('DOMContentLoaded', function () {
-  function buildBarChart(canvasId) {
-    var canvas = document.getElementById(canvasId);
-    var dataEl = document.getElementById(canvasId + '-data');
-    if (!canvas || !dataEl || typeof Chart === 'undefined') return;
-    if (Chart.getChart(canvas)) return;
-
-    var payload = JSON.parse(dataEl.textContent);
-    var rows = payload.rows;
-    var colors = payload.colors || {};
-
+  function readTheme() {
     var rootStyle = getComputedStyle(document.documentElement);
     var cssVar = function (name) { return rootStyle.getPropertyValue(name).trim(); };
-    var fallbackColor = cssVar('--accent');
-    var labelColor = cssVar('--text-100');
-    var gridColor = cssVar('--border');
-    var valueFont = '600 12px ' + getComputedStyle(document.body).fontFamily;
+    return {
+      fallbackColor: cssVar('--accent'),
+      labelColor: cssVar('--text-100'),
+      gridColor: cssVar('--border'),
+      font: '600 12px ' + getComputedStyle(document.body).fontFamily,
+    };
+  }
 
-    // Высота растёт с числом строк — тот же принцип, что и у ширины
-    // combo-графика на странице «Сравнить со средним», только по другой
-    // оси: там строки, здесь горизонтальные бары.
+  // Обычные горизонтальные бары, отсортированные по значению — по
+  // возрастанию, если для этой метрики меньше значит лучше, иначе по
+  // убыванию. Какой из проектов лучше — нигде текстом не пишем, порядок
+  // говорит сам за себя.
+  function buildRankedChart(canvas, rowsIn, colors, lowerIsBetter, theme) {
+    var rows = rowsIn.slice().sort(function (a, b) {
+      return lowerIsBetter ? a.value - b.value : b.value - a.value;
+    });
+
     var wrap = canvas.closest('.bar-chart-canvas-wrap');
     if (wrap) {
       wrap.style.height = Math.max(90, rows.length * 40 + 20) + 'px';
@@ -48,7 +55,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // же шрифтом, каким подпись и рисуется, а не берётся с потолка: у
     // денежных сумм он один, у коэффициентов — совсем другой.
     var measureCtx = canvas.getContext('2d');
-    measureCtx.font = valueFont;
+    measureCtx.font = theme.font;
     var valueGutter = rows.reduce(function (max, row) {
       var text = row.short_display || row.display;
       return Math.max(max, measureCtx.measureText(text).width);
@@ -60,7 +67,7 @@ document.addEventListener('DOMContentLoaded', function () {
         labels: rows.map(function (row) { return row.label; }),
         datasets: [{
           data: rows.map(function (row) { return row.value; }),
-          backgroundColor: rows.map(function (row) { return colors[row.slug] || fallbackColor; }),
+          backgroundColor: rows.map(function (row) { return colors[row.slug] || theme.fallbackColor; }),
           borderRadius: 3,
           maxBarThickness: 26,
         }],
@@ -89,8 +96,8 @@ document.addEventListener('DOMContentLoaded', function () {
           // без разрядов) — в CSS-версии числовой оси не было вовсе, само
           // значение показывала только подпись у бара, ей эта ось не
           // нужна и текстом на ней быть не должно.
-          x: { beginAtZero: true, ticks: { display: false }, grid: { color: gridColor } },
-          y: { ticks: { color: labelColor }, grid: { display: false } },
+          x: { beginAtZero: true, ticks: { display: false }, grid: { color: theme.gridColor } },
+          y: { ticks: { color: theme.labelColor }, grid: { display: false } },
         },
       },
       // Значение рядом с баром видно сразу, не только по наведению — как
@@ -101,8 +108,8 @@ document.addEventListener('DOMContentLoaded', function () {
         afterDatasetsDraw: function (chart) {
           var ctx = chart.ctx;
           ctx.save();
-          ctx.fillStyle = labelColor;
-          ctx.font = valueFont;
+          ctx.fillStyle = theme.labelColor;
+          ctx.font = theme.font;
           ctx.textBaseline = 'middle';
           chart.getDatasetMeta(0).data.forEach(function (bar, i) {
             ctx.fillText(rows[i].short_display || rows[i].display, bar.x + 6, bar.y);
@@ -111,6 +118,64 @@ document.addEventListener('DOMContentLoaded', function () {
         },
       }],
     });
+  }
+
+  // "+12,1 %" / "−12,1 %" / "0 %" — тот же формат, что и у остальных таблиц
+  // сравнения (app/cost_increase.py:format_percent): знак всегда, кроме
+  // истинного нуля, запятая вместо точки, настоящий минус, а не дефис.
+  function formatPercentRu(value) {
+    // Модуль округляется один раз, знак навешивается отдельно — округлять
+    // уже подписанное значение нельзя: у +12.05 и −12.05 после умножения на
+    // 10 разное расстояние до ближайшего целого из-за представления чисел
+    // с плавающей точкой, и один получал бы «12,1 %», а другой «12,0 %»
+    // при одинаковой по модулю разнице.
+    var roundedAbs = Math.round(Math.abs(value) * 10) / 10;
+    if (roundedAbs === 0) return '0 %';
+    return (value > 0 ? '+' : '−') + roundedAbs.toFixed(1).replace('.', ',') + ' %';
+  }
+
+  // Ровно 2 проекта — под графиком показывается разница между ними в %,
+  // тем же способом, что и в «Сравнении двух объектов» и «Дельте по
+  // разделам» выше на странице: знак и цвет говорят, стало лучше или хуже,
+  // а не просто "насколько по модулю отличается".
+  function showPairDiff(canvasId, rows, lowerIsBetter) {
+    var noteEl = document.getElementById(canvasId + '-diff');
+    if (!noteEl) return;
+    if (rows.length !== 2) {
+      noteEl.hidden = true;
+      return;
+    }
+    var a = rows[0];
+    var b = rows[1];
+    var percent = (b.value - a.value) / a.value * 100;
+    var roundedAbs = Math.round(Math.abs(percent) * 10) / 10;
+
+    noteEl.textContent = 'Разница: ' + formatPercentRu(percent);
+    noteEl.classList.remove('is-worse', 'is-better');
+    // Тот же порог округления, что и в самом тексте (formatPercentRu) —
+    // иначе на границе (например, ровно 0.05%) текст мог бы показать
+    // «0 %», а цвет всё равно проставиться, как будто разница есть.
+    if (roundedAbs !== 0) {
+      var worse = lowerIsBetter ? percent > 0 : percent < 0;
+      noteEl.classList.add(worse ? 'is-worse' : 'is-better');
+    }
+    noteEl.hidden = false;
+  }
+
+  function buildBarChart(canvasId) {
+    var canvas = document.getElementById(canvasId);
+    var dataEl = document.getElementById(canvasId + '-data');
+    if (!canvas || !dataEl || typeof Chart === 'undefined') return;
+    if (Chart.getChart(canvas)) return;
+
+    var payload = JSON.parse(dataEl.textContent);
+    var rows = payload.rows;
+    if (!rows || !rows.length) return;
+    var colors = payload.colors || {};
+    var lowerIsBetter = payload.lower_is_better !== false;
+
+    buildRankedChart(canvas, rows, colors, lowerIsBetter, readTheme());
+    showPairDiff(canvasId, rows, lowerIsBetter);
   }
 
   document.querySelectorAll('.bar-chart-canvas-wrap canvas').forEach(function (canvas) {

@@ -27,7 +27,7 @@ from reportlab.platypus import (
 )
 from PIL import Image as PILImage
 
-from . import chart_render
+from . import chart_render, cost_increase
 
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
@@ -441,14 +441,27 @@ def _terms_block(terms, slugs, passports, styles, page_width):
 
 
 def _charts_block(charts, styles, page_width):
-    """Четыре диаграммы — подпись, полоска, значение, как в карточках."""
+    """Диаграммы — подпись, полоска, значение, как на экране (charts.js).
+
+    Нулевые значения в саму полоску не идут — полоска нулевой длины рядом
+    с обычными смотрелась бы как не отрисовавшийся баг, а не как «здесь и
+    правда почти ничего», поэтому такие строки перечисляются отдельной
+    строкой под таблицей вместо полоски, как и на странице.
+
+    Ровно 2 сравниваемых проекта — под таблицей ещё разница между ними в %,
+    тем же способом и тем же цветом (красный/зелёный), что и в «Сравнении
+    двух объектов» ниже: все эти графики — цена и расход материалов, где
+    меньше значит лучше, так что рост всегда красный.
+    """
     story = []
     label_w = min(210.0, page_width * 0.32)
     value_w = 110.0
     bar_w = max(page_width - label_w - value_w - 12, 60.0)
 
     for key, title in CHART_DEFS:
-        rows = charts.get(key) or []
+        all_rows = charts.get(key) or []
+        rows = [row for row in all_rows if not row.get("is_zero")]
+        zero_rows = [row for row in all_rows if row.get("is_zero")]
         block = [Paragraph(title, styles["heading"])]
         if not rows:
             block.append(Paragraph("Недостаточно данных для этого графика.", styles["body"]))
@@ -472,6 +485,20 @@ def _charts_block(charts, styles, page_width):
             ("LINEBELOW", (0, 0), (-1, -2), 0.4, GRID),
         ]))
         block.append(table)
+        if zero_rows:
+            names = "«" + "», «".join(_esc(row["label"]) for row in zero_rows) + "»"
+            block.append(Paragraph(
+                f"Без сравнения на графике — значение округляется до нуля: {names}",
+                styles["sub"],
+            ))
+        if len(rows) == 2 and rows[0]["value"]:
+            percent = (rows[1]["value"] - rows[0]["value"]) / rows[0]["value"] * 100
+            if round(abs(percent), 1):
+                colour = _hex(RED if percent > 0 else ACCENT)
+                delta_text = f'<font color="{colour}">{cost_increase.format_percent(percent)}</font>'
+            else:
+                delta_text = "0 %"
+            block.append(Paragraph(f"Разница: {delta_text}", styles["sub"]))
         story.append(KeepTogether(block))
     return story
 

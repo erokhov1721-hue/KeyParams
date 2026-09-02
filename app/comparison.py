@@ -328,8 +328,9 @@ def _cell(column, costs, key):
             "deviation_display": ""}
 
 
-# Шкала бара отклонения, ±%. Одна на всю таблицу: если у каждой строки она
-# своя, полоски перестают сравниваться между собой и смысл теряется.
+# Шкала отклонения для заливки тепловой карты, ±%. Одна на всю таблицу: если
+# у каждой строки она своя, ячейки перестают сравниваться между собой и
+# смысл теряется.
 DEVIATION_SCALE = 50.0
 
 # Ниже этой доли раздел приглушается. «Гидроизоляция» даёт +90%, но в деньгах
@@ -338,23 +339,41 @@ DEVIATION_SCALE = 50.0
 MINOR_SHARE = 1.0
 
 
-def _add_bar(cell):
-    """Двусторонний бар отклонения: влево дешевле, вправо дороже.
+# Прозрачность заливки ячейки в тепловом виде таблицы разделов. Нижняя
+# граница не нулевая: у отклонения около 0% заливка должна читаться «почти
+# прозрачной», а не полностью исчезать — иначе ячейка без заливки не
+# отличается от «нет данных». Верхняя — не 100%: сплошная заливка сделала бы
+# число под ней нечитаемым.
+HEAT_MIN_MIX = 8.0
+HEAT_MAX_MIX = 40.0
 
-    Значение за пределами шкалы обрезается по краю трека и помечается — иначе
-    +90% и +300% выглядели бы одинаково, и не было бы видно, что полоска
-    упёрлась.
+
+def _add_heat(cell):
+    """Заливка ячейки по силе отклонения — тепловая карта таблицы разделов.
+
+    ``color-mix()`` смешивает готовый цвет с прозрачностью вместо
+    захардкоженного rgba, но токен для перерасхода и токен для экономии
+    выбраны по разным причинам:
+
+    - перерасход — ``--red``: «дороже» само по себе везде в этом
+      приложении читается этим красным, менять тут нечего.
+    - экономия — свой собственный ``--heat-savings``, а не ``--accent``.
+      ``--accent`` в этой таблице до сих пор случайно совпадал с «дешевле»
+      только потому, что так исторически сложилось у бара; но в теме
+      «Опал» и вообще как акцентный цвет темы он означает «главное
+      действие», а не «дешевле», и в других темах бывает бирюзовым или
+      фиолетовым — цвет заливки перестаёт однозначно читаться как «синее
+      дешевле». ``--heat-savings`` — свой фиксированный синий (см. :root),
+      привязанный только к этой таблице, не к общей семантике «лучше».
     """
     deviation = cell["deviation"]
     if deviation is None:
-        cell["bar"] = None
+        cell["heat_bg"] = None
         return
-    percent = deviation * 100
-    cell["bar"] = {
-        "side": "right" if percent > 0 else "left" if percent < 0 else "zero",
-        "width_pct": round(min(abs(percent), DEVIATION_SCALE) / DEVIATION_SCALE * 100, 1),
-        "clipped": abs(percent) > DEVIATION_SCALE,
-    }
+    magnitude = abs(deviation) * 100
+    mix = HEAT_MIN_MIX + min(1.0, magnitude / DEVIATION_SCALE) * (HEAT_MAX_MIX - HEAT_MIN_MIX)
+    token = "--red" if deviation > 0 else "--heat-savings"
+    cell["heat_bg"] = f"color-mix(in srgb, var({token}) {mix:.1f}%, transparent)"
 
 
 def _add_deviations(cells):
@@ -373,7 +392,7 @@ def _add_deviations(cells):
                 f"{cell['deviation'] * 100:+.0f}%".replace("-", "−")
             )
     for cell in cells:
-        _add_bar(cell)
+        _add_heat(cell)
 
 
 def _apply_increase(slugs, costs_by_slug, reports):
@@ -663,11 +682,23 @@ def build_pair_cards(left, right, passports, costs_by_slug, adjustments):
             "dearer": None if a is None or b is None or unit == UNIT_AREA else b > a,
         })
 
+    sections = _section_deltas(sides)
+    # Для строки «Итого» в waterfall-виде того же блока — тем же _signed,
+    # что и у каждой строки выше, чтобы формат (знак, пробел-разделитель,
+    # единица) не разъехался между строкой и итогом. Сама sections не
+    # трогается: это отдельное поле, бары-вид его не читает.
+    sections_per_sqm = bool(sides[0]["area"] and sides[1]["area"])
+    sections_total_display = _signed(
+        sum(row["difference"] for row in sections),
+        UNIT_PER_SQM if sections_per_sqm else UNIT_MONEY,
+    ) if sections else ""
+
     return {
         "left": sides[0],
         "right": sides[1],
         "metrics": metrics,
-        "sections": _section_deltas(sides),
+        "sections": sections,
+        "sections_total_display": sections_total_display,
     }
 
 

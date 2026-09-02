@@ -39,6 +39,12 @@
   --purple-border: var(--purple);
   --red: #f87171;
   --red-dim: rgba(248, 113, 113, 0.12);
+  /* Заливка «экономии» в тепловой карте таблицы разделов — свой
+     фиксированный синий, один и тот же под любым --accent (изумруд,
+     MR, «Опал»): здесь синий значит конкретно «дешевле базового
+     проекта», а не «лучше» в общем смысле приложения, так что привязывать
+     его к теме нельзя — только к тёмному/светлому фону, для контраста. */
+  --heat-savings: #5b9fe3;
   --border: rgba(255, 255, 255, 0.08);
   --border-soft: rgba(255, 255, 255, 0.05);
   --text-100: #eaf6f4;
@@ -97,6 +103,7 @@
   --purple-border: var(--purple);
   --red: #c62828;
   --red-dim: rgba(198, 40, 40, 0.10);
+  --heat-savings: #378ade;
   --border: rgba(16, 43, 39, 0.13);
   --border-soft: rgba(16, 43, 39, 0.07);
   --text-100: #13201e;
@@ -1288,6 +1295,28 @@ select option {
   font-weight: 600;
 }
 
+/* Разница между парой проектов (ровно 2 в сравнении) — тот же знак/цвет,
+   что и у .pair-delta и .delta-value выше на странице: зелёный/акцентный,
+   если для этой метрики стало лучше, красный, если хуже; без цвета, если
+   разница округляется до нуля. charts.js решает, показывать ли этот
+   элемент, и сам его заполняет. */
+.chart-diff-note {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-500);
+}
+
+.chart-diff-note.is-worse {
+  color: var(--red);
+}
+
+.chart-diff-note.is-better {
+  color: var(--accent);
+}
+
 /* Прогнозируемое удорожание — реестр претензий ВИС */
 
 .reestr-filter-form {
@@ -1655,6 +1684,16 @@ select option {
   padding: 24px 0;
 }
 
+/* Когда одна такая карточка идёт сразу за другой (сейчас — «Стоимость по
+   разделам» и «Средние показатели по объектам»), обычного отступа между
+   карточками мало: у обеих один и тот же класс ячейки (.sections-value),
+   и без разницы в оформлении — например, тепловая карта у первой, а
+   вторая её не получает, — стык между ними легко принять за ещё одну
+   строку предыдущей таблицы, а не за начало новой. */
+.sections-card + .sections-card {
+  margin-top: 12px;
+}
+
 /* Только в карточках с таблицей: тот же заголовок используется и в карточке
    двух объектов, а у неё боковой отступ уже есть на ней самой. Здесь его
    нет — его держат ячейки, — поэтому заголовок отодвигается сам, ровно на
@@ -1733,6 +1772,135 @@ select option {
 .sections-card.is-collapsed .sections-weight-col,
 .sections-card.is-collapsed .sections-table tbody {
   display: none;
+}
+
+/* Переключатель вида «Дельта по разделам» (По разделам / Накопительно, см.
+   ниже). Тот же внешний вид, что и у .chart-tabs/.chart-tab (переключатель
+   разрезов «Цены работ»), но свой класс: это не тот же самый переключатель
+   и не должен зацепиться за его JS в charts.js, который ищет
+   .chart-card-tabs — этой карточки там нет. */
+.sections-view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-900);
+  border-radius: var(--radius-sm);
+}
+
+.sections-view-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-500);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sections-view-tab.is-active {
+  background: var(--surface-card);
+  color: var(--text-100);
+  box-shadow: var(--shadow-card);
+}
+
+/* Тепловая карта таблицы разделов — значение и отклонение живут на
+   отдельной плашке (.sections-heat-value, «40 059 +19%»), залитой цветом
+   (--heat-bg, считает comparison.py::_add_heat через color-mix()). Заливка —
+   именно на плашке, не на всей <td>: иначе соседние строки сливаются в одну
+   сплошную цветную полосу без зазора между ними, как обычная ячейка
+   таблицы, а не как чип. У <td> фон остаётся тем, что был всегда (никакой
+   заливки не добавляется).
+
+   Ширина плашки фиксирована (не по содержимому) — иначе у «0 −100%» и
+   «16 912 +53%» разная ширина, и правые края плашек в столбце не
+   выровнены; таблица уже выравнивает текст ячеек по правому краю
+   (.sections-table td), этого достаточно, чтобы прижать саму плашку к
+   правому краю ячейки — text-align на плашке ниже нужен ей самой, чтобы
+   при фиксированной ширине короткий текст внутри не съезжал к левому
+   краю плашки.
+
+   Число и процент — разные span'ы с разным весом: у числа обычный размер,
+   обычная толщина (400, не жирный) и основной цвет текста; у процента
+   размер меньше и цвет приглушённый, НЕ насыщенный красный/синий — это
+   уже несёт заливка плашки, дублировать его ещё и в цвете текста незачем,
+   а если сделать оба элемента одинаково заметными, они конкурируют за
+   внимание. У базовой колонки deviation_display пустая строка, так что
+   там просто число без процента — плашка та же, просто без заливки
+   (var(--heat-bg, none) отдаёт none). */
+.sections-heat-value {
+  display: inline-block;
+  width: 120px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  text-align: right;
+  background: var(--heat-bg, none);
+}
+
+.sections-heat-number {
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-100);
+}
+
+.sections-heat-percent {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-500);
+}
+
+/* Легенда под таблицей разделов — с названием базового проекта: цвет тут
+   значит «дешевле/дороже него», не «хорошо/плохо» в общем смысле
+   приложения, и легенда должна говорить это прямо. */
+.sections-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-500);
+}
+
+.sections-heat-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sections-heat-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.sections-heat-legend-swatch.is-savings {
+  background: var(--heat-savings);
+}
+
+.sections-heat-legend-swatch.is-overrun {
+  background: var(--red);
+}
+
+/* Переключатель вида «Дельта по разделам»: По разделам (текущие
+   параллельные бары) / Накопительно (waterfall, на canvas). В отличие от
+   тепловой карты выше это не перекраска одних и тех же ячеек, а два
+   разных блока разметки — .delta-list и .bar-chart-canvas-wrap — общий
+   [data-sections-panel] показывает/прячет нужный по значению
+   data-sections-view на карточке. */
+[data-sections-panel="waterfall"] {
+  display: none;
+}
+
+[data-sections-view="waterfall"] [data-sections-panel="bars"] {
+  display: none;
+}
+
+[data-sections-view="waterfall"] [data-sections-panel="waterfall"] {
+  display: block;
 }
 
 /* Свёрнутая дельта по разделам в «Сравнении двух объектов» — сама карточка
@@ -1940,6 +2108,14 @@ select option {
   text-align: left;
 }
 
+/* Явная ширина колонки проекта — без неё table-layout: fixed делит остаток
+   ширины поровну между колонками, беря за образец только первую строку
+   (заголовок), и та не даёт браузеру ориентир на то, что реально нужно
+   плитке тепловой карты (.sections-heat-value, 120px) в теле таблицы. */
+.sections-project-col {
+  width: 190px;
+}
+
 .sections-weight-cell {
   display: flex;
   align-items: center;
@@ -1988,21 +2164,6 @@ select option {
   font-size: 11px;
   color: var(--text-600);
   font-variant-numeric: tabular-nums;
-}
-
-.sections-deviation {
-  display: block;
-  margin-top: 2px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sections-deviation.is-worse {
-  color: var(--red);
-}
-
-.sections-deviation.is-better {
-  color: var(--accent);
 }
 
 .sections-note {
@@ -2484,89 +2645,6 @@ select option {
   margin-top: 18px;
 }
 
-/* --- Бар отклонения в таблице разделов --- */
-
-.dev {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 5px;
-}
-
-.dev-track {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  width: 88px;
-  height: 8px;
-}
-
-.dev-half {
-  flex: 1;
-  display: flex;
-  height: 100%;
-}
-
-/* Левая половина растёт от нуля влево, поэтому заполняется с правого края. */
-.dev-half-left {
-  justify-content: flex-end;
-}
-
-/* Нулевая линия по центру ячейки: от неё и отсчитывается отклонение. */
-.dev-zero {
-  flex-shrink: 0;
-  width: 1px;
-  height: 100%;
-  background: var(--border);
-}
-
-.dev-fill {
-  height: 100%;
-  border-radius: 2px;
-}
-
-.dev-fill.is-better {
-  background: var(--accent);
-}
-
-.dev-fill.is-worse {
-  background: var(--red);
-}
-
-/* Значение вышло за шкалу — угол на конце полоски показывает, что она
-   упёрлась в край, а не остановилась сама. Без этого +90% и +300%
-   выглядели бы одинаково. */
-.dev-fill.is-clipped.is-worse {
-  border-radius: 2px 0 0 2px;
-  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 0 100%);
-}
-
-.dev-fill.is-clipped.is-better {
-  border-radius: 0 2px 2px 0;
-  clip-path: polygon(4px 0, 100% 0, 100% 100%, 4px 100%, 0 50%);
-}
-
-.dev-label {
-  min-width: 34px;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* Пустая подпись с той стороны, где полоски нет, всё равно занимает место —
-   так нулевая линия остаётся ровно посередине во всех строках. */
-.dev-label.is-better {
-  color: var(--accent);
-  text-align: right;
-}
-
-.dev-label.is-worse {
-  color: var(--red);
-  text-align: left;
-}
-
 /* Заголовки-кнопки для сортировки: выглядят как обычный заголовок, ведут
    себя как кнопка. */
 .sections-sort {
@@ -2610,14 +2688,6 @@ select option {
 
 .sections-table tr.is-minor .sections-weight-fill {
   background: var(--text-600);
-}
-
-.sections-table tr.is-minor .dev-fill {
-  opacity: 0.4;
-}
-
-.sections-table tr.is-minor .dev-label {
-  color: var(--text-500);
 }
 
 /* Удорожание по видам работ. Таблица та же, что на странице сравнения, но

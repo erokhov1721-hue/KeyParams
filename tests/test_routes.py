@@ -724,9 +724,35 @@ def test_compare_projects_price_per_sqm_renders_as_a_bar_chart_like_the_rest(tmp
 
     assert "kpi-tile" not in body
     assert 'id="chart-price_per_sqm"' in body
-    displays = [row["display"] for row in _bar_chart_data(body, "price_per_sqm")["rows"]]
+    chart_data = _bar_chart_data(body, "price_per_sqm")
+    displays = [row["display"] for row in chart_data["rows"]]
     assert "150 ₽" in displays
     assert "100 ₽" in displays
+    assert len(chart_data["rows"]) == 2
+    assert chart_data["lower_is_better"] is True
+    # При ровно 2 проектах charts.js подписывает разницу между ними в %
+    # в этот элемент — сам текст (знак, цвет) считается в JS, не сервером.
+    assert 'id="chart-price_per_sqm-diff"' in body
+
+
+def test_compare_projects_chart_data_has_one_row_per_project_for_three_or_more(tmp_path):
+    # Один и тот же ранговый вид на любое число проектов — здесь только
+    # проверяется, что сервер кладёт ровно одну строку на проект, сам вид
+    # (charts.js) от их числа не зависит.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slugs = [
+        _make_project_with_passport(
+            tmp_path, f"Проект{i}", contract_price_rub=float(100 + i), total_area_sqm=1.0,
+        )
+        for i in range(3)
+    ]
+    query = "&".join(f"slug={slug}" for slug in slugs)
+
+    body = client.get(f"/compare?{query}").get_data(as_text=True)
+
+    chart_data = _bar_chart_data(body, "price_per_sqm")
+    assert len(chart_data["rows"]) == 3
 
 
 def test_compare_page_shows_the_terms_table(tmp_path):
@@ -2473,6 +2499,173 @@ def test_compare_page_shows_the_section_table(tmp_path):
     assert "Итого СМР" in body
 
 
+def test_compare_page_shows_the_section_table_as_a_heatmap(tmp_path):
+    # Тепловая карта — единственный вид этой таблицы, без переключателя и
+    # без подписи, называющей его тепловой картой.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "ПроектА", [("6. Фасадные работы", 1_000_000.0)])
+    b = _project_with_offer(tmp_path, "ПроектБ", [("6. Фасадные работы", 1_500_000.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert 'data-sections-view="heatmap"' in body
+    assert "Индикаторы" not in body
+    assert "Тепловая карта" not in body
+    assert "--heat-bg: color-mix(in srgb, var(--red) 40.0%, transparent);" in body
+    # Число и процент — раздельные span'ы внутри одной плитки, не одна
+    # строка текста и не число + отдельная подпись рядом с баром.
+    assert re.search(
+        r'<span class="sections-heat-number">[^<]*</span>\s*'
+        r'<span class="sections-heat-percent">\+50%</span>',
+        body,
+    )
+    # Легенда — с названием базового проекта, не общей фразой.
+    assert "sections-heat-legend" in body
+    assert "экономия относительно «ПроектА»" in body
+    assert "перерасход относительно «ПроектА»" in body
+
+
+def test_the_totals_row_gets_a_heat_chip_in_heatmap_view(tmp_path):
+    # «Итого СМР» рендерится в tfoot, отдельным блоком разметки от обычных
+    # разделов в tbody — раньше этот блок не получал ни --heat-bg, ни
+    # .sections-heat-value, и в тепловом режиме строка оставалась с одним
+    # голым "+50%" без числа и без плашки (число прятало общее правило
+    # .sections-number, а замены ему не было).
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "База", [("6. Фасадные работы", 1_000_000.0)])
+    b = _project_with_offer(tmp_path, "Дороже", [("6. Фасадные работы", 1_500_000.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    tfoot = body[body.index("<tfoot>"):body.index("</tfoot>")]
+    assert "--heat-bg: color-mix(in srgb, var(--red)" in tfoot
+    assert re.search(r'<span class="sections-heat-percent">\+50%</span>', tfoot)
+
+
+def test_the_heatmap_view_has_no_plain_number_or_indicator_bar_markup(tmp_path):
+    # Тепловая карта — единственный вид ячейки, поэтому в разметке не должно
+    # остаться ни числа без заливки, ни двустороннего бара рядом с ним.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "ПроектА", [("6. Фасадные работы", 1_000_000.0)])
+    b = _project_with_offer(tmp_path, "ПроектБ", [("6. Фасадные работы", 1_500_000.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+    sections = body[body.index('class="card sections-card"'):body.index("</table>")]
+
+    assert "sections-number" not in sections
+    assert 'class="dev"' not in sections
+
+
+def test_the_heatmap_fill_is_a_padded_chip_not_the_whole_cell(tmp_path):
+    # Заливка — на внутренней плашке (с паддингом и скруглением), не на
+    # самой <td>: иначе соседние строки сливаются в сплошную цветную полосу
+    # без зазора между ними.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    chip_rule = css.split(".sections-heat-value {", 1)[1].split("}", 1)[0]
+
+    assert "background: var(--heat-bg" in chip_rule
+    assert "padding:" in chip_rule
+    assert "border-radius:" in chip_rule
+    # А вот у самой ячейки (.sections-value = <td>) заливки быть не должно.
+    td_rule = css.split(
+        '.sections-card[data-sections-view="heatmap"] .sections-value {', 1,
+    )
+    assert len(td_rule) == 1, "the <td> itself should not have its own heatmap background rule"
+
+
+def test_the_heatmap_chip_has_a_fixed_width_not_content_width(tmp_path):
+    # Плитки в одном столбце должны быть одной ширины независимо от длины
+    # текста внутри — иначе у "0 −100%" и "16 912 +53%" разная ширина, и
+    # правые края плиток в столбце не выровнены.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    chip_rule = css.split(".sections-heat-value {", 1)[1].split("}", 1)[0]
+
+    assert re.search(r"width:\s*\d+px;", chip_rule)
+    assert "width: auto" not in chip_rule
+    assert "text-align: right" in chip_rule
+
+
+def test_the_heatmap_number_and_percent_are_not_bold(tmp_path):
+    # Ни число, ни процент, ни значение базового проекта не должны быть
+    # жирнее обычного текста — жирным остаётся только заголовок колонки в
+    # шапке таблицы (.sections-table thead th), это к строкам с данными не
+    # относится.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    number_rule = css.split(".sections-heat-number {", 1)[1].split("}", 1)[0]
+    percent_rule = css.split(".sections-heat-percent {", 1)[1].split("}", 1)[0]
+
+    assert "font-weight: 400" in number_rule
+    assert "font-weight: 400" in percent_rule
+    for rule in (number_rule, percent_rule):
+        assert "font-weight: 500" not in rule
+        assert "font-weight: 600" not in rule
+        assert "font-weight: 700" not in rule
+    # Процент — приглушённым цветом, не насыщенным красным/синим тоном
+    # отклонения: это уже несёт заливка самой плитки.
+    assert "var(--text-500)" in percent_rule or "var(--text-600)" in percent_rule
+    assert "var(--red)" not in percent_rule
+    assert "var(--heat-savings)" not in percent_rule
+
+
+def test_adjacent_sections_cards_get_extra_breathing_room(tmp_path):
+    # «Стоимость по разделам» и «Средние показатели по объектам» — соседние
+    # карточки с одним и тем же классом ячейки (.sections-value); без
+    # разницы в оформлении (тепловая карта у первой, не у второй) стык между
+    # ними легко принять за ещё одну строку первой таблицы, что и произошло
+    # на практике.
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    rule = css.split(".sections-card + .sections-card {", 1)[1].split("}", 1)[0]
+
+    assert re.search(r"margin-top:\s*\d+px;", rule)
+
+
+def test_project_columns_have_a_fixed_width(tmp_path):
+    # table-layout: fixed делит остаток ширины между колонками поровну,
+    # ориентируясь на первую строку (заголовок), а той нечем подсказать
+    # браузеру, сколько реально нужно плитке тепловой карты в теле таблицы.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "ПроектА", [("6. Фасадные работы", 1_000_000.0)])
+    b = _project_with_offer(tmp_path, "ПроектБ", [("6. Фасадные работы", 1_500_000.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+    assert 'class="sections-project-col"' in body
+
+    css = client.get("/static/style.css").get_data(as_text=True)
+    rule = css.split(".sections-project-col {", 1)[1].split("}", 1)[0]
+    assert re.search(r"width:\s*\d+px;", rule)
+
+
+def test_compare_page_heatmap_supports_more_than_two_projects(tmp_path):
+    # 3+ проектов — просто ещё колонки после базовой, каждая со своей
+    # заливкой относительно того же базового проекта (первого в списке).
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "База", [("6. Фасадные работы", 1_000_000.0)])
+    b = _project_with_offer(tmp_path, "Дороже", [("6. Фасадные работы", 1_500_000.0)])
+    c = _project_with_offer(tmp_path, "Дешевле", [("6. Фасадные работы", 500_000.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}&slug={c}").get_data(as_text=True)
+
+    assert "--heat-bg: color-mix(in srgb, var(--red) 40.0%, transparent);" in body
+    assert "--heat-bg: color-mix(in srgb, var(--heat-savings) 40.0%, transparent);" in body
+
+
 def test_compare_page_has_no_section_table_without_estimates(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -2768,6 +2961,38 @@ def test_compare_page_shows_the_pair_cards(tmp_path):
     delta_row = body.index('class="delta-row"', delta_heading)
     toggle = body.index("sections-collapse-toggle", delta_heading)
     assert delta_heading < toggle < delta_row
+
+
+def test_compare_page_offers_a_waterfall_view_of_the_section_delta(tmp_path):
+    # По разделам остаётся видом по умолчанию — накопительно добавлен
+    # рядом переключателем, та же pair.sections, без пересчёта на сервере.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(
+        tmp_path, "Левый", [("6. Фасадные работы", 100_000.0), ("8. Кровля", 50_000.0)],
+    )
+    b = _project_with_offer(
+        tmp_path, "Правый", [("6. Фасадные работы", 300_000.0), ("8. Кровля", 40_000.0)],
+    )
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert 'data-sections-view="bars"' in body
+    assert 'data-sections-view="waterfall"' in body
+    assert 'id="pair-sections-waterfall"' in body
+    assert 'data-sections-panel="bars"' in body
+    assert 'data-sections-panel="waterfall"' in body
+
+    match = re.search(
+        r'<script id="pair-sections-waterfall-data" type="application/json">(.*?)</script>',
+        body, re.DOTALL,
+    )
+    assert match is not None
+    payload = json.loads(match.group(1))
+    assert payload["right_name"] == "Правый"
+    assert [row["key"] for row in payload["rows"]] == ["facade", "roof"]
+    # 190 ₽/м² — та же сумма, что и в comparison.py::build_pair_cards.
+    assert payload["total_display"] == "+190 ₽/м²"
 
 
 def test_the_pair_can_be_chosen_from_the_page(tmp_path):
