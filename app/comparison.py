@@ -365,15 +365,22 @@ def _add_heat(cell):
       фиолетовым — цвет заливки перестаёт однозначно читаться как «синее
       дешевле». ``--heat-savings`` — свой фиксированный синий (см. :root),
       привязанный только к этой таблице, не к общей семантике «лучше».
+
+    ``heat_mix`` хранит ту же силу заливки числом (0–100) рядом с готовой
+    CSS-строкой: PDF рисует ту же плашку через reportlab, где `color-mix()`
+    не распарсить, и берёт готовое число вместо того, чтобы пересчитывать
+    формулу второй раз в другом файле.
     """
     deviation = cell["deviation"]
     if deviation is None:
         cell["heat_bg"] = None
+        cell["heat_mix"] = None
         return
     magnitude = abs(deviation) * 100
     mix = HEAT_MIN_MIX + min(1.0, magnitude / DEVIATION_SCALE) * (HEAT_MAX_MIX - HEAT_MIN_MIX)
     token = "--red" if deviation > 0 else "--heat-savings"
     cell["heat_bg"] = f"color-mix(in srgb, var({token}) {mix:.1f}%, transparent)"
+    cell["heat_mix"] = mix
 
 
 def _add_deviations(cells):

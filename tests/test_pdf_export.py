@@ -1,6 +1,7 @@
 import io
 
 import pdfplumber
+import pytest
 
 from app import comparison, cost_increase, passport as passport_module, pdf_export
 from app.comparison import Adjustments
@@ -283,6 +284,98 @@ def test_the_pdf_shows_the_averages_table():
     assert "5 000 000" in text       # средняя цена по договору
     assert "Средняя стоимость по видам работ" in text
     assert "Фасад" in text
+
+
+# --- «Стоимость по разделам» --------------------------------------------------
+
+def _sections_passports():
+    fields = {"year_signed": None, "building_class": None,
+              "general_contractor": None, "contract_price_rub": None,
+              "underground_area_sqm": None, "aboveground_area_sqm": None,
+              "total_area_sqm": 1_000.0}
+    return {
+        "a": {"project_name": "ПроектА", "address": None, **fields},
+        "b": {"project_name": "ПроектБ", "address": None, **fields},
+    }
+
+
+def test_heat_fill_color_is_none_without_a_deviation():
+    assert pdf_export._heat_fill_color({"deviation": None, "heat_mix": None}) is None
+
+
+def test_heat_fill_color_blends_the_deviation_tint_over_white():
+    # Тот же расчёт, что красит плашку на экране (comparison.py::_add_heat),
+    # только смешивается не с прозрачностью через color-mix(), а прямо с
+    # белым фоном страницы — reportlab о color-mix() не знает.
+    overrun = pdf_export._heat_fill_color({"deviation": 0.5, "heat_mix": 40.0})
+    savings = pdf_export._heat_fill_color({"deviation": -0.5, "heat_mix": 40.0})
+
+    fraction = 0.4
+    assert round(overrun.red, 3) == round(pdf_export.RED.red * fraction + (1 - fraction), 3)
+    assert round(overrun.green, 3) == round(pdf_export.RED.green * fraction + (1 - fraction), 3)
+    assert round(savings.blue, 3) == round(
+        pdf_export.HEAT_SAVINGS.blue * fraction + (1 - fraction), 3
+    )
+    assert overrun.red > savings.red  # перерасход — красноватее экономии
+
+
+def test_the_sections_table_paints_a_heat_background_for_a_deviated_cell():
+    # Регрессия: таблица «Стоимость по разделам» на экране красит ячейку
+    # заливкой по силе отклонения (тепловая карта), а PDF до этой правки всё
+    # ещё рисовал старую двустороннюю шкалу, которую с экрана уже убрали —
+    # визуализация расходилась.
+    passports = _sections_passports()
+    sections = comparison.build_section_table(
+        ["a", "b"], passports,
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_500_000.0}}, NONE,
+    )
+    facade = next(row for row in sections["rows"] if row["key"] == "facade")
+    expected = pdf_export._heat_fill_color(facade["cells"][1])
+
+    pdf_bytes = _build(sections=sections)
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        # Плашка — прямоугольник со скруглёнными углами, reportlab рисует её
+        # кривыми (curves), не примитивом rect — plumber держит их отдельно.
+        fills = {
+            tuple(round(c, 3) for c in shape["non_stroking_color"])
+            for page in pdf.pages
+            for shape in page.rects + page.curves
+            if shape["fill"]
+        }
+
+    assert (round(expected.red, 3), round(expected.green, 3), round(expected.blue, 3)) in fills
+
+
+def test_the_heat_chip_does_not_fill_the_whole_cell():
+    # Регрессия №2: первая правка красила фон всей ячейки таблицы (BACKGROUND
+    # на всю ширину колонки) — сплошной цветной полосой во всю ширину, без
+    # просвета слева, как залита вся <td> целиком. На экране красится узкая
+    # плашка (.sections-heat-value, 120px), прижатая к правому краю ячейки,
+    # с белым просветом слева — так по строкам её и отличают от соседних.
+    from reportlab.graphics.shapes import Rect
+
+    drawing = pdf_export._heat_drawing({"display": "40 059", "deviation": 0.5,
+                                         "deviation_display": "+19%", "heat_mix": 25.0},
+                                        width=140.0)
+
+    rects = [shape for shape in drawing.contents if isinstance(shape, Rect)]
+    assert len(rects) == 1
+    chip = rects[0]
+    assert chip.x > 0  # просвет слева, не залито от самого края ячейки
+    assert chip.x + chip.width == pytest.approx(140.0)  # прижата к правому краю
+
+
+def test_the_sections_table_shows_the_deviation_percent_next_to_the_value():
+    passports = _sections_passports()
+    sections = comparison.build_section_table(
+        ["a", "b"], passports,
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_500_000.0}}, NONE,
+    )
+
+    text = "\n".join(_page_texts(_build(sections=sections)))
+
+    assert "Стоимость по разделам" in text
+    assert "+50%" in text
 
 
 # --- сравнение со средним по классу ------------------------------------------

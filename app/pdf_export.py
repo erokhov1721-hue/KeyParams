@@ -15,7 +15,7 @@ from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
 
-from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
+from reportlab.graphics.shapes import Drawing, Line, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
@@ -52,6 +52,11 @@ MUTED_2 = colors.HexColor("#6d807d")
 GRID = colors.HexColor("#dfe3e2")
 TRACK = colors.HexColor("#eef1f0")
 HEAD_BG = colors.HexColor("#f4f8f6")
+# Заливка таблицы «Стоимость по разделам» — то же ``--heat-savings``, что и
+# на экране (см. style.css, светлая тема), не ACCENT: тот на странице значит
+# «дешевле» только по историческому совпадению, а этот цвет привязан к
+# заливке напрямую (см. comparison.py::_add_heat).
+HEAT_SAVINGS = colors.HexColor("#378ade")
 
 ACCENT_COLOR = ACCENT  # прежнее имя: на него мог ссылаться внешний код
 
@@ -225,71 +230,72 @@ def _share_drawing(row, width, minor=False):
     return drawing
 
 
-def _deviation_drawing(cell, width, minor=False):
-    """Двусторонний бар отклонения от базового проекта, или None.
+def _heat_fill_color(cell):
+    """Фон ячейки таблицы разделов по силе отклонения, или None.
 
-    Влево — дешевле, вправо — дороже; ноль в середине. Значение, вышедшее за
-    шкалу, обрезается по краю и получает уголок на конце — как на экране,
-    иначе +90% и +300% выглядели бы одинаково.
-
-    None — там, где отклонения нет вовсе: у самого базового проекта и там, где
-    цифры не нашлось. Пустой трек в этих клетках говорил бы, что отклонение
-    посчитано и равно нулю; на странице его в них тоже не рисуют. Ровный ноль
-    — дело другое, он посчитан, и трек с чертой по центру остаётся.
+    Тот же расчёт, что красит плашку на экране (``comparison.py::_add_heat``,
+    ``heat_mix``), но смешивается не с прозрачностью через ``color-mix()``
+    (reportlab его не понимает), а прямо с белым фоном страницы — ячейка
+    таблицы и так всегда на белом.
     """
-    bar = cell.get("bar")
-    if not bar:
+    mix = cell.get("heat_mix")
+    if mix is None:
         return None
+    token = RED if cell["deviation"] > 0 else HEAT_SAVINGS
+    fraction = mix / 100.0
+    return colors.Color(
+        token.red * fraction + (1 - fraction),
+        token.green * fraction + (1 - fraction),
+        token.blue * fraction + (1 - fraction),
+    )
 
-    height = 9.0
-    label_w = 24.0
+
+#  Ширина плашки на экране (``.sections-heat-value``) — 120px, ровно
+#  переведённые в пункты (120 / 96 * 72): своя фиксированная величина, не
+#  зависящая от ширины колонки. Колонка в PDF почти всегда куда шире
+#  браузерной (там всего 1-2 проекта на всю ширину страницы, а не таблица со
+#  скроллом), и заливка «вся ширина колонки минус небольшой отступ» на такой
+#  колонке выглядит как сплошная полоса почти во всю ячейку — просвет слева
+#  теряется на глаз. Фиксированная ширина решает это при любом числе
+#  проектов: чем у́же колонка, тем заметнее становится просвет.
+_HEAT_CHIP_WIDTH = 90.0
+
+
+def _heat_drawing(cell, width, minor=False):
+    """Плашка «40 059 −13%» на тепловой заливке — как на экране
+    (``.sections-heat-value``): узкая, прижатая к правому краю ячейки, с
+    просветом слева, а не заливка на всю ширину ячейки. Заливка на всю
+    ширину на печати сливала бы соседние строки в одну сплошную цветную
+    полосу без зазора между ними — там, где на экране от этого и спасает
+    отдельная плашка вместо заливки самой ``<td>`` (см. comparison.py и
+    style.css рядом с ``--heat-bg``).
+    """
+    height = 13.0
+    pad_right = 8.0
+    chip_w = min(_HEAT_CHIP_WIDTH, width)
+    inset = width - chip_w
+
     drawing = Drawing(width, height)
     drawing.hAlign = "LEFT"
 
-    track_x = label_w
-    track_w = max(width - 2 * label_w, 14.0)
-    half = track_w / 2.0
-    center = track_x + half
-    drawing.add(Rect(track_x, 1.5, track_w, height - 3, rx=2, ry=2,
-                     fillColor=TRACK, strokeColor=None))
-    drawing.add(Line(center, 0.8, center, height - 0.8, strokeColor=GRID, strokeWidth=0.7))
+    fill = _heat_fill_color(cell)
+    if fill is not None:
+        drawing.add(Rect(inset, 0, chip_w, height, rx=3, ry=3,
+                         fillColor=fill, strokeColor=None))
 
-    if bar["side"] == "zero":
-        return drawing
-
-    dearer = bar["side"] == "right"
-    color = RED if dearer else ACCENT
-    if minor:
-        color = _fade(color)
-    length = max(half * bar["width_pct"] / 100.0, 0.0)
-    tip = 3.5 if bar.get("clipped") and length > 4 else 0.0
-    y, h = 1.5, height - 3
-
-    if dearer:
-        drawing.add(Rect(center, y, length - tip, h, rx=2, ry=2,
-                         fillColor=color, strokeColor=None))
-        if tip:
-            drawing.add(Polygon(
-                points=[center + length - tip, y, center + length, y + h / 2,
-                        center + length - tip, y + h],
-                fillColor=color, strokeColor=None,
-            ))
+    percent = cell.get("deviation_display") or ""
+    percent_w = pdfmetrics.stringWidth(percent, "Arial", 6.5) if percent else 0.0
+    gap = 4.0 if percent else 0.0
+    y = height / 2.0 - 2.6
+    number_x = width - pad_right - percent_w - gap
+    drawing.add(String(
+        number_x, y, cell["display"], fontName="Arial", fontSize=8,
+        textAnchor="end", fillColor=MUTED if minor else INK,
+    ))
+    if percent:
         drawing.add(String(
-            width, 2.2, cell.get("deviation_display", ""), fontName="Arial",
-            fontSize=6.5, textAnchor="end", fillColor=MUTED if minor else RED,
-        ))
-    else:
-        left = center - length
-        drawing.add(Rect(left + tip, y, length - tip, h, rx=2, ry=2,
-                         fillColor=color, strokeColor=None))
-        if tip:
-            drawing.add(Polygon(
-                points=[left + tip, y, left, y + h / 2, left + tip, y + h],
-                fillColor=color, strokeColor=None,
-            ))
-        drawing.add(String(
-            0, 2.2, cell.get("deviation_display", ""), fontName="Arial",
-            fontSize=6.5, textAnchor="start", fillColor=MUTED if minor else ACCENT,
+            width - pad_right, y, percent, fontName="Arial", fontSize=6.5,
+            textAnchor="end", fillColor=MUTED,
         ))
     return drawing
 
@@ -554,6 +560,10 @@ def _sections_block(sections, styles, page_width):
         header.append(cell)
     data = [header]
 
+    # Ячейки с заливкой по силе отклонения — собираются по ходу построения
+    # строк и применяются к таблице отдельными командами BACKGROUND (после
+    # шапки/подвала в style, чтобы для конкретной ячейки победила именно
+    # заливка, а не общий HEAD_BG подвала).
     minor_rows = []
     for row in sections["rows"]:
         minor = bool(row.get("minor"))
@@ -564,26 +574,13 @@ def _sections_block(sections, styles, page_width):
             _share_drawing(row, weight_w - 12, minor),
         ]
         for cell in row["cells"]:
-            content = [Paragraph(
-                cell["display"],
-                styles["cell_muted_right"] if minor else styles["cell_right"],
-            )]
-            bar = _deviation_drawing(cell, value_w - 12, minor)
-            if bar is not None:
-                content.append(bar)
-            line.append(content)
+            line.append(_heat_drawing(cell, value_w - 12, minor))
         data.append(line)
 
     total = sections["total"]
     total_line = [Paragraph(total["label"], styles["cell_label"]), ""]
     for cell in total["cells"]:
-        text = cell["display"]
-        if cell.get("deviation") is not None:
-            color = RED if cell["deviation"] > 0 else ACCENT
-            text += (
-                f' <font color="{_hex(color)}">{cell["deviation_display"]}</font>'
-            )
-        total_line.append(Paragraph(text, styles["cell_right"]))
+        total_line.append(_heat_drawing(cell, value_w - 12))
     data.append(total_line)
 
     table = Table(

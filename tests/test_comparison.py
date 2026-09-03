@@ -372,6 +372,20 @@ def test_heat_fill_intensity_scales_with_the_size_of_the_deviation():
     )
 
 
+def test_heat_mix_carries_the_same_number_as_the_css_string():
+    # pdf_export blends this against reportlab colors directly — it can't
+    # parse color-mix() — so the raw percentage has to live on the cell too,
+    # not just baked into the CSS string.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б")},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_100_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][0]["heat_mix"] is None
+    assert round(facade["cells"][1]["heat_mix"], 1) == 14.4
+
+
 def test_heat_fill_does_not_grow_past_the_deviation_scale():
     # +200% is way past the ±50% scale (already clipped in the .dev-bar) —
     # the fill should cap at the same maximum as an exact +50%, not keep
