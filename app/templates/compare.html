@@ -222,9 +222,9 @@
             data-tooltip="Стоимость раздела берётся из файла удорожания («стало»), а не только из сметы — там, где для проекта есть загруженный файл. Раздел, который файл не переписал, остаётся по смете.">С учётом удорожания</span>
     </label>
     <label class="adjust-toggle">
-      <input type="checkbox" name="vis_overrun_on" value="1" {{ 'checked' if sections.use_vis_overrun }}>
+      <input type="checkbox" name="predicted_increase_on" value="1" {{ 'checked' if sections.use_predicted_increase }}>
       <span tabindex="0"
-            data-tooltip="К «Инженерным системам» прибавляется прогнозируемое удорожание из реестра претензий ВИС («Прогнозируемое удорожание» в меню) — там, где название проекта совпало с объектом в реестре.">Прогноз удорожания</span>
+            data-tooltip="К каждому разделу прибавляется прогнозируемое удорожание из файла проекта («Прогнозируемое удорожание объекта» на странице проекта) — там, где для проекта есть загруженный файл.">Прогноз удорожания</span>
     </label>
     <button type="submit" class="btn btn-secondary">Применить</button>
   </form>
@@ -712,9 +712,7 @@
     </div>
     {% endfor %}
   </div>
-  <div class="bar-chart-canvas-wrap" data-sections-panel="waterfall">
-    <canvas id="pair-sections-waterfall" role="img" data-waterfall></canvas>
-  </div>
+  <div class="waterfall-list" data-sections-panel="waterfall" id="pair-sections-waterfall"></div>
   <script id="pair-sections-waterfall-data" type="application/json">{{ {"rows": pair.sections, "right_name": pair.right.name, "total_display": pair.sections_total_display} | tojson }}</script>
   {% endif %}
 </div>
@@ -777,154 +775,88 @@
 {# Накопительно (waterfall) — второй вид «Дельты по разделам»: те же
    строки, тот же порядок (по |дельта| убыванию — уже пришёл таким с
    сервера), просто нарастающим итогом вместо параллельных баров от нуля.
-   Строится один раз на canvas (Chart.getChart — тот же приём, что и у
-   charts.js) и лениво, при первом переключении на этот вид: пока панель
-   скрыта через [data-sections-panel], у canvas нулевой размер. #}
+   Чистый DOM (три flex-колонки на строку, бар — position:absolute внутри
+   трека с position:relative), без canvas и без Chart.js: геометрия здесь
+   у каждой строки своя (бар едет от предыдущего итога к новому), под неё
+   нет готового типа графика в Chart.js, который стоило бы натягивать.
+   Строится один раз, лениво, при первом переключении на этот вид: пока
+   панель скрыта через [data-sections-panel], измерять в ней нечего, да и
+   незачем — данные те же, что и у вида «По разделам». #}
 <script>
-  function buildWaterfallChart(canvas) {
-    if (typeof Chart === 'undefined' || Chart.getChart(canvas)) return;
-    var dataEl = document.getElementById(canvas.id + '-data');
+  function buildWaterfallList(container) {
+    if (container.dataset.built) return;
+    var dataEl = document.getElementById(container.id + '-data');
     if (!dataEl) return;
     var payload = JSON.parse(dataEl.textContent);
     var rows = payload.rows || [];
     if (!rows.length) return;
+    container.dataset.built = '1';
 
-    var rootStyle = getComputedStyle(document.documentElement);
-    var cssVar = function (name) { return rootStyle.getPropertyValue(name).trim(); };
-    var redColor = cssVar('--red');
-    var accentColor = cssVar('--accent');
-    var mutedColor = cssVar('--text-500');
-    var labelColor = cssVar('--text-100');
-    var gridColor = cssVar('--border');
-    var font = '600 12px ' + getComputedStyle(document.body).fontFamily;
-
-    // Нарастающий итог по уже готовому порядку строк — cum[0] = 0, каждая
-    // следующая строка плывёт от предыдущего итога к новому, а не от нуля.
-    var cum = 0;
-    var bars = rows.map(function (row) {
-      var from = cum;
-      cum += row.difference;
-      return { label: row.label, from: from, to: cum, display: row.display, dearer: row.dearer };
+    // Нарастающий итог — cum[0] = 0, cum[i] = cum[i-1] + delta строки i;
+    // строка i рисуется между cum[i-1] и cum[i], а не от общего нуля.
+    var cum = [0];
+    rows.forEach(function (row, i) {
+      cum.push(cum[i] + row.difference);
     });
-    var total = cum;
+    var total = cum[cum.length - 1];
 
-    var labels = bars.map(function (bar) { return bar.label; })
-      .concat(['Итого: «' + payload.right_name + '»' + (total > 0 ? ' дороже' : total < 0 ? ' дешевле' : '')]);
-    var ranges = bars.map(function (bar) { return [bar.from, bar.to]; }).concat([[0, total]]);
-    var displays = bars.map(function (bar) { return bar.display; }).concat([payload.total_display]);
-    var barColors = bars.map(function (bar) { return bar.dearer ? redColor : accentColor; }).concat([mutedColor]);
+    // Диапазон — от минимального до максимального нарастающего итога,
+    // включая исходный ноль; вырожденный случай (все дельты нулевые, весь
+    // ряд стоит на месте) не должен делить на ноль при переводе в проценты.
+    var domainMin = Math.min.apply(null, cum);
+    var domainMax = Math.max.apply(null, cum);
+    var range = domainMax - domainMin;
+    var pct = function (v) { return range ? (v - domainMin) / range * 100 : 50; };
 
-    // Диапазон осей — от минимального до максимального среди всех
-    // накопленных значений, включая cum = 0 в самом начале; вырожденный
-    // случай (все дельты нулевые, весь ряд стоит на месте) не должен делить
-    // на ноль при переводе значения в проценты.
-    var allValues = [0].concat(bars.map(function (bar) { return bar.to; }));
-    var domainMin = Math.min.apply(null, allValues);
-    var domainMax = Math.max.apply(null, allValues);
-    if (domainMax === domainMin) {
-      domainMin -= 1;
-      domainMax += 1;
+    function makeRow(label, from, to, display, colorClass, extraRowClass) {
+      var rowEl = document.createElement('div');
+      rowEl.className = 'waterfall-row' + (extraRowClass ? ' ' + extraRowClass : '');
+
+      var labelEl = document.createElement('div');
+      labelEl.className = 'waterfall-label';
+      labelEl.textContent = label;
+
+      var trackEl = document.createElement('div');
+      trackEl.className = 'waterfall-track';
+
+      var zeroEl = document.createElement('div');
+      zeroEl.className = 'waterfall-zero-line';
+      zeroEl.style.left = pct(0) + '%';
+      trackEl.appendChild(zeroEl);
+
+      var barEl = document.createElement('div');
+      barEl.className = 'waterfall-bar ' + colorClass;
+      barEl.style.left = pct(Math.min(from, to)) + '%';
+      barEl.style.width = (range ? Math.abs(to - from) / range * 100 : 0) + '%';
+      trackEl.appendChild(barEl);
+
+      var valueEl = document.createElement('div');
+      valueEl.className = 'waterfall-value ' + (to - from > 0 ? 'is-worse' : to - from < 0 ? 'is-better' : '');
+      valueEl.textContent = display;
+
+      rowEl.appendChild(labelEl);
+      rowEl.appendChild(trackEl);
+      rowEl.appendChild(valueEl);
+      return rowEl;
     }
 
-    var wrap = canvas.closest('.bar-chart-canvas-wrap');
-    if (wrap) {
-      wrap.style.height = Math.max(110, labels.length * 40 + 40) + 'px';
-    }
-
-    var measureCtx = canvas.getContext('2d');
-    measureCtx.font = font;
-    var valueGutter = displays.reduce(function (max, text) {
-      return Math.max(max, measureCtx.measureText(text).width);
-    }, 0);
-
-    new Chart(canvas, {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          data: ranges,
-          backgroundColor: barColors,
-          borderRadius: 3,
-          maxBarThickness: 26,
-        }],
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        layout: {
-          // Подпись значения — фиксированным правым столбцом, а не у края
-          // своего бара: у waterfall бары начинаются и заканчиваются в
-          // разных местах строка от строки, и подпись, приклеенная к краю,
-          // прыгала бы по всей ширине графика вместо того, чтобы стоять в
-          // одну линию, как сейчас у .delta-value.
-          padding: { right: Math.ceil(valueGutter) + 14 },
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) { return displays[ctx.dataIndex]; },
-            },
-          },
-        },
-        scales: {
-          x: { min: domainMin, max: domainMax, ticks: { display: false }, grid: { display: false } },
-          y: {
-            ticks: {
-              color: function (ctx) { return ctx.index === bars.length ? labelColor : mutedColor; },
-            },
-            grid: { display: false },
-          },
-        },
-      },
-      plugins: [{
-        id: 'waterfallDecorations',
-        afterDatasetsDraw: function (chart) {
-          var ctx = chart.ctx;
-          var area = chart.chartArea;
-          var scaleX = chart.scales.x;
-          var bars = chart.getDatasetMeta(0).data;
-
-          ctx.save();
-          // Вертикальная линия на нуле — не по центру, а там, где 0
-          // приходится после учёта всего диапазона (включая «Итого»).
-          var zeroX = scaleX.getPixelForValue(0);
-          ctx.strokeStyle = gridColor;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(zeroX, area.top);
-          ctx.lineTo(zeroX, area.bottom);
-          ctx.stroke();
-
-          // Тонкая граница над строкой «Итого» — отделяет её от разделов
-          // выше, как верхняя граница у аналогичной строки в других местах
-          // страницы.
-          var totalBar = bars[bars.length - 1];
-          var separatorY = totalBar.y - totalBar.height / 2 - 4;
-          ctx.strokeStyle = gridColor;
-          ctx.beginPath();
-          ctx.moveTo(area.left, separatorY);
-          ctx.lineTo(area.right, separatorY);
-          ctx.stroke();
-
-          ctx.fillStyle = labelColor;
-          ctx.font = font;
-          ctx.textBaseline = 'middle';
-          ctx.textAlign = 'right';
-          bars.forEach(function (bar, i) {
-            ctx.fillText(displays[i], area.right, bar.y);
-          });
-          ctx.restore();
-        },
-      }],
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (row, i) {
+      frag.appendChild(makeRow(
+        row.label, cum[i], cum[i + 1], row.display, row.dearer ? 'is-worse' : 'is-better',
+      ));
     });
+
+    var totalLabel = 'Итого: «' + payload.right_name + '»' + (total > 0 ? ' дороже' : total < 0 ? ' дешевле' : '');
+    frag.appendChild(makeRow(totalLabel, 0, total, payload.total_display, 'is-total', 'waterfall-total'));
+
+    container.appendChild(frag);
   }
 </script>
 
 {# По разделам / Накопительно — переключатель вида «Дельты по разделам».
-   При первом переключении на Накопительно строится canvas (см.
-   buildWaterfallChart выше). #}
+   При первом переключении на Накопительно строится список (см.
+   buildWaterfallList выше). #}
 <script>
   document.querySelectorAll('.sections-view-tabs').forEach(function (tabs) {
     var card = tabs.closest('.sections-card, .pair-card');
@@ -937,8 +869,8 @@
           other.setAttribute('aria-selected', other === button ? 'true' : 'false');
         });
         card.dataset.sectionsView = button.dataset.sectionsView;
-        var canvas = card.querySelector('canvas[data-waterfall]');
-        if (canvas) buildWaterfallChart(canvas);
+        var list = card.querySelector('[data-sections-panel="waterfall"]');
+        if (list) buildWaterfallList(list);
       });
     });
   });

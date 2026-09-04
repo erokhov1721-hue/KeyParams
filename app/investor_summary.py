@@ -1,10 +1,11 @@
 """Сводка для инвесторов: смета, прогнозируемое и подписанное удорожание
 по каждому объекту, и дельта между ними.
 
-Ничего здесь не читает файлы и не знает про Flask — три словаря
-(смета, отчёт по удорожанию, прогноз ВИС) уже собраны в другом месте
-(``app.routes``, теми же функциями, что читают их для страницы объекта
-и страницы сравнения), этот модуль только сводит их в строки таблицы.
+Ничего здесь не читает файлы и не знает про Flask — три словаря (смета,
+отчёт по удорожанию, отчёт по прогнозируемому удорожанию) уже собраны в
+другом месте (``app.routes``, теми же функциями, что читают их для страницы
+объекта и страницы сравнения), этот модуль только сводит их в строки
+таблицы.
 """
 
 from .passport import format_number
@@ -63,8 +64,8 @@ def _sum_known(rows, key):
 def _row(slug, label, estimate_totals, report, predicted):
     estimate = _estimate_total(estimate_totals)
     signed = _signed_overrun(report)
-    # Прогноз ВИС приходит ``Decimal`` из реестра — тот же перевод, что и у
-    # сметы и у подписанного удорожания выше.
+    # Прогноз приходит ``Decimal`` из отчёта по прогнозируемому удорожанию —
+    # тот же перевод, что и у сметы и у подписанного удорожания выше.
     predicted = float(predicted) if predicted is not None else None
     delta = predicted - signed if predicted is not None and signed is not None else None
     return {
@@ -101,21 +102,22 @@ def _total_row(rows):
 
 
 def build_table(slugs, project_names, estimate_totals_by_slug,
-                 cost_increase_reports_by_slug, vis_overrun_by_slug):
+                 cost_increase_reports_by_slug, predicted_increase_by_slug):
     """Строки инвесторской сводки, отсортированные по названию объекта, и
     итоговая строка под ними.
 
     ``project_names`` — ``{slug: имя}``. ``estimate_totals_by_slug`` —
     ``{slug: {раздел: сумма}}``, как отдаёт ``excel_report.estimate_costs``.
     ``cost_increase_reports_by_slug`` — ``{slug: cost_increase.Report |
-    None}``. ``vis_overrun_by_slug`` — ``{slug: Decimal}``, только для
-    объектов, которых реестр ВИС сопоставил хоть с одной своей строкой.
+    None}``. ``predicted_increase_by_slug`` — ``{slug: Decimal}``, итог
+    ``predicted_increase.Report`` для объектов, у которых загружен файл
+    прогнозируемого удорожания.
     """
     rows = [
         _row(
             slug, project_names.get(slug, slug),
             estimate_totals_by_slug.get(slug), cost_increase_reports_by_slug.get(slug),
-            vis_overrun_by_slug.get(slug),
+            predicted_increase_by_slug.get(slug),
         )
         for slug in slugs
     ]

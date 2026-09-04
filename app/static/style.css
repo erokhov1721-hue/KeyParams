@@ -544,6 +544,22 @@ h1 {
   margin-top: 20px;
 }
 
+.wizard-step-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-400);
+  margin: 0 0 18px;
+}
+
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 /* Project list */
 
 .list-card {
@@ -1886,9 +1902,9 @@ select option {
 }
 
 /* Переключатель вида «Дельта по разделам»: По разделам (текущие
-   параллельные бары) / Накопительно (waterfall, на canvas). В отличие от
+   параллельные бары) / Накопительно (waterfall, чистый DOM). В отличие от
    тепловой карты выше это не перекраска одних и тех же ячеек, а два
-   разных блока разметки — .delta-list и .bar-chart-canvas-wrap — общий
+   разных блока разметки — .delta-list и .waterfall-list — общий
    [data-sections-panel] показывает/прячет нужный по значению
    data-sections-view на карточке. */
 [data-sections-panel="waterfall"] {
@@ -2448,6 +2464,92 @@ select option {
 
 .delta-value.is-better {
   color: var(--accent);
+}
+
+/* Накопительно (waterfall) — второй вид того же блока. Каждая строка — три
+   flex-колонки: название (фикс. ширина), трек (резиновый, с плавающим
+   баром) и значение (фикс. ширина). Бар в отличие от .delta-fill выше не
+   стартует от общей оси: он едет между двумя нарастающими итогами, поэтому
+   его положение и ширина считаются в JS (buildWaterfallList в
+   compare.html) и приходят как inline left/width в процентах трека. */
+.waterfall-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.waterfall-label {
+  width: 230px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-500);
+}
+
+.waterfall-track {
+  flex: 1;
+  position: relative;
+  height: 16px;
+  background: var(--bg-700);
+  border-radius: 4px;
+}
+
+.waterfall-zero-line {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+}
+
+.waterfall-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.waterfall-bar.is-worse {
+  background: var(--red);
+}
+
+.waterfall-bar.is-better {
+  background: var(--accent);
+}
+
+.waterfall-bar.is-total {
+  background: var(--text-500);
+}
+
+.waterfall-value {
+  width: 100px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.waterfall-value.is-worse {
+  color: var(--red);
+}
+
+.waterfall-value.is-better {
+  color: var(--accent);
+}
+
+/* Строка «Итого» — отделена сверху и не в счёт «по разделам»: это сумма
+   всех дельт, а не ещё один раздел, отсюда и нейтральный серый бар выше,
+   и обычный (не приглушённый) вес подписи здесь. */
+.waterfall-total {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.waterfall-total .waterfall-label {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-100);
 }
 
 /* --- Адаптив страницы сравнения --- */

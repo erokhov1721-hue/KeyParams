@@ -60,25 +60,22 @@ def contract_terms_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "contract_terms.pdf"
 
 
+def kp_path(root: Path, slug: str) -> Path:
+    return raw_dir(root, slug) / "kp.xlsx"
+
+
+def predicted_increase_path(root: Path, slug: str) -> Path:
+    """The project's predicted cost-increase workbook — one per project,
+    always the latest one, replaced wholesale the same way as
+    ``cost_increase_path``."""
+    return raw_dir(root, slug) / "predicted_increase.xlsx"
+
+
 def cost_increase_path(root: Path, slug: str) -> Path:
     """The project's cost-increase workbook. One file, always the latest one:
     it is kept cumulatively, so a newer version supersedes the previous one
     outright and keeping the old ones would only invite adding them up."""
     return raw_dir(root, slug) / "udorozhanie.xlsx"
-
-
-# The claims-registry workbook behind "Прогнозируемое удорожание" — one
-# shared file, not tied to any project, so it lives in its own directory
-# alongside the per-project ones rather than inside one of them.
-# ``list_project_slugs`` only picks up directories that have a passport.json
-# (see below), so this sits safely next to the real projects without ever
-# being mistaken for one.
-def reestr_vis_dir(root: Path) -> Path:
-    return root / "_reestr_vis"
-
-
-def reestr_vis_path(root: Path) -> Path:
-    return reestr_vis_dir(root) / "reestr_vis.xlsx"
 
 
 COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")

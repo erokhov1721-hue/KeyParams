@@ -36,12 +36,7 @@ NOTE_NO_AREA = "рубли, не ₽/м²: общая площадь неизв�
 NOTE_NO_VAT = "без поправки на НДС: ставка неизвестна"
 NOTE_NO_YEAR = "без поправки на инфляцию: год подписания неизвестен"
 NOTE_NO_INCREASE = "без файла удорожания"
-NOTE_NO_VIS_OVERRUN = "нет данных ВИС для этого проекта"
-
-# The claims registry (app.vis_reestr) only ever forecasts an
-# engineering-systems ("ВИС") overrun — there's no column in it naming any
-# other section — so that's the only section its money can extend.
-VIS_OVERRUN_SECTION_KEY = "utilities"
+NOTE_NO_PREDICTED_INCREASE = "нет файла прогнозируемого удорожания"
 
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
@@ -428,83 +423,39 @@ def _apply_increase(slugs, costs_by_slug, reports):
     return merged, notes
 
 
-_NAME_TOKEN_RE = re.compile(r"[0-9a-zа-яё]+", re.IGNORECASE)
+def _apply_predicted_increase(slugs, costs_by_slug, predicted_increase_by_slug):
+    """``costs_by_slug`` with each project's predicted cost-increase file
+    (``{slug: {section_key: Decimal}}``, straight from
+    ``predicted_increase.Report.rows``) added onto the matching sections —
+    unlike the old VIS claims registry, this file prices every kind of work
+    it covers, not just engineering systems, so each figure lands on its own
+    line rather than all of it going to one.
 
-
-def _name_tokens(text):
-    """A name's words, lowercased — for matching against the VIS registry's
-    own free-text "объект" field.
-
-    A KeyParams project name usually carries more than the registry's own,
-    shorter name for the same object — "Тушино 1 Cityzen" here against
-    "Тушино 1" there — so an exact string match missed it. Matched as
-    whole words rather than a raw substring too: "Тушино 1" is a substring
-    of "Тушино 12" as bare characters, and would wrongly match a different
-    building the same way.
+    A project with no predicted-increase file keeps its section figures as
+    they are and gets ``NOTE_NO_PREDICTED_INCREASE``, the same way a project
+    with no cost-increase file is noted under ``_apply_increase`` rather
+    than left looking untouched by coincidence.
     """
-    return {t.lower() for t in _NAME_TOKEN_RE.findall(str(text or ""))}
-
-
-def vis_overrun_by_slug(slugs, passports, price_increase_rows):
-    """``{slug: Decimal}`` — each project's VIS claims-registry
-    cost-overrun forecast (``app.vis_reestr.build_analytics``'s
-    ``price_increase``), matched to a project by its name against the
-    registry's "объект" column.
-
-    A match is made whenever one name's words are entirely contained in the
-    other's, in either direction — not merely overlapping: money is at
-    stake, and a match on a single shared word risks crediting one
-    project's overrun to an unrelated one that just happens to share it
-    ("Тушино 1" and "Мира Тушино" share "тушино" but name different
-    objects; neither one's words fully contain the other's). A project the
-    registry names nothing for is simply absent from the result, same as
-    one with no estimate at all.
-    """
-    registry = [
-        (_name_tokens(row["name"]), row["sum"])
-        for row in price_increase_rows
-    ]
-    result = {}
-    for slug in slugs:
-        project_tokens = _name_tokens(passports[slug].get("project_name"))
-        if not project_tokens:
-            continue
-        for vis_tokens, overrun in registry:
-            if vis_tokens and (vis_tokens <= project_tokens or project_tokens <= vis_tokens):
-                result[slug] = overrun
-                break
-    return result
-
-
-def _apply_vis_overrun(slugs, costs_by_slug, vis_overrun_by_slug):
-    """``costs_by_slug`` with each project's VIS cost-overrun forecast (see
-    ``vis_overrun_by_slug`` above) added onto its "Инженерные системы"
-    figure.
-
-    A project the registry has no matching object for keeps its section
-    figures as they are and gets ``NOTE_NO_VIS_OVERRUN``, the same way a
-    project with no cost-increase file is noted under ``_apply_increase``
-    rather than left looking untouched by coincidence.
-    """
-    vis_overrun_by_slug = vis_overrun_by_slug or {}
+    predicted_increase_by_slug = predicted_increase_by_slug or {}
     merged = dict(costs_by_slug)
     notes = {}
     for slug in slugs:
         costs = costs_by_slug.get(slug)
-        overrun = vis_overrun_by_slug.get(slug)
-        if overrun is None:
+        by_section = predicted_increase_by_slug.get(slug)
+        if not by_section:
             if costs:
-                notes[slug] = NOTE_NO_VIS_OVERRUN
+                notes[slug] = NOTE_NO_PREDICTED_INCREASE
             continue
         costs = dict(costs or {})
-        costs[VIS_OVERRUN_SECTION_KEY] = costs.get(VIS_OVERRUN_SECTION_KEY, 0.0) + float(overrun)
+        for key, amount in by_section.items():
+            costs[key] = costs.get(key, 0.0) + float(amount)
         merged[slug] = costs
     return merged, notes
 
 
 def build_section_table(
     slugs, passports, costs_by_slug, adjustments, reports=None, use_increase=False,
-    vis_overrun_by_slug=None, use_vis_overrun=False,
+    predicted_increase_by_slug=None, use_predicted_increase=False,
 ):
     """The section-by-section comparison, or None when there is nothing to show.
 
@@ -516,25 +467,27 @@ def build_section_table(
     same underlying figures the удорожание block already computes from
     ``reports``, just folded into this table instead of shown apart from it.
 
-    ``use_vis_overrun`` adds each project's VIS claims-registry cost-overrun
-    forecast onto its "Инженерные системы" figure (see ``_apply_vis_overrun``)
-    — independent of ``use_increase``: on top of the swapped "стало" figure
+    ``use_predicted_increase`` adds each project's predicted cost-increase
+    file onto the sections it prices (see ``_apply_predicted_increase``) —
+    independent of ``use_increase``: on top of the swapped "стало" figure
     where both are on, on top of the plain estimate where only this one is.
     """
     costs_by_slug = _as_float_costs(costs_by_slug)
     increase_notes = {}
     if use_increase:
         costs_by_slug, increase_notes = _apply_increase(slugs, costs_by_slug, reports)
-    vis_notes = {}
-    if use_vis_overrun:
-        costs_by_slug, vis_notes = _apply_vis_overrun(slugs, costs_by_slug, vis_overrun_by_slug)
+    predicted_notes = {}
+    if use_predicted_increase:
+        costs_by_slug, predicted_notes = _apply_predicted_increase(
+            slugs, costs_by_slug, predicted_increase_by_slug,
+        )
     if not any(costs_by_slug.get(slug) for slug in slugs):
         return None
 
     columns = [
         _column(
             slug, passports[slug], costs_by_slug.get(slug) or {}, adjustments,
-            extra_notes=(increase_notes.get(slug), vis_notes.get(slug)),
+            extra_notes=(increase_notes.get(slug), predicted_notes.get(slug)),
         )
         for slug in slugs
     ]
@@ -583,7 +536,7 @@ def build_section_table(
         "total": {"label": "Итого СМР", "cells": total},
         "adjustments": adjustments,
         "use_increase": use_increase,
-        "use_vis_overrun": use_vis_overrun,
+        "use_predicted_increase": use_predicted_increase,
     }
 
 

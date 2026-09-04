@@ -11,7 +11,7 @@ from flask import (
 from . import (
     chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
     extractors, investor_summary, passport as passport_module, pdf_export, pdf_reader,
-    project_filter, storage, upload_guard, vis_reestr, workbook_cache,
+    predicted_increase, project_filter, storage, upload_guard, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -19,6 +19,7 @@ bp = Blueprint("main", __name__)
 
 ALLOWED_EXTENSION = ".docx"
 ALLOWED_ESTIMATE_EXTENSION = ".xlsx"
+ALLOWED_KP_EXTENSION = ".xlsx"
 ALLOWED_COVER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_COVER_SIZE = 5 * 1024 * 1024
 ALLOWED_CONTRACT_TERMS_EXTENSION = ".pdf"
@@ -175,10 +176,9 @@ def compare_projects():
     # чтение тех же файлов ничего нового не даёт.
     increase_reports = _increase_reports(root, slugs, costs)
     use_increase = bool(request.args.get("increase_on"))
-    vis_overrun = comparison.vis_overrun_by_slug(
-        slugs, passports, _vis_price_increase_rows(root),
-    )
-    use_vis_overrun = bool(request.args.get("vis_overrun_on"))
+    predicted_reports = _predicted_increase_reports(root, slugs)
+    predicted_increase_sections = _predicted_increase_by_section(predicted_reports)
+    use_predicted_increase = bool(request.args.get("predicted_increase_on"))
     left, right = _pair_choice(slugs)
     charts, colors = _comparison_charts(root, slugs, passports)
     group_by = _averages_group_by(request.args)
@@ -199,7 +199,8 @@ def compare_projects():
         sections=comparison.build_section_table(
             slugs, passports, costs, adjustments,
             reports=increase_reports, use_increase=use_increase,
-            vis_overrun_by_slug=vis_overrun, use_vis_overrun=use_vis_overrun,
+            predicted_increase_by_slug=predicted_increase_sections,
+            use_predicted_increase=use_predicted_increase,
         ),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
@@ -320,24 +321,41 @@ def _section_costs(root, slugs):
     return {slug: excel_report.estimate_costs(root, slug)[0] for slug in slugs}
 
 
-def _vis_price_increase_rows(root):
-    """The VIS claims registry's per-object cost-overrun forecast —
-    ``[{"name": ..., "sum": Decimal}, ...]`` — or ``[]`` when the registry
-    hasn't been uploaded or can't be read.
-
-    Empty rather than an error: this only feeds one optional toggle on the
-    comparison page, so a missing or broken registry should leave that
-    toggle inert (no project matches anything) rather than take the whole
-    comparison down the way an unreadable estimate would.
+def _predicted_increase_reports(root, slugs):
+    """Each project's predicted cost-increase report, or None for a project
+    with no file, or one that couldn't be read — same shape as
+    ``_increase_reports``, and for the same reason: one broken file must
+    not take the whole comparison or investor summary down with it.
     """
-    path = storage.reestr_vis_path(root)
-    if not path.exists():
-        return []
-    try:
-        records = vis_reestr.parse_records_cached(path)
-    except vis_reestr.VisReestrError:
-        return []
-    return vis_reestr.build_analytics(records)["price_increase"]
+    reports = {}
+    for slug in slugs:
+        path = storage.predicted_increase_path(root, slug)
+        if not path.exists():
+            reports[slug] = None
+            continue
+        try:
+            reports[slug] = predicted_increase.read_report(path)
+        except predicted_increase.PredictedIncreaseError as e:
+            current_app.logger.warning(
+                "Проект «%s»: файл прогнозируемого удорожания не прочитан: %s", slug, e
+            )
+            reports[slug] = None
+    return reports
+
+
+def _predicted_increase_by_section(reports):
+    """``{slug: {section_key: Decimal}}`` from ``_predicted_increase_reports``
+    — what ``comparison.build_section_table`` adds onto each section."""
+    return {
+        slug: {row.key: row.amount for row in report.rows}
+        for slug, report in reports.items() if report
+    }
+
+
+def _predicted_increase_totals(reports):
+    """``{slug: Decimal}`` — each project's predicted-increase grand total,
+    what the investor summary shows."""
+    return {slug: report.total.amount for slug, report in reports.items() if report}
 
 
 @bp.route("/compare/pdf", methods=["GET"])
@@ -359,10 +377,9 @@ def compare_projects_pdf():
     costs = _section_costs(root, slugs)
     increase_reports = _increase_reports(root, slugs, costs)
     use_increase = bool(request.args.get("increase_on"))
-    vis_overrun = comparison.vis_overrun_by_slug(
-        slugs, passports, _vis_price_increase_rows(root),
-    )
-    use_vis_overrun = bool(request.args.get("vis_overrun_on"))
+    predicted_reports = _predicted_increase_reports(root, slugs)
+    predicted_increase_sections = _predicted_increase_by_section(predicted_reports)
+    use_predicted_increase = bool(request.args.get("predicted_increase_on"))
     left, right = _pair_choice(slugs)
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
@@ -385,7 +402,8 @@ def compare_projects_pdf():
         sections=comparison.build_section_table(
             slugs, passports, costs, adjustments,
             reports=increase_reports, use_increase=use_increase,
-            vis_overrun_by_slug=vis_overrun, use_vis_overrun=use_vis_overrun,
+            predicted_increase_by_slug=predicted_increase_sections,
+            use_predicted_increase=use_predicted_increase,
         ),
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
@@ -396,6 +414,7 @@ def compare_projects_pdf():
             slugs, passports, costs, adjustments,
             group_by=_averages_group_by(request.args),
         ),
+        project_colors=passport_module.project_colors(slugs),
     )
     return Response(
         pdf_bytes,
@@ -479,93 +498,6 @@ def compare_vs_average_pdf():
     )
 
 
-def _parse_query_date(value):
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-@bp.route("/predicted-overrun", methods=["GET"])
-def predicted_overrun():
-    root = _projects_root()
-    path = storage.reestr_vis_path(root)
-    date_from_raw = request.args.get("date_from", "")
-    date_to_raw = request.args.get("date_to", "")
-    date_from = _parse_query_date(date_from_raw)
-    date_to = _parse_query_date(date_to_raw)
-
-    def render(**extra):
-        return render_template(
-            "predicted_overrun.html",
-            date_from=date_from_raw, date_to=date_to_raw,
-            reestr_problem=vis_reestr.PROBLEM_MESSAGES.get(request.args.get("reestr_problem")),
-            format_number=passport_module.format_number,
-            **extra,
-        )
-
-    if not path.exists():
-        return render(has_file=False, error=None)
-
-    try:
-        records = vis_reestr.parse_records_cached(path)
-        analytics = vis_reestr.build_analytics(records, date_from, date_to)
-    except vis_reestr.VisReestrError as e:
-        return render(has_file=True, error=str(e))
-
-    analytics["requests_by_object"] = vis_reestr.finalize_requests_by_object(
-        analytics["requests_by_object"][:15]
-    )
-    analytics["price_increase"] = vis_reestr.finalize_price_increase(
-        analytics["price_increase"][:10]
-    )
-    analytics["by_type"] = vis_reestr.finalize_breakdown(analytics["by_type"])
-    analytics["by_status"] = vis_reestr.finalize_breakdown(analytics["by_status"])
-
-    return render(has_file=True, error=None, analytics=analytics)
-
-
-@bp.route("/predicted-overrun/upload", methods=["POST"])
-def upload_vis_reestr():
-    """Загрузить или заменить файл реестра претензий ВИС.
-
-    Тот же порядок, что и у файла удорожания проекта: сначала файл читается
-    и только потом сохраняется, чтобы неудачная замена не стирала прежний,
-    рабочий файл.
-    """
-    root = _projects_root()
-    xlsx_file = request.files.get("reestr_file")
-    if not xlsx_file or not xlsx_file.filename:
-        abort(400)
-
-    def refuse(code):
-        return redirect(url_for("main.predicted_overrun", reestr_problem=code))
-
-    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
-        return refuse("format")
-
-    data = xlsx_file.read()
-    if len(data) > MAX_COST_INCREASE_SIZE:
-        return refuse("too_big")
-    if not upload_guard.is_office_zip(io.BytesIO(data)):
-        return refuse("format")
-    try:
-        vis_reestr.parse_records(io.BytesIO(data))
-    except vis_reestr.VisReestrError as e:
-        current_app.logger.warning("Файл реестра ВИС отклонён: %s", e)
-        return refuse("unreadable")
-
-    dest = storage.reestr_vis_path(root)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".upload")
-    tmp.write_bytes(data)
-    tmp.replace(dest)
-    workbook_cache.invalidate(dest)
-    return redirect(url_for("main.predicted_overrun"))
-
-
 @bp.route("/investors", methods=["GET"])
 def investor_summary_page():
     """Сводка для инвесторов: смета, прогнозируемое и подписанное
@@ -587,7 +519,7 @@ def investor_summary_page():
             slug: _cost_increase_report(root, slug, estimate_totals[slug])
             for slug in slugs
         },
-        comparison.vis_overrun_by_slug(slugs, passports, _vis_price_increase_rows(root)),
+        _predicted_increase_totals(_predicted_increase_reports(root, slugs)),
     )
     return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
 
@@ -604,8 +536,11 @@ def create_project():
     dgp_file = request.files.get("dgp_file")
     tz_file = request.files.get("tz_file")
     smeta_file = request.files.get("smeta_file")
+    kp_file = request.files.get("kp_file")
     contract_terms_file = request.files.get("contract_terms_file")
     cover_file = request.files.get("cover_file")
+    cost_increase_file = request.files.get("cost_increase_file")
+    predicted_increase_file = request.files.get("predicted_increase_file")
 
     if not project_name:
         return render_template("new_project.html", error="Введите название проекта"), 400
@@ -628,6 +563,13 @@ def create_project():
     if has_smeta and not upload_guard.is_office_zip(smeta_file):
         return render_template(
             "new_project.html", error="Файл сметы повреждён или не является настоящим .xlsx",
+        ), 400
+    has_kp = bool(kp_file and kp_file.filename)
+    if has_kp and not kp_file.filename.lower().endswith(ALLOWED_KP_EXTENSION):
+        return render_template("new_project.html", error="КП должно быть в формате .xlsx"), 400
+    if has_kp and not upload_guard.is_office_zip(kp_file):
+        return render_template(
+            "new_project.html", error="Файл КП повреждён или не является настоящим .xlsx",
         ), 400
     has_contract_terms = bool(contract_terms_file and contract_terms_file.filename)
     if has_contract_terms:
@@ -654,6 +596,67 @@ def create_project():
         problem = _cover_problem(cover_file)
         if problem:
             return render_template("new_project.html", error=problem), 400
+
+    has_cost_increase = bool(cost_increase_file and cost_increase_file.filename)
+    cost_increase_data = None
+    cost_increase_lines = None
+    if has_cost_increase:
+        if not cost_increase_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+            return render_template(
+                "new_project.html", error="Файл удорожания должен быть в формате .xlsx",
+            ), 400
+        cost_increase_data = cost_increase_file.read()
+        if len(cost_increase_data) > MAX_COST_INCREASE_SIZE:
+            return render_template(
+                "new_project.html", error="Файл удорожания слишком большой — до 15 МБ",
+            ), 400
+        if not upload_guard.is_office_zip(io.BytesIO(cost_increase_data)):
+            return render_template(
+                "new_project.html",
+                error="Файл удорожания повреждён или не является настоящим .xlsx",
+            ), 400
+        try:
+            cost_increase_lines = cost_increase.read_lines(io.BytesIO(cost_increase_data))
+        except cost_increase.CostIncreaseError as e:
+            current_app.logger.warning("Файл удорожания отклонён: %s", e)
+            return render_template(
+                "new_project.html",
+                error="Не удалось прочитать файл удорожания — нужна таблица со столбцами «было» и «стало»",
+            ), 400
+
+    has_predicted_increase = bool(predicted_increase_file and predicted_increase_file.filename)
+    predicted_increase_data = None
+    predicted_increase_lines = None
+    if has_predicted_increase:
+        if not predicted_increase_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+            return render_template(
+                "new_project.html",
+                error="Файл прогнозируемого удорожания должен быть в формате .xlsx",
+            ), 400
+        predicted_increase_data = predicted_increase_file.read()
+        if len(predicted_increase_data) > MAX_COST_INCREASE_SIZE:
+            return render_template(
+                "new_project.html",
+                error="Файл прогнозируемого удорожания слишком большой — до 15 МБ",
+            ), 400
+        if not upload_guard.is_office_zip(io.BytesIO(predicted_increase_data)):
+            return render_template(
+                "new_project.html",
+                error="Файл прогнозируемого удорожания повреждён или не является настоящим .xlsx",
+            ), 400
+        try:
+            predicted_increase_lines = predicted_increase.read_lines(
+                io.BytesIO(predicted_increase_data)
+            )
+        except predicted_increase.PredictedIncreaseError as e:
+            current_app.logger.warning("Файл прогнозируемого удорожания отклонён: %s", e)
+            return render_template(
+                "new_project.html",
+                error=(
+                    "Не удалось прочитать файл прогнозируемого удорожания — нужна "
+                    "таблица со столбцом «Предполагаемое ДС» по видам работ"
+                ),
+            ), 400
 
     try:
         slug, staging_root = storage.begin_project(root, project_name)
@@ -694,6 +697,33 @@ def create_project():
                 "new_project.html",
                 error="Не удалось прочитать смету — убедитесь, что это корректный файл .xlsx",
             ), 400
+
+    if has_kp:
+        kp_file.save(storage.kp_path(staging_root, slug))
+
+    if has_cost_increase:
+        # Same logging as the standalone upload: if the number on the page
+        # is ever questioned, the log shows what the program got from this
+        # file at upload time.
+        report = cost_increase.build_report(
+            cost_increase_lines, _estimate_totals(staging_root, slug),
+        )
+        current_app.logger.info(
+            "Проект «%s»: удорожание %.2f руб. от %s",
+            project_name, report.total.delta,
+            "сметы" if report.from_estimate else "столбца «было»",
+        )
+        storage.cost_increase_path(staging_root, slug).write_bytes(cost_increase_data)
+
+    if has_predicted_increase:
+        report = predicted_increase.build_report(predicted_increase_lines)
+        current_app.logger.info(
+            "Проект «%s»: прогнозируемое удорожание %.2f руб.",
+            project_name, report.total.amount,
+        )
+        storage.predicted_increase_path(staging_root, slug).write_bytes(
+            predicted_increase_data
+        )
 
     try:
         data = passport_module.build_passport(project_name, dgp_path, tz_path)
@@ -891,6 +921,23 @@ def _cost_increase_report(root, slug, estimate_totals=None):
         return None
 
 
+def _predicted_increase_report(root, slug):
+    """Прогнозируемое удорожание по видам работ для одного проекта, или
+    None, если файла нет или прочитать его не удалось — та же логика, что
+    и у ``_cost_increase_report``, для того же файла, только про
+    предполагаемую, а не подписанную сумму."""
+    path = storage.predicted_increase_path(root, slug)
+    if not path.exists():
+        return None
+    try:
+        return predicted_increase.read_report(path)
+    except predicted_increase.PredictedIncreaseError as e:
+        current_app.logger.warning(
+            "Не удалось прочитать файл прогнозируемого удорожания: %s", e
+        )
+        return None
+
+
 @bp.route("/projects/<slug>", methods=["GET"])
 def project_page(slug):
     root = _projects_root()
@@ -939,6 +986,11 @@ def project_page(slug):
         format_delta=cost_increase.format_delta,
         cost_increase_problem=cost_increase.PROBLEM_MESSAGES.get(
             request.args.get("increase")
+        ),
+        has_predicted_increase=storage.predicted_increase_path(root, slug).exists(),
+        predicted_increase_report=_predicted_increase_report(root, slug),
+        predicted_increase_problem=predicted_increase.PROBLEM_MESSAGES.get(
+            request.args.get("predicted_increase")
         ),
         dgp_problem=passport_module.DGP_PROBLEM_MESSAGES.get(request.args.get("dgp")),
         estimate_problem=estimate.PROBLEM_MESSAGES.get(request.args.get("estimate")),
@@ -1122,6 +1174,48 @@ def upload_cost_increase(slug):
     )
 
     storage.cost_increase_path(root, slug).write_bytes(data)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/predicted-increase", methods=["POST"])
+def upload_predicted_increase(slug):
+    """Загрузить или заменить файл прогнозируемого удорожания.
+
+    Тот же порядок, что и у файла удорожания: файл сначала читается и
+    только потом сохраняется, чтобы неудачная замена не стирала прежний,
+    рабочий файл.
+    """
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    xlsx_file = request.files.get("predicted_increase_file")
+    if not xlsx_file or not xlsx_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.project_page", slug=slug, predicted_increase=code))
+
+    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return refuse("format")
+
+    data = xlsx_file.read()
+    if len(data) > MAX_COST_INCREASE_SIZE:
+        return refuse("too_big")
+    if not upload_guard.is_office_zip(io.BytesIO(data)):
+        return refuse("format")
+    try:
+        lines = predicted_increase.read_lines(io.BytesIO(data))
+    except predicted_increase.PredictedIncreaseError as e:
+        current_app.logger.warning("Файл прогнозируемого удорожания отклонён: %s", e)
+        return refuse("unreadable")
+
+    report = predicted_increase.build_report(lines)
+    current_app.logger.info(
+        "Проект «%s»: прогнозируемое удорожание %.2f руб.", slug, report.total.amount,
+    )
+
+    storage.predicted_increase_path(root, slug).write_bytes(data)
     return redirect(url_for("main.project_page", slug=slug))
 
 

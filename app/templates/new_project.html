@@ -17,77 +17,146 @@
   {% endif %}
   <form method="post" action="{{ url_for('main.create_project') }}" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="field">
-      <label for="project_name">Название проекта</label>
-      <input type="text" id="project_name" name="project_name" placeholder="Например, Проспект Мира" autocomplete="off">
+
+    <div class="wizard-step" data-step="1">
+      <p class="wizard-step-label">Этап 1 из 3 &middot; Данные тендера</p>
+
+      <div class="field">
+        <label for="project_name">Название проекта</label>
+        <input type="text" id="project_name" name="project_name" placeholder="Например, Проспект Мира" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="kp_file">КП компании (то, что подали на тендере), .xlsx</label>
+        <label class="file-drop" for="kp_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+        </label>
+        <input class="file-input" type="file" id="kp_file" name="kp_file" accept=".xlsx">
+      </div>
+
+      <div class="field">
+        <label for="contract_terms_file">Протокол окончательных условий (необязательно), .pdf</label>
+        <label class="file-drop" for="contract_terms_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .pdf">Выберите файл .pdf</span>
+        </label>
+        <input class="file-input" type="file" id="contract_terms_file" name="contract_terms_file" accept=".pdf">
+        <span class="field-hint">
+          Если протокол — скан, программа распознает его сама, обычно за пару
+          секунд. На компьютере без встроенного распознавания это может занять
+          несколько минут.
+        </span>
+      </div>
+
+      <button type="button" class="btn btn-primary btn-block wizard-nav" data-goto="2">Далее</button>
     </div>
 
-    <div class="field">
-      <label for="cover_file">Фото объекта (необязательно), JPG, PNG или WEBP</label>
-      <label class="file-drop" for="cover_file">
-        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/>
-          <circle cx="12" cy="13" r="3.2"/>
-        </svg>
-        <span class="file-drop-text" data-placeholder="Выберите изображение">Выберите изображение</span>
-      </label>
-      <input class="file-input" type="file" id="cover_file" name="cover_file" accept=".jpg,.jpeg,.png,.webp">
+    <div class="wizard-step" data-step="2" style="display: none;">
+      <p class="wizard-step-label">Этап 2 из 3 &middot; Договор и техническая документация</p>
+
+      <div class="field">
+        <label for="dgp_file">Договор генподряда (ДГП), .docx</label>
+        <label class="file-drop" for="dgp_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .docx">Выберите файл .docx</span>
+        </label>
+        <input class="file-input" type="file" id="dgp_file" name="dgp_file" accept=".docx">
+      </div>
+
+      <div class="field">
+        <label for="tz_file">Техническое задание (ТЗ), .docx</label>
+        <label class="file-drop" for="tz_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .docx">Выберите файл .docx</span>
+        </label>
+        <input class="file-input" type="file" id="tz_file" name="tz_file" accept=".docx">
+      </div>
+
+      <div class="field">
+        <label for="smeta_file">Смета (необязательно), .xlsx</label>
+        <label class="file-drop" for="smeta_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+        </label>
+        <input class="file-input" type="file" id="smeta_file" name="smeta_file" accept=".xlsx">
+      </div>
+
+      <div class="field">
+        <label for="cover_file">Фото объекта (необязательно), JPG, PNG или WEBP</label>
+        <label class="file-drop" for="cover_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/>
+            <circle cx="12" cy="13" r="3.2"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите изображение">Выберите изображение</span>
+        </label>
+        <input class="file-input" type="file" id="cover_file" name="cover_file" accept=".jpg,.jpeg,.png,.webp">
+      </div>
+
+      <div class="wizard-actions">
+        <button type="button" class="btn btn-secondary wizard-nav" data-goto="1">Назад</button>
+        <button type="button" class="btn btn-primary wizard-nav" data-goto="3">Далее</button>
+      </div>
     </div>
 
-    <div class="field">
-      <label for="dgp_file">Договор генподряда (ДГП), .docx</label>
-      <label class="file-drop" for="dgp_file">
-        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
-          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-        </svg>
-        <span class="file-drop-text" data-placeholder="Выберите файл .docx">Выберите файл .docx</span>
-      </label>
-      <input class="file-input" type="file" id="dgp_file" name="dgp_file" accept=".docx">
-    </div>
+    <div class="wizard-step" data-step="3" style="display: none;">
+      <p class="wizard-step-label">Этап 3 из 3 &middot; Удорожание</p>
 
-    <div class="field">
-      <label for="tz_file">Техническое задание (ТЗ), .docx</label>
-      <label class="file-drop" for="tz_file">
-        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
-          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-        </svg>
-        <span class="file-drop-text" data-placeholder="Выберите файл .docx">Выберите файл .docx</span>
-      </label>
-      <input class="file-input" type="file" id="tz_file" name="tz_file" accept=".docx">
-    </div>
+      <div class="field">
+        <label for="cost_increase_file">Подписанное удорожание (необязательно), .xlsx</label>
+        <label class="file-drop" for="cost_increase_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+        </label>
+        <input class="file-input" type="file" id="cost_increase_file" name="cost_increase_file" accept=".xlsx">
+        <span class="field-hint">
+          Нужна таблица со столбцами «было» и «стало» по видам работ — она
+          и дальше видна на странице проекта как «Удорожание объекта» и
+          заменяется этим же способом.
+        </span>
+      </div>
 
-    <div class="field">
-      <label for="smeta_file">Смета (необязательно), .xlsx</label>
-      <label class="file-drop" for="smeta_file">
-        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
-          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-        </svg>
-        <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
-      </label>
-      <input class="file-input" type="file" id="smeta_file" name="smeta_file" accept=".xlsx">
-    </div>
+      <div class="field">
+        <label for="predicted_increase_file">Прогнозируемое удорожание (необязательно), .xlsx</label>
+        <label class="file-drop" for="predicted_increase_file">
+          <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+          </svg>
+          <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+        </label>
+        <input class="file-input" type="file" id="predicted_increase_file" name="predicted_increase_file" accept=".xlsx">
+        <span class="field-hint">
+          Нужна таблица со столбцом «Предполагаемое ДС» по видам работ — она
+          и дальше видна на странице проекта как «Прогнозируемое удорожание
+          объекта» и заменяется этим же способом.
+        </span>
+      </div>
 
-    <div class="field">
-      <label for="contract_terms_file">Протокол окончательных условий (необязательно), .pdf</label>
-      <label class="file-drop" for="contract_terms_file">
-        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
-          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-        </svg>
-        <span class="file-drop-text" data-placeholder="Выберите файл .pdf">Выберите файл .pdf</span>
-      </label>
-      <input class="file-input" type="file" id="contract_terms_file" name="contract_terms_file" accept=".pdf">
-      <span class="field-hint">
-        Если протокол — скан, программа распознает его сама, обычно за пару
-        секунд. На компьютере без встроенного распознавания это может занять
-        несколько минут.
-      </span>
+      <div class="wizard-actions">
+        <button type="button" class="btn btn-secondary wizard-nav" data-goto="2">Назад</button>
+        <button type="submit" class="btn btn-primary">Создать проект</button>
+      </div>
     </div>
-
-    <button type="submit" class="btn btn-primary btn-block">Создать проект</button>
   </form>
 </div>
 
@@ -96,6 +165,18 @@
     input.addEventListener('change', function () {
       var textEl = input.closest('.field').querySelector('.file-drop-text');
       textEl.textContent = input.files[0] ? input.files[0].name : textEl.dataset.placeholder;
+    });
+  });
+
+  var wizardSteps = document.querySelectorAll('.wizard-step');
+  function showWizardStep(n) {
+    wizardSteps.forEach(function (el) {
+      el.style.display = el.dataset.step === String(n) ? '' : 'none';
+    });
+  }
+  document.querySelectorAll('.wizard-nav').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      showWizardStep(btn.dataset.goto);
     });
   });
 </script>

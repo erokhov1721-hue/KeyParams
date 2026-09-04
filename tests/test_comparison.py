@@ -759,98 +759,71 @@ def test_no_note_when_a_missing_cost_increase_file_does_not_matter():
     assert comparison.NOTE_NO_INCREASE not in table["columns"][0]["notes"]
 
 
-# --- прогноз удорожания ВИС ---
+# --- прогнозируемое удорожание ---
 
-def test_vis_overrun_by_slug_matches_exact_names_case_and_space_insensitive():
-    passports = {"a": _passport("Nicole 1"), "b": _passport("Mira")}
-    rows = [
-        {"name": "  nicole 1 ", "sum": Decimal("900000")},
-        {"name": "Veer", "sum": Decimal("100000")},
-    ]
-
-    result = comparison.vis_overrun_by_slug(["a", "b"], passports, rows)
-
-    assert result == {"a": Decimal("900000")}
-
-
-def test_vis_overrun_by_slug_matches_a_project_name_with_an_extra_word():
-    # Реальный случай: проект в KeyParams назван «Тушино 1 Cityzen», а в
-    # реестре ВИС тот же объект назван короче — «Тушино 1».
-    passports = {"a": _passport("Тушино 1 Cityzen")}
-    rows = [{"name": "Тушино 1", "sum": Decimal("500000")}]
-
-    result = comparison.vis_overrun_by_slug(["a"], passports, rows)
-
-    assert result == {"a": Decimal("500000")}
-
-
-def test_vis_overrun_by_slug_does_not_match_on_a_single_shared_word():
-    # «Тушино 1» и «Тушино 12» делят слово «тушино», но ни один набор слов
-    # не содержится в другом целиком — разные объекты, деньги не должны
-    # перепутаться.
-    passports = {"a": _passport("Тушино 12")}
-    rows = [{"name": "Тушино 1", "sum": Decimal("500000")}]
-
-    result = comparison.vis_overrun_by_slug(["a"], passports, rows)
-
-    assert result == {}
-
-
-def test_with_the_vis_toggle_off_the_registry_is_ignored():
+def test_with_the_predicted_increase_toggle_off_the_file_is_ignored():
     table = comparison.build_section_table(
         ["a"], {"a": _passport(total_area_sqm=None)}, {"a": {"utilities": 100.0}}, NONE,
-        vis_overrun_by_slug={"a": Decimal("900000")},
+        predicted_increase_by_slug={"a": {"utilities": Decimal("900000")}},
     )
 
     utilities = next(row for row in table["rows"] if row["key"] == "utilities")
     assert utilities["cells"][0]["value"] == 100.0
-    assert table["use_vis_overrun"] is False
+    assert table["use_predicted_increase"] is False
 
 
-def test_with_the_vis_toggle_on_the_forecast_is_added_to_utilities():
+def test_with_the_predicted_increase_toggle_on_each_section_gets_its_own_forecast():
+    # Unlike the old VIS registry (one number, always added to "utilities"),
+    # the predicted-increase file prices several kinds of work at once, and
+    # each one's forecast lands on its own line.
     table = comparison.build_section_table(
         ["a"], {"a": _passport(total_area_sqm=None)},
         {"a": {"utilities": 100.0, "facade": 200.0}}, NONE,
-        vis_overrun_by_slug={"a": Decimal("900000")}, use_vis_overrun=True,
+        predicted_increase_by_slug={
+            "a": {"utilities": Decimal("900000"), "facade": Decimal("50")},
+        },
+        use_predicted_increase=True,
     )
 
     utilities = next(row for row in table["rows"] if row["key"] == "utilities")
     facade = next(row for row in table["rows"] if row["key"] == "facade")
     assert utilities["cells"][0]["value"] == 900100.0
-    assert facade["cells"][0]["value"] == 200.0
-    assert table["use_vis_overrun"] is True
+    assert facade["cells"][0]["value"] == 250.0
+    assert table["use_predicted_increase"] is True
 
 
-def test_vis_toggle_adds_on_top_of_the_cost_increase_figure():
-    # Оба переключателя разом: «стало» из файла удорожания — 130, и поверх
-    # него прибавляется прогноз ВИС, а не поверх сметных 100.
+def test_predicted_increase_toggle_adds_on_top_of_the_cost_increase_figure():
+    # Both toggles at once: "стало" from the cost-increase file is 130, and
+    # the predicted-increase forecast adds on top of that, not on top of
+    # the estimate's 100.
     table = comparison.build_section_table(
         ["a"], {"a": _passport(total_area_sqm=None)}, {"a": {"utilities": 100.0}}, NONE,
         reports={"a": _report([("ВИС", 100.0, 130.0)], {"utilities": 100.0})},
         use_increase=True,
-        vis_overrun_by_slug={"a": Decimal("50")}, use_vis_overrun=True,
+        predicted_increase_by_slug={"a": {"utilities": Decimal("50")}},
+        use_predicted_increase=True,
     )
 
     utilities = next(row for row in table["rows"] if row["key"] == "utilities")
     assert utilities["cells"][0]["value"] == 180.0
 
 
-def test_a_project_without_a_vis_match_gets_a_note_when_the_toggle_is_on():
+def test_a_project_without_a_predicted_increase_file_gets_a_note_when_the_toggle_is_on():
     table = comparison.build_section_table(
         ["a"], {"a": _passport()}, {"a": {"roof": 100.0}}, NONE,
-        vis_overrun_by_slug={}, use_vis_overrun=True,
+        predicted_increase_by_slug={}, use_predicted_increase=True,
     )
 
-    assert comparison.NOTE_NO_VIS_OVERRUN in table["columns"][0]["notes"]
+    assert comparison.NOTE_NO_PREDICTED_INCREASE in table["columns"][0]["notes"]
 
 
-def test_no_vis_note_when_the_toggle_is_off():
+def test_no_predicted_increase_note_when_the_toggle_is_off():
     table = comparison.build_section_table(
         ["a"], {"a": _passport()}, {"a": {"roof": 100.0}}, NONE,
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
 
-    assert comparison.NOTE_NO_VIS_OVERRUN not in table["columns"][0]["notes"]
+    assert comparison.NOTE_NO_PREDICTED_INCREASE not in table["columns"][0]["notes"]
 
 
 # --- удорожание по проектам ---

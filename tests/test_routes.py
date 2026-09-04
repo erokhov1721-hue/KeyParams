@@ -1437,6 +1437,235 @@ def test_new_project_form_has_optional_estimate_field(tmp_path):
     assert 'accept=".xlsx"' in body
 
 
+def test_new_project_form_has_kp_field(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/projects/new")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert 'name="kp_file"' in body
+
+
+def test_create_project_with_kp_saves_it(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "С КП",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "kp_file": (io.BytesIO(_smeta_bytes()), "kp.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert storage.kp_path(tmp_path, slug).exists()
+
+
+def test_create_project_works_without_kp(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без КП",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert not storage.kp_path(tmp_path, slug).exists()
+
+
+def test_create_project_rejects_non_xlsx_kp(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Плохое КП",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "kp_file": (io.BytesIO(b"not excel"), "kp.txt"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_rejects_corrupted_kp(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Битое КП",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "kp_file": (io.BytesIO(b"this is not a real xlsx file"), "kp.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+# --- 3-й этап создания: подписанное и прогнозируемое удорожание ---
+
+def _predicted_increase_bytes(rows, *, header_row=1):
+    """Файл прогнозируемого удорожания той же формы, что настоящий:
+    названия работ в одном столбце, суммы — под заголовком, содержащим
+    «Предполагаемое»."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=header_row, column=1, value="№")
+    ws.cell(row=header_row, column=2, value="Стоимость по видам работ/расход:")
+    ws.cell(row=header_row, column=3, value="Предполагаемое ДС")
+    for offset, (name, amount) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=1, value=offset + 1)
+        ws.cell(row=row, column=2, value=name)
+        ws.cell(row=row, column=3, value=amount)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_new_project_form_has_stage_three_fields(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/projects/new")
+
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    assert 'name="cost_increase_file"' in body
+    assert 'name="predicted_increase_file"' in body
+
+
+def test_create_project_with_cost_increase_saves_it(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "С удорожанием",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "cost_increase_file": (
+            io.BytesIO(_increase_bytes([("Фундамент", 1000, 1200)])), "udorozhanie.xlsx",
+        ),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert storage.cost_increase_path(tmp_path, slug).exists()
+
+
+def test_create_project_works_without_cost_increase(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без удорожания",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert not storage.cost_increase_path(tmp_path, slug).exists()
+
+
+def test_create_project_rejects_unreadable_cost_increase(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Битое удорожание",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "cost_increase_file": (io.BytesIO(b"not excel"), "udorozhanie.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_with_predicted_increase_saves_it(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "С прогнозом",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "predicted_increase_file": (
+            io.BytesIO(_predicted_increase_bytes([("Фасад", 500)])), "predicted.xlsx",
+        ),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert storage.predicted_increase_path(tmp_path, slug).exists()
+
+
+def test_create_project_works_without_predicted_increase(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без прогноза",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    slug = storage.list_project_slugs(tmp_path)[0]
+    assert not storage.predicted_increase_path(tmp_path, slug).exists()
+
+
+def test_create_project_rejects_unreadable_predicted_increase(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Битый прогноз",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "predicted_increase_file": (io.BytesIO(b"not excel"), "predicted.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert storage.list_project_slugs(tmp_path) == []
+
+
+def test_create_project_with_a_failed_dgp_leaves_no_orphan_predicted_increase_file(tmp_path):
+    from app import storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Провал",
+        "dgp_file": (io.BytesIO(b"not a real docx"), "dgp.docx"),
+        "tz_file": (io.BytesIO(_tz_bytes()), "tz.docx"),
+        "predicted_increase_file": (
+            io.BytesIO(_predicted_increase_bytes([("Фасад", 500)])), "predicted.xlsx",
+        ),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+    assert not any(tmp_path.rglob("predicted_increase.xlsx"))
+
+
 def test_project_page_shows_the_estimate_itself_when_file_present(tmp_path):
     # Смета живёт в гармошке на самой странице проекта — одним входом, а не
     # ссылкой на отдельную страницу с той же таблицей.
@@ -3229,6 +3458,109 @@ def test_uploading_a_cost_increase_file_to_an_unknown_project_is_not_found(tmp_p
     client = app.test_client()
 
     resp = _upload_increase(client, "нет-такого", _increase_bytes([("Кровля", 1.0, 2.0)]))
+
+    assert resp.status_code == 404
+
+
+# --- прогнозируемое удорожание объекта ---
+
+def _upload_predicted_increase(client, slug, data, filename="predicted.xlsx"):
+    return client.post(
+        f"/projects/{slug}/predicted-increase",
+        data={"predicted_increase_file": (io.BytesIO(data), filename)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_the_project_page_offers_to_upload_a_predicted_increase_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Прогнозируемое удорожание объекта" in body
+    assert "Загрузить файл прогнозируемого удорожания" in body
+
+
+def test_an_uploaded_predicted_increase_file_shows_a_sum_per_kind_of_work(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_predicted_increase(client, slug, _predicted_increase_bytes([
+        ("Фасад", 7753581), ("Ж/Б конструкции", 97736329),
+    ]))
+
+    assert resp.status_code == 302
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Фасад" in body
+    assert "7 753 581" in body
+    assert "Монолит + МК" in body
+    assert "97 736 329" in body
+    assert "Заменить файл прогнозируемого удорожания" in body
+
+
+def test_uploading_a_newer_predicted_increase_file_replaces_the_previous_one(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    _upload_predicted_increase(client, slug, _predicted_increase_bytes([("Фасад", 100)]))
+    _upload_predicted_increase(client, slug, _predicted_increase_bytes([("Фасад", 300)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "300" in body
+
+
+def test_an_unreadable_predicted_increase_file_is_refused_and_the_old_one_kept(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+    _upload_predicted_increase(client, slug, _predicted_increase_bytes([("Фасад", 100)]))
+
+    resp = _upload_predicted_increase(client, slug, _valid_zip_with_wrong_contents())
+
+    assert resp.status_code == 302
+    assert "predicted_increase=unreadable" in resp.headers["Location"]
+    body = client.get(
+        f"/projects/{slug}?predicted_increase=unreadable"
+    ).get_data(as_text=True)
+    assert "Прежний файл оставлен на месте" in body
+    assert "Фасад" in body
+
+
+def test_a_predicted_increase_file_in_the_wrong_format_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_predicted_increase(client, slug, b"whatever", filename="predicted.pdf")
+
+    assert "predicted_increase=format" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?predicted_increase=format").get_data(as_text=True)
+    assert "должен быть в формате .xlsx" in body
+
+
+def test_an_oversized_predicted_increase_file_is_refused(tmp_path):
+    from app import routes
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Тест")
+
+    resp = _upload_predicted_increase(client, slug, b"x" * (routes.MAX_COST_INCREASE_SIZE + 1))
+
+    assert "predicted_increase=too_big" in resp.headers["Location"]
+
+
+def test_uploading_a_predicted_increase_file_to_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = _upload_predicted_increase(
+        client, "нет-такого", _predicted_increase_bytes([("Фасад", 1.0)]),
+    )
 
     assert resp.status_code == 404
 

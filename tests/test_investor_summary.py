@@ -16,7 +16,7 @@ def test_estimate_is_the_sum_of_its_sections():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0, "facade": 300.0}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"][0]["estimate"] == 400.0
 
@@ -26,29 +26,29 @@ def test_missing_estimate_is_a_dash_not_zero():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     row = table["rows"][0]
     assert row["estimate"] is None
     assert row["estimate_display"] == "—"
 
 
-def test_predicted_overrun_comes_straight_from_the_vis_map():
+def test_predicted_overrun_comes_straight_from_the_predicted_increase_map():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={"a": 500.0},
+        predicted_increase_by_slug={"a": 500.0},
     )
     assert table["rows"][0]["predicted"] == 500.0
 
 
-def test_object_the_registry_never_matched_gets_a_dash():
+def test_object_with_no_predicted_increase_file_gets_a_dash():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"][0]["predicted"] is None
 
@@ -59,7 +59,7 @@ def test_signed_overrun_is_the_reports_total_delta_against_the_estimate():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},
         cost_increase_reports_by_slug={"a": report},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"][0]["signed"] == 30.0
 
@@ -69,7 +69,7 @@ def test_no_cost_increase_file_is_a_dash():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"][0]["signed"] is None
 
@@ -84,7 +84,7 @@ def test_report_not_measured_against_an_estimate_is_a_dash_not_a_misleading_delt
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": report},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"][0]["signed"] is None
 
@@ -95,7 +95,7 @@ def test_delta_is_predicted_minus_signed():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},
         cost_increase_reports_by_slug={"a": report},
-        vis_overrun_by_slug={"a": 50.0},
+        predicted_increase_by_slug={"a": 50.0},
     )
     assert table["rows"][0]["delta"] == 20.0
 
@@ -105,7 +105,7 @@ def test_delta_is_a_dash_when_either_side_is_missing():
         ["a", "b"], {"a": "А", "b": "Б"},
         estimate_totals_by_slug={"a": {}, "b": {}},
         cost_increase_reports_by_slug={"a": None, "b": None},
-        vis_overrun_by_slug={"a": 50.0},
+        predicted_increase_by_slug={"a": 50.0},
     )
     rows_by_slug = {row["slug"]: row for row in table["rows"]}
     assert rows_by_slug["a"]["delta"] is None
@@ -118,7 +118,7 @@ def test_delta_is_not_clamped_when_signed_exceeds_predicted():
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},
         cost_increase_reports_by_slug={"a": report},
-        vis_overrun_by_slug={"a": 50.0},
+        predicted_increase_by_slug={"a": 50.0},
     )
     assert table["rows"][0]["delta"] == -50.0
     assert table["rows"][0]["delta_display"].startswith("−")
@@ -129,7 +129,7 @@ def test_rows_are_sorted_by_project_name():
         ["b", "a"], {"a": "Аист", "b": "Берёза"},
         estimate_totals_by_slug={"a": {}, "b": {}},
         cost_increase_reports_by_slug={"a": None, "b": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert [row["slug"] for row in table["rows"]] == ["a", "b"]
 
@@ -139,7 +139,7 @@ def test_total_row_sums_only_known_values_and_counts_them():
         ["a", "b"], {"a": "А", "b": "Б"},
         estimate_totals_by_slug={"a": {"roof": 100.0}, "b": {}},
         cost_increase_reports_by_slug={"a": None, "b": None},
-        vis_overrun_by_slug={"a": 10.0, "b": 20.0},
+        predicted_increase_by_slug={"a": 10.0, "b": 20.0},
     )
     total = table["total"]
     assert total["count"] == 2
@@ -154,7 +154,7 @@ def test_total_row_is_a_dash_when_nothing_is_known_for_that_column():
         ["a"], {"a": "А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": None},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     total = table["total"]
     assert total["estimate_display"] == "—"
@@ -164,7 +164,7 @@ def test_total_row_is_a_dash_when_nothing_is_known_for_that_column():
 def test_empty_project_list_gives_an_empty_table():
     table = investor_summary.build_table(
         [], {}, estimate_totals_by_slug={}, cost_increase_reports_by_slug={},
-        vis_overrun_by_slug={},
+        predicted_increase_by_slug={},
     )
     assert table["rows"] == []
     assert table["total"]["count"] == 0

@@ -408,6 +408,84 @@
       </div>
     </div>
 
+    {% if predicted_increase_problem %}
+    <div class="alert alert-error">Прогнозируемое удорожание: {{ predicted_increase_problem }}</div>
+    {% endif %}
+
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Прогнозируемое удорожание объекта</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        {% if predicted_increase_report %}
+        {% set report = predicted_increase_report %}
+        <div class="sections-table-wrap">
+          <table class="sections-table increase-table">
+            <thead>
+              <tr>
+                <th class="sections-label-col">Вид работ</th>
+                <th>Предполагаемое ДС, руб.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in report.rows %}
+              <tr>
+                <td class="sections-label-col">
+                  <span class="sections-label" title="{{ row.sources | join('; ') }}">{{ row.label }}</span>
+                </td>
+                <td>{{ format_number(row.amount) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td class="sections-label-col">{{ report.total.label }}</td>
+                <td>{{ format_number(report.total.amount) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        {% if report.unmatched %}
+        <p class="field-hint">
+          Строки файла, для которых в отчёте нет вида работ, в таблицу не попали:
+          {{ report.unmatched | join('; ') }}.
+        </p>
+        {% endif %}
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_predicted_increase', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="contract-replace-link" for="predicted-increase-input">Заменить файл прогнозируемого удорожания (Excel)</label>
+          <input class="file-input" type="file" id="predicted-increase-input" name="predicted_increase_file" accept=".xlsx">
+        </form>
+        {% else %}
+        {% if has_predicted_increase %}
+        <p class="accordion-empty">
+          Файл загружен, но прочитать его не удалось — загрузите файл заново.
+        </p>
+        {% endif %}
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_predicted_increase', slug=slug) }}" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="file-drop" for="predicted-increase-input">
+            <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+              <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+            </svg>
+            <span class="file-drop-text">Загрузить файл прогнозируемого удорожания (Excel)</span>
+          </label>
+          <input class="file-input" type="file" id="predicted-increase-input" name="predicted_increase_file" accept=".xlsx">
+          <span class="field-hint">
+            Нужна таблица со столбцом «Предполагаемое ДС» по видам работ. Файл
+            заменяется целиком — загрузите новую версию, когда она появится.
+          </span>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
     <div class="accordion" data-accordion>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Расчётные коэффициенты бетонных и фасадных конструкций</span>
