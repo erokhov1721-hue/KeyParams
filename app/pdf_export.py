@@ -318,7 +318,7 @@ def _two_sided_drawing(width, width_pct, dearer):
     return drawing
 
 
-def _chart_bar_drawing(width, width_pct):
+def _chart_bar_drawing(width, width_pct, color=ACCENT):
     height = 10.0
     drawing = Drawing(width, height)
     drawing.hAlign = "LEFT"
@@ -327,8 +327,17 @@ def _chart_bar_drawing(width, width_pct):
     filled = width * (width_pct or 0) / 100.0
     if filled > 0:
         drawing.add(Rect(0, 1, filled, height - 2, rx=3, ry=3,
-                         fillColor=ACCENT, strokeColor=None))
+                         fillColor=color, strokeColor=None))
     return drawing
+
+
+def _project_color(project_colors, slug):
+    """Тот же цвет, что у этого проекта на экране (``passport.py::
+    project_colors``, ``{slug: "#rrggbb"}``), или ACCENT — когда палитру не
+    передали вовсе, или строке графика взять цвет неоткуда (нет ``slug``,
+    либо его нет в палитре)."""
+    hex_value = (project_colors or {}).get(slug)
+    return colors.HexColor(hex_value) if hex_value else ACCENT
 
 
 def _increase_frequency_drawing(width, frequency_pct):
@@ -446,7 +455,7 @@ def _terms_block(terms, slugs, passports, styles, page_width):
     ]
 
 
-def _charts_block(charts, styles, page_width):
+def _charts_block(charts, styles, page_width, project_colors=None):
     """Диаграммы — подпись, полоска, значение, как на экране (charts.js).
 
     Нулевые значения в саму полоску не идут — полоска нулевой длины рядом
@@ -458,6 +467,10 @@ def _charts_block(charts, styles, page_width):
     тем же способом и тем же цветом (красный/зелёный), что и в «Сравнении
     двух объектов» ниже: все эти графики — цена и расход материалов, где
     меньше значит лучше, так что рост всегда красный.
+
+    ``project_colors`` — та же палитра, что красит бары на экране
+    (``passport.py::project_colors``, ``{slug: "#rrggbb"}``): один проект —
+    один цвет на каждом из графиков, а не общий ACCENT для всех подряд.
     """
     story = []
     label_w = min(210.0, page_width * 0.32)
@@ -476,7 +489,10 @@ def _charts_block(charts, styles, page_width):
         data = [
             [
                 Paragraph(_esc(row["label"]), styles["cell"]),
-                _chart_bar_drawing(bar_w, row.get("width_pct")),
+                _chart_bar_drawing(
+                    bar_w, row.get("width_pct"),
+                    _project_color(project_colors, row.get("slug")),
+                ),
                 Paragraph(row.get("display") or "", styles["cell_right"]),
             ]
             for row in rows
@@ -963,12 +979,16 @@ def build_compare_pdf(
     passports: dict, slugs: list, fields: list, field_labels: dict, charts: dict,
     numeric_fields=(), format_number=str, price_per_sqm=lambda data: None,
     sections=None, pair=None, terms=None, increase=None, averages=None,
+    project_colors=None,
 ) -> bytes:
     """Страница сравнения одним файлом.
 
     ``sections``, ``pair`` и ``terms`` — готовые блоки из ``comparison``, те же
     объекты, что уходят в шаблон страницы. Если их не передать, файл соберётся
     из того, что есть: блока без данных на странице тоже не бывает.
+
+    ``project_colors`` — ``passport.py::project_colors(slugs)``, та же
+    палитра, что красит бары диаграмм на экране.
     """
     _ensure_fonts()
     styles = _styles()
@@ -989,7 +1009,7 @@ def build_compare_pdf(
     # внизу листа, а остальные уезжают на следующий, и читать их приходится
     # вразбивку.
     story.append(PageBreak())
-    story += _charts_block(charts, styles, page_width)
+    story += _charts_block(charts, styles, page_width, project_colors)
     sections_story = _sections_block(sections, styles, page_width)
     if sections_story:
         story.append(PageBreak())

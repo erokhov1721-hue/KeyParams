@@ -170,6 +170,53 @@ def test_the_charts_show_the_percent_difference_between_exactly_two_projects():
     assert "Разница: +50,0 %" in charts_text
 
 
+def test_chart_bars_use_the_given_color_instead_of_the_fixed_accent():
+    from reportlab.graphics.shapes import Rect
+    from reportlab.lib.colors import HexColor
+
+    red = HexColor("#e11d48")
+    drawing = pdf_export._chart_bar_drawing(100.0, 50.0, red)
+
+    filled = [shape for shape in drawing.contents
+              if isinstance(shape, Rect) and shape.fillColor == red]
+    assert len(filled) == 1
+
+
+def test_each_chart_colors_a_project_the_same_as_every_other_chart():
+    # Экран красит бар каждого проекта его собственным цветом из палитры
+    # (passport.py::project_colors) — один и тот же проект одним и тем же
+    # цветом на каждом графике страницы (см. static/charts.js). PDF раньше
+    # красил все бары одним ACCENT независимо от того, чей это проект.
+    from reportlab.lib.colors import HexColor
+
+    passports = _two_projects(100_000.0, 150_000.0)
+    charts = passport_module.build_comparison_charts(passports, ["a", "b"])
+    project_colors = {"a": "#059669", "b": "#4f46e5"}
+
+    pdf_bytes = pdf_export.build_compare_pdf(
+        passports, ["a", "b"],
+        passport_module.PASSPORT_FIELDS, passport_module.FIELD_LABELS, charts,
+        numeric_fields=passport_module.NUMERIC_FIELDS,
+        format_number=passport_module.format_number,
+        price_per_sqm=passport_module.price_per_sqm,
+        project_colors=project_colors,
+    )
+
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        # Скруглённый прямоугольник — reportlab рисует его кривыми, не
+        # примитивом rect (см. тепловую плашку выше).
+        fills = {
+            tuple(round(c, 3) for c in shape["non_stroking_color"])
+            for page in pdf.pages
+            for shape in page.rects + page.curves
+            if shape["fill"]
+        }
+
+    a_color, b_color = HexColor("#059669"), HexColor("#4f46e5")
+    assert (round(a_color.red, 3), round(a_color.green, 3), round(a_color.blue, 3)) in fills
+    assert (round(b_color.red, 3), round(b_color.green, 3), round(b_color.blue, 3)) in fills
+
+
 def _increase_report(rows):
     """Отчёт по удорожанию из готовых строк (название, было, стало) — тем же
     ``build_report``, что и в тестах ``comparison``: подделка данных здесь
