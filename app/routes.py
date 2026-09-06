@@ -496,8 +496,11 @@ def _investor_summary_table(root, slugs):
     passports = {slug: _safe_passport(root, slug) for slug in slugs}
     # Смета читается один раз на объект и переиспользуется для отчёта по
     # удорожанию (ему нужна та же цифра как база для сравнения) — иначе
-    # тяжёлый xlsx на каждый объект разбирался бы дважды подряд.
+    # тяжёлый xlsx на каждый объект разбирался бы дважды подряд. То же для
+    # отчёта по прогнозируемому удорожанию: итог идёт в основную таблицу,
+    # разбивка по разделам — в карточку деталей объекта.
     estimate_totals = {slug: _estimate_totals(root, slug) for slug in slugs}
+    predicted_reports = _predicted_increase_reports(root, slugs)
     return investor_summary.build_table(
         slugs,
         {slug: passports[slug].get("project_name") or slug for slug in slugs},
@@ -506,7 +509,9 @@ def _investor_summary_table(root, slugs):
             slug: _cost_increase_report(root, slug, estimate_totals[slug])
             for slug in slugs
         },
-        _predicted_increase_totals(_predicted_increase_reports(root, slugs)),
+        _predicted_increase_totals(predicted_reports),
+        predicted_reports,
+        {slug: passports[slug].get("total_area_sqm") for slug in slugs},
     )
 
 

@@ -1,4 +1,6 @@
-from app import cost_increase, investor_summary
+from decimal import Decimal
+
+from app import cost_increase, investor_summary, predicted_increase
 
 
 def _report(rows, estimate=None):
@@ -9,6 +11,15 @@ def _report(rows, estimate=None):
     """
     lines = [cost_increase.Line(name, was, now) for name, was, now in rows]
     return cost_increase.build_report(lines, estimate)
+
+
+def _predicted_report(rows):
+    """A predicted-increase report from ready-made (name, amount) rows,
+    through the real ``predicted_increase.build_report`` for the same
+    reason ``_report`` above uses the real ``cost_increase.build_report``.
+    """
+    lines = [predicted_increase.Line(name, Decimal(str(amount))) for name, amount in rows]
+    return predicted_increase.build_report(lines)
 
 
 def test_estimate_is_the_sum_of_its_sections():
@@ -170,3 +181,174 @@ def test_empty_project_list_gives_an_empty_table():
     )
     assert table["rows"] == []
     assert table["total"]["count"] == 0
+
+
+# --- разделы, которые дорожают по прогнозируемому удорожанию ---
+
+def test_increasing_sections_lists_only_sections_that_got_dearer():
+    # Прогноз уже сам по себе — сумма удорожания по разделу, а не пара
+    # «было»/«стало»: отрицательная сумма (например, оптимизация по фасаду)
+    # это единственный способ у раздела в предсказании не быть подорожавшим.
+    predicted = _predicted_report([("Кровля", 30.0), ("Фасадные работы", -10.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0, "facade": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    sections = table["rows"][0]["increasing_sections"]
+
+    assert len(sections) == 1
+    assert sections[0]["label"] == "Кровли"
+    assert sections[0]["estimate_display"] == "100 ₽"
+    assert sections[0]["current_display"] == "130 ₽"
+    assert sections[0]["per_sqm_display"] == "—"
+    assert sections[0]["percent_display"] == "+30,0 %"
+
+
+def test_increasing_sections_come_biggest_delta_first():
+    predicted = _predicted_report([("Кровля", 10.0), ("Фасадные работы", 200.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0, "facade": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    labels = [s["label"] for s in table["rows"][0]["increasing_sections"]]
+
+    assert labels == ["Фасад", "Кровли"]
+
+
+def test_increasing_sections_show_cost_per_square_metre():
+    predicted = _predicted_report([("Кровля", 30.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={"a": 2.0},
+    )
+    section = table["rows"][0]["increasing_sections"][0]
+
+    # 100 + 30 = 130 ₽ за 2 м² -> 65 ₽/м²
+    assert section["per_sqm_display"] == "65 ₽/м²"
+
+
+def test_a_section_new_to_the_estimate_is_named_new_work_not_a_dash():
+    predicted = _predicted_report(
+        [("Кровля", 10.0), ("Благоустройство, дороги", 5_000_000.0)],
+    )
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    sections = {s["label"]: s for s in table["rows"][0]["increasing_sections"]}
+
+    assert sections["Благоустройство"]["percent_display"] == "новые работы"
+
+
+def test_no_predicted_file_means_no_increasing_sections():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": None},
+        area_by_slug={},
+    )
+    assert table["rows"][0]["increasing_sections"] == []
+    assert table["rows"][0]["has_predicted_report"] is False
+
+
+def test_a_predicted_file_marks_the_object_as_having_a_report():
+    predicted = _predicted_report([("Кровля", 30.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    assert table["rows"][0]["has_predicted_report"] is True
+
+
+# --- смета против итоговой стоимости ---
+
+def test_estimate_vs_total_is_an_overrun_when_the_total_is_bigger():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={"a": 50.0},
+    )
+    evt = table["rows"][0]["estimate_vs_total"]
+
+    # смета 100, подписанное 30, прогноз 50 -> итог 180, перерасход 80 (+80%)
+    assert evt["overrun_display"] == "+80 ₽"
+    assert evt["percent_display"] == "+80,0 %"
+    assert evt["is_overrun"] is True
+    assert evt["is_savings"] is False
+
+
+def test_estimate_vs_total_is_savings_when_the_total_is_smaller():
+    report = _report([("Кровля", 100.0, 60.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+    )
+    evt = table["rows"][0]["estimate_vs_total"]
+
+    # смета 100, подписанное −40 -> итог 60, экономия 40 (−40%)
+    assert evt["overrun_display"] == "−40 ₽"
+    assert evt["percent_display"].startswith("−")
+    assert evt["is_overrun"] is False
+    assert evt["is_savings"] is True
+
+
+def test_estimate_vs_total_is_none_without_an_estimate():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={"a": 50.0},
+    )
+    assert table["rows"][0]["estimate_vs_total"] is None
+
+
+# --- итоговая стоимость объекта за м² ---
+
+def test_total_per_sqm_is_the_total_cost_over_the_objects_area():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        area_by_slug={"a": 2.0},
+    )
+    # смета 100 + подписанное 30 = итог 130 ₽ за 2 м² -> 65 ₽/м²
+    assert table["rows"][0]["total_per_sqm_display"] == "65 ₽/м²"
+
+
+def test_total_per_sqm_is_a_dash_without_an_area():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+    )
+    assert table["rows"][0]["total_per_sqm_display"] == "—"

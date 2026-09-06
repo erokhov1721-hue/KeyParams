@@ -119,6 +119,71 @@
   </div>
 </div>
 
+{% for row in table.rows %}
+<div class="card investor-detail" data-slug="{{ row.slug }}" hidden>
+  <div class="sections-head">
+    <h2 class="chart-title">{{ row.label }}: смета и удорожание</h2>
+  </div>
+
+  {% if row.estimate_vs_total %}
+  <div class="delta-list investor-detail-bar">
+    <div class="delta-row">
+      <div class="delta-label">Смета → итоговая стоимость</div>
+      <div class="delta-value {{ 'is-worse' if row.estimate_vs_total.is_overrun else 'is-better' }}">
+        {{ row.estimate_vs_total.percent_display }}
+        <span class="delta-value-abs">{{ row.estimate_vs_total.overrun_display }}</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="chart-empty">Недостаточно данных, чтобы сравнить смету с итоговой стоимостью.</p>
+  {% endif %}
+
+  <h3 class="pair-subtitle">Разделы сметы, которые дорожают по прогнозируемому удорожанию</h3>
+  {% if not row.has_predicted_report %}
+  <p class="chart-empty">Нет файла прогнозируемого удорожания.</p>
+  {% elif not row.increasing_sections %}
+  <p class="chart-empty">По прогнозируемому удорожанию ни один раздел сметы не дорожает.</p>
+  {% else %}
+  <div class="sections-table-wrap">
+    <table class="sections-table investor-detail-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Раздел</th>
+          <th>Смета</th>
+          <th>Стало</th>
+          <th>₽/м²</th>
+          <th>%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for section in row.increasing_sections %}
+        <tr>
+          <td class="sections-label-col">
+            <span class="sections-label" title="{{ section.label }}">{{ section.label }}</span>
+          </td>
+          <td class="sections-value"><span class="sections-number">{{ section.estimate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ section.current_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ section.per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ section.percent_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="sections-label-col">Объект целиком</td>
+          <td class="sections-value"><span class="sections-number">{{ row.estimate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.total_cost_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.total_per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.estimate_vs_total.percent_display if row.estimate_vs_total else '—' }}</span></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+
 <script>
   document.querySelectorAll('.sections-table').forEach(function (table) {
     var buttons = table.querySelectorAll('.sections-sort');
@@ -153,13 +218,20 @@
   (function () {
     var select = document.getElementById('investor-summary-object-filter');
     var table = document.getElementById('investor-summary-table');
-    if (!select || !table || !table.tBodies.length) return;
-    var rows = table.tBodies[0].rows;
+    var details = document.querySelectorAll('.investor-detail');
+    if (!select) return;
 
     select.addEventListener('change', function () {
       var slug = select.value;
-      Array.from(rows).forEach(function (row) {
-        row.hidden = Boolean(slug) && row.dataset.slug !== slug;
+      if (table && table.tBodies.length) {
+        Array.from(table.tBodies[0].rows).forEach(function (row) {
+          row.hidden = Boolean(slug) && row.dataset.slug !== slug;
+        });
+      }
+      // Без выбранного объекта прячем все — карточка деталей имеет смысл
+      // только для одного конкретного объекта, а не для «Всех объектов».
+      details.forEach(function (detail) {
+        detail.hidden = detail.dataset.slug !== slug;
       });
     });
   })();

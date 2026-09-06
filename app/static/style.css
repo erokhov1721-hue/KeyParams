@@ -1679,7 +1679,8 @@ select option {
 /* Как и у таблицы характеристик: по бокам отступа нет, его держат ячейки.
    Всё, что лежит в карточке помимо таблицы, отодвигается от края на ту же
    величину, чтобы заголовок стоял ровно над первой колонкой. */
-.sections-card {
+.sections-card,
+.investor-detail {
   padding: 24px 0;
 }
 
@@ -1710,6 +1711,11 @@ select option {
 .sections-card > .sections-head-row,
 .sections-card > .delta-list,
 .sections-card > .avg-group-tabs,
+.sections-card > .sections-heat-legend,
+.investor-detail > .sections-head,
+.investor-detail > .pair-subtitle,
+.investor-detail > .delta-list,
+.investor-detail > .chart-empty,
 .compare-card > .sections-head {
   margin-inline: var(--table-edge);
 }
@@ -1859,7 +1865,7 @@ select option {
   flex-wrap: wrap;
   gap: 20px;
   margin-top: 14px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-500);
 }
 
@@ -2823,6 +2829,50 @@ select option {
   white-space: nowrap;
 }
 
+/* Разделы, которые дорожают — карточка деталей объекта на «Сводке по
+   удорожанию». Суммы здесь — сколько наберётся у объекта, вплоть до
+   миллиардов, и никакая фиксированная ширина колонки не угадывает их все
+   разом. table-layout: auto вместо унаследованного fixed — колонка сама
+   становится ровно такой ширины, какой требует самое длинное число внутри
+   (nowrap не даёт ему перенестись и обрезаться), а если всем вместе не
+   хватает места — везёт всю таблицу вбок .sections-table-wrap, а не режет
+   текст по границе. */
+.investor-detail-table {
+  table-layout: auto;
+}
+
+/* Те же отступы ячеек, что и у верхней таблицы сводки (.sections-table th,
+   td — var(--table-pad-y/x) — и var(--table-edge) по краю), только явно:
+   table-layout: auto плотно подгоняет ширину колонки под число внутри, и
+   без явного повтора здесь отступ легко потерять при следующей правке
+   .investor-detail-table, а верхняя таблица его не заметит вовсе. */
+.investor-detail-table th,
+.investor-detail-table td {
+  padding: var(--table-pad-y) var(--table-pad-x);
+}
+
+.investor-detail-table th.sections-label-col,
+.investor-detail-table td.sections-label-col {
+  padding-left: var(--table-edge);
+}
+
+.investor-detail-table th:last-child,
+.investor-detail-table td:last-child {
+  padding-right: var(--table-edge);
+}
+
+.investor-detail-table th:not(.sections-label-col),
+.investor-detail-table td:not(.sections-label-col) {
+  white-space: nowrap;
+}
+
+.investor-detail-table .sections-label {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  max-height: none;
+}
+
 /* Пояснение под цифрой («в «стало» пусто — взято «было»») — не число,
    и вернуть ему перенос: иначе оно наследует nowrap соседних чисел и
    вылезает за пределы столбца. */
@@ -2929,6 +2979,19 @@ select option {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-500);
+}
+
+/* Смета против итоговой стоимости на сводке по удорожанию — одна строка без
+   полоски-трека: подпись слева, цифра справа, сравнивать здесь не с чем
+   вторым — объект на странице ровно один, три колонки .delta-row без трека
+   ни к чему. Значение к тому же бывает девятизначным (объект на несколько
+   миллиардов) — растёт под содержимое, а не жмётся в 120px, рассчитанные
+   на суммы отдельного проекта в сравнении. */
+.investor-detail-bar .delta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
 }
 
 .works-table .sections-value {

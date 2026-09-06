@@ -3082,6 +3082,66 @@ def test_investor_summary_pdf_redirects_when_there_are_no_projects(tmp_path):
     assert resp.headers["Location"].endswith("/investors")
 
 
+def test_investor_summary_has_a_hidden_detail_panel_per_object(tmp_path):
+    # Панель под таблицей — про смету, итоговую стоимость и подорожавшие
+    # разделы одного объекта, поэтому спрятана, пока в фильтре не выбран
+    # именно он.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Объект", [("8. Кровля", 100.0)])
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 130.0)]))
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    assert f'<div class="card investor-detail" data-slug="{slug}" hidden>' in body
+    assert "Смета → итоговая стоимость" in body
+    assert "Разделы сметы, которые дорожают по прогнозируемому удорожанию" in body
+
+
+def test_investor_summary_detail_lists_only_sections_that_got_dearer(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Объект", [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
+    )
+    _upload_predicted_increase(
+        client, slug,
+        _predicted_increase_bytes([("Кровля", 30.0), ("Фасадные работы", -10.0)]),
+    )
+
+    body = client.get("/investors").get_data(as_text=True)
+    detail = body[body.index('class="card investor-detail"'):]
+
+    assert "Кровли" in detail
+    assert "Фасад" not in detail.split("</table>")[0]
+    assert "130 ₽" in detail
+    assert "+30,0 %" in detail
+
+
+def test_investor_summary_detail_says_when_there_is_no_predicted_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _project_with_offer(tmp_path, "БезУдорожания", [("8. Кровля", 100.0)])
+
+    body = client.get("/investors").get_data(as_text=True)
+    detail = body[body.index('class="card investor-detail"'):]
+
+    assert "Нет файла прогнозируемого удорожания." in detail
+
+
+def test_investor_summary_detail_shows_the_estimate_vs_total_bar(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Объект", [("8. Кровля", 100.0)])
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 100.0, 130.0)]))
+
+    body = client.get("/investors").get_data(as_text=True)
+    detail = body[body.index('class="card investor-detail"'):]
+
+    assert "delta-value" in detail
+    assert "+30 ₽" in detail
+
+
 def test_section_table_corrections_are_off_by_default(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -3886,6 +3946,7 @@ def test_everything_in_a_table_card_starts_on_the_same_line(tmp_path):
         ".sections-card > .stat-tiles",
         ".sections-card > .pair-subtitle",
         ".sections-card > .delta-list",
+        ".sections-card > .sections-heat-legend",
     ):
         assert selector in block, selector
     # Сама таблица в этот список не входит: край она держит своими ячейками, и
