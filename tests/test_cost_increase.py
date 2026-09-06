@@ -53,6 +53,30 @@ def _by_key(report):
     return {row.key: row for row in report.rows}
 
 
+def _single_workbook(rows, *, header_row=1, header_text="Итого\nДС"):
+    """A workbook shaped like the alternate «Итого ДС» form — one money
+    column instead of the «было»/«стало» pair. ``rows`` are ``(name,
+    amount)``."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=header_row, column=2, value="Стоимость по видам работ/расход:")
+    ws.cell(row=header_row, column=3, value=header_text)
+
+    for offset, (name, amount) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=1, value=offset + 1)
+        ws.cell(row=row, column=2, value=name)
+        ws.cell(row=row, column=3, value=amount)
+    return wb
+
+
+def _single_report(rows, *, estimate=None, **kwargs):
+    buf = io.BytesIO()
+    _single_workbook(rows, **kwargs).save(buf)
+    buf.seek(0)
+    return cost_increase.read_report(buf, estimate)
+
+
 # --- reading the file ------------------------------------------------------
 
 def test_reads_the_sections_of_a_real_file():
@@ -189,6 +213,63 @@ def test_numbers_written_as_text_are_read():
     report = _report([("Кровля", "1 000,50", "1 100,50")])
 
     assert report.rows[0].delta == pytest.approx(100.0)
+
+
+# --- the alternate «Итого ДС» form (no «было»/«стало» pair) ----------------
+
+def test_reads_the_alternate_single_amount_form():
+    report = _single_report([("Кровля", 4004266)], estimate={"roof": 3_000_000})
+
+    assert [row.key for row in report.rows] == ["roof"]
+    assert report.rows[0].delta == pytest.approx(4004266)
+
+
+def test_the_single_amount_form_is_measured_from_the_estimate():
+    # Файл уже сам по себе доплата — «было» в нём нет вовсе, поэтому база
+    # всегда смета, а не что-то из самого файла.
+    report = _single_report([("Кровля", 4004266)], estimate={"roof": 3_000_000})
+    row = report.rows[0]
+
+    assert row.baseline == pytest.approx(3_000_000)
+    assert row.current == pytest.approx(7004266)
+    assert row.percent == pytest.approx(133.475533, rel=1e-4)
+
+
+def test_the_single_amount_form_without_an_estimate_reads_every_section_as_new_work():
+    report = _single_report([("Кровля", 4004266)])
+
+    assert report.from_estimate is False
+    assert report.rows[0].baseline == 0
+    assert report.rows[0].percent is None
+
+
+def test_the_single_amount_form_header_can_have_a_line_break():
+    # Заголовок реального файла — «ИТОГО» и «ДС» на двух строках одной ячейки,
+    # а не через пробел.
+    report = _single_report([("Кровля", 100.0)], header_text="ИТОГО\nДС")
+
+    assert [row.key for row in report.rows] == ["roof"]
+
+
+def test_a_file_with_the_was_now_pair_is_never_read_as_the_single_amount_form():
+    # Обе колонки есть — читаем парой «было»/«стало», а не эту, более
+    # рыхлую форму, даже если где-то на листе тоже нашлось бы «Итого ДС».
+    report = _report([("Кровля", 100.0, 130.0)], estimate={"roof": 100.0})
+
+    assert report.rows[0].delta == pytest.approx(30.0)
+
+
+def test_read_lines_returns_amount_lines_for_the_alternate_form():
+    buf = io.BytesIO()
+    _single_workbook([("Кровля", 100.0)]).save(buf)
+    buf.seek(0)
+
+    lines = cost_increase.read_lines(buf)
+
+    assert len(lines) == 1
+    assert isinstance(lines[0], cost_increase.AmountLine)
+    assert lines[0].name == "Кровля"
+    assert lines[0].amount == pytest.approx(100.0)
 
 
 # --- the percentage --------------------------------------------------------

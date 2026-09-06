@@ -107,13 +107,27 @@ PROBLEM_MESSAGES = {
     "too_big": "Файл удорожания слишком большой — до 15 МБ",
     "unreadable": (
         "Не удалось прочитать файл удорожания. Нужна таблица, где у каждого "
-        "вида работ есть столбцы «было» и «стало». Прежний файл оставлен на месте."
+        "вида работ есть столбцы «было» и «стало» — либо столбец «Итого ДС». "
+        "Прежний файл оставлен на месте."
     ),
 }
 
 
 # One row of the workbook as it is written there.
 Line = namedtuple("Line", "name was now")
+
+# One row of the alternate form of the workbook — «Итого ДС», один столбец на
+# раздел вместо пары «было»/«стало»: подписанная доплата к смете уже сама по
+# себе итог, а не то, что нужно вывести из сравнения двух колонок.
+AmountLine = namedtuple("AmountLine", "name amount")
+
+# Substrings the header of that single column must all contain (lower-case,
+# with any line break folded to a space first) — «ИТОГО\nДС», «Итого ДС» и
+# подобные. Ищутся оба порознь, а не как одна фраза: перенос строки внутри
+# заголовка — обычное дело в экспортах из Excel, а склеивать его с пробелом
+# на месте каждого потенциального заголовка дороже, чем просто не завязываться
+# на то, что между словами.
+AMOUNT_HEADER_PARTS = ("итог", "дс")
 
 # Where a line's current cost was taken from. "стало" is the answer almost
 # always; the other two are the cases worth marking on the page, because there
@@ -202,7 +216,7 @@ def _find_columns(ws, row):
     return was_col, now_col
 
 
-def _name_column(ws, header_row, was_col, now_col):
+def _name_column(ws, header_row, *money_cols):
     """The column the kinds of work are named in, or None if none is.
 
     Looked for to the left of the money first, which is where a table of this
@@ -210,6 +224,11 @@ def _name_column(ws, header_row, was_col, now_col):
     its own to be found by. The whole sheet is only searched if there is nothing
     on the left at all, so a wide comment column further right can't win a
     column that has the names.
+
+    ``money_cols`` is one column for the «было»/«стало» pair's «было», two for
+    the alternate «Итого ДС» single-amount form — either way the leftward
+    search starts from the first of them, and the whole-sheet fallback avoids
+    all of them.
     """
     def count(col):
         return sum(
@@ -218,8 +237,8 @@ def _name_column(ws, header_row, was_col, now_col):
         )
 
     for candidates in (
-        range(was_col - 1, 0, -1),
-        (c for c in range(1, HEADER_SEARCH_COLS + 1) if c not in (was_col, now_col)),
+        range(money_cols[0] - 1, 0, -1),
+        (c for c in range(1, HEADER_SEARCH_COLS + 1) if c not in money_cols),
     ):
         counts = [(count(col), col) for col in candidates]
         best = max(counts, default=(0, None), key=lambda pair: pair[0])
@@ -237,6 +256,36 @@ def _find_header(ws):
         name_col = _name_column(ws, row, was_col, now_col)
         if name_col is not None:
             return Header(row, name_col, was_col, now_col)
+    return None
+
+
+SingleHeader = namedtuple("SingleHeader", "row name_col amount_col")
+
+
+def _find_amount_col(ws, row):
+    """The «Итого ДС» column of this row, or None if it isn't the header —
+    the alternate form's only money column, matched by substrings the way
+    «было»/«стало» are, with a line break folded to a space first: the
+    header is written on two lines in the real workbook."""
+    for col in range(1, HEADER_SEARCH_COLS + 1):
+        text = _text(ws, row, col).replace("\n", " ")
+        if all(part in text for part in AMOUNT_HEADER_PARTS):
+            return col
+    return None
+
+
+def _find_single_header(ws):
+    """Header of the alternate «Итого ДС» form — tried only where
+    ``_find_header`` above has already failed for every row of this sheet:
+    a table that does have «было»/«стало» is read as one, never as this
+    looser, single-column match."""
+    for row in range(1, HEADER_SEARCH_ROWS + 1):
+        amount_col = _find_amount_col(ws, row)
+        if amount_col is None:
+            continue
+        name_col = _name_column(ws, row, amount_col)
+        if name_col is not None:
+            return SingleHeader(row, name_col, amount_col)
     return None
 
 
@@ -263,15 +312,22 @@ def read_lines(source) -> list:
         raise CostIncreaseError(f"файл не читается как .xlsx: {e}") from e
 
     for ws, ws_formulas in zip(wb.worksheets, wb_formulas.worksheets):
+        checked = _CheckedSheet(ws, ws_formulas)
         header = _find_header(ws)
-        if header is None:
-            continue
-        lines = _lines_from_sheet(_CheckedSheet(ws, ws_formulas), header)
-        if lines:
-            return lines
+        if header is not None:
+            lines = _lines_from_sheet(checked, header)
+            if lines:
+                return lines
+        # Only tried where the «было»/«стало» pair above found nothing on this
+        # sheet at all — a sheet that has the pair is always read as one.
+        single_header = _find_single_header(ws)
+        if single_header is not None:
+            lines = _lines_from_sheet_single(checked, single_header)
+            if lines:
+                return lines
 
     raise CostIncreaseError(
-        'в файле нет таблицы со столбцами «было» и «стало»'
+        'в файле нет таблицы со столбцами «было» и «стало», ни столбца «Итого ДС»'
     )
 
 
@@ -286,6 +342,19 @@ def _lines_from_sheet(ws, header) -> list:
         if was is None and now is None:
             continue
         lines.append(Line(name, was or Decimal("0"), now or Decimal("0")))
+    return lines
+
+
+def _lines_from_sheet_single(ws, header) -> list:
+    lines = []
+    for row in range(header.row + 1, ws.max_row + 1):
+        name = _named(ws.cell(row=row, column=header.name_col).value)
+        if not name or TOTAL_ROW_RE.match(name.lower()):
+            continue
+        amount = ws.amount_at(row, header.amount_col)
+        if amount is None:
+            continue
+        lines.append(AmountLine(name, amount))
     return lines
 
 
@@ -325,27 +394,43 @@ def _current(was, now, baseline):
 def build_report(lines, estimate_totals=None) -> Report:
     """The workbook's rows measured against the estimate, line by line.
 
+    ``lines`` is a list of either ``Line`` (the «было»/«стало» pair) or
+    ``AmountLine`` (the alternate «Итого ДС» single-amount form) — never a
+    mix, since ``read_lines`` only ever reads a whole workbook one way. An
+    empty list carries no shape to tell the two apart and is read as the
+    «было»/«стало» kind, which computes the same empty report either way.
+
+    ``estimate_totals`` is ``{line: cost}`` from the project's own estimate, as
+    ``estimate_sections.read_section_totals`` returns it, and it is what the
+    increase is measured from in both forms.
+    """
+    # Normalized to Decimal regardless of what the caller passed in: the
+    # workbook's own amounts are Decimal (see _amount), and comparing or
+    # subtracting a mismatched Decimal/float pair below would raise.
+    estimate_totals = {
+        key: _as_decimal(value) for key, value in (estimate_totals or {}).items()
+    }
+    if lines and isinstance(lines[0], AmountLine):
+        return _build_report_from_amounts(lines, estimate_totals)
+    return _build_report_from_was_now(lines, estimate_totals)
+
+
+def _build_report_from_was_now(lines, estimate_totals) -> Report:
+    """The workbook's rows measured against the estimate, line by line.
+
     Lines are returned in the report's own order rather than the workbook's, so
     the kinds of work read down the accordion in the order they read down the
     comparison.
 
-    ``estimate_totals`` is ``{line: cost}`` from the project's own estimate, as
-    ``estimate_sections.read_section_totals`` returns it, and it is what the
-    increase is measured from. Every kind of work either of them names gets a
-    line: a section the workbook leaves out still belongs in a table that claims
-    to show the estimate's increase, and shows as unchanged with the workbook's
+    Every kind of work either the file or the estimate names gets a line: a
+    section the workbook leaves out still belongs in a table that claims to
+    show the estimate's increase, and shows as unchanged with the workbook's
     silence marked on it.
 
     Without an estimate the only baseline left is the workbook's own "было", and
     the report says as much through ``from_estimate`` rather than presenting the
     two as the same thing.
     """
-    # Normalized to Decimal regardless of what the caller passed in: the
-    # workbook's own was/now are Decimal (see _amount), and comparing or
-    # subtracting a mismatched Decimal/float pair below would raise.
-    estimate_totals = {
-        key: _as_decimal(value) for key, value in (estimate_totals or {}).items()
-    }
     from_estimate = bool(estimate_totals)
 
     gathered, unmatched = {}, []
@@ -396,6 +481,69 @@ def build_report(lines, estimate_totals=None) -> Report:
     total = Row(
         key=None, label="Итого", sources=[],
         was=sum(row.was for row in rows), now=sum(row.now for row in rows),
+        estimate=sum(row.estimate or Decimal("0") for row in rows) if from_estimate else None,
+        baseline=baseline_total, current=current_total,
+        delta=current_total - baseline_total,
+        percent=_percent(baseline_total, current_total),
+        source=FROM_NOW,
+    )
+    return Report(
+        rows=rows, total=total, unmatched=unmatched, from_estimate=from_estimate,
+    )
+
+
+def _build_report_from_amounts(lines, estimate_totals) -> Report:
+    """The alternate «Итого ДС» form measured against the estimate.
+
+    Each line already states its own doplata — there is no «было» to fall
+    back on the way the paired form does, so the estimate's own section
+    figure is the baseline outright, zero where the estimate doesn't price
+    the section at all (every rouble of an unpriced section is then new
+    work, the same rule ``_build_report_from_was_now`` applies to a section
+    the estimate never priced). Without an estimate at all there is no
+    baseline of any kind for this form — every section reads as new work
+    against a baseline of zero, same as ``predicted_increase`` does for the
+    file it already reads this way.
+    """
+    from_estimate = bool(estimate_totals)
+
+    gathered, unmatched = {}, []
+    for line in lines:
+        key = estimate_sections.classify(line.name)
+        if key is None:
+            unmatched.append(line.name)
+            continue
+        amount, sources = gathered.get(key, (Decimal("0"), []))
+        gathered[key] = (amount + _as_decimal(line.amount), sources + [line.name])
+
+    rows = []
+    for key in estimate_sections.CATEGORY_KEYS:
+        if key not in gathered and key not in estimate_totals:
+            continue
+        amount, sources = gathered.get(key, (Decimal("0"), []))
+        estimate = estimate_totals.get(key)
+        baseline = estimate or Decimal("0")
+        current = baseline + amount
+        if not baseline and not current:
+            continue
+        rows.append(Row(
+            key=key,
+            label=estimate_sections.CATEGORY_LABELS.get(key, key),
+            sources=sources, was=baseline, now=current, estimate=estimate,
+            baseline=baseline, current=current, delta=current - baseline,
+            percent=_percent(baseline, current), source=FROM_NOW,
+        ))
+
+    if unmatched:
+        logger.info(
+            "Разделы файла «Итого ДС» без строки в отчёте: %s", "; ".join(unmatched)
+        )
+
+    baseline_total = sum(row.baseline for row in rows)
+    current_total = sum(row.current for row in rows)
+    total = Row(
+        key=None, label="Итого", sources=[],
+        was=baseline_total, now=current_total,
         estimate=sum(row.estimate or Decimal("0") for row in rows) if from_estimate else None,
         baseline=baseline_total, current=current_total,
         delta=current_total - baseline_total,
