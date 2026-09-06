@@ -11,6 +11,7 @@ today's money.
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 from . import cost_increase, estimate_sections, extractors, passport as passport_module
 from . import project_filter
@@ -395,6 +396,63 @@ def _add_deviations(cells):
             )
     for cell in cells:
         _add_heat(cell)
+
+
+def _percent(baseline, current):
+    """Mirrors ``cost_increase._percent``: the increase as a share of
+    ``baseline``, or ``None`` where there is nothing to take a share of."""
+    if not baseline:
+        return None if current else 0.0
+    return (float(current) / float(baseline) - 1.0) * 100.0
+
+
+def predicted_report_as_increase(report, estimate_totals):
+    """A ``predicted_increase.Report`` reshaped into a ``cost_increase.Report``,
+    so ``build_increase_summary`` below can read predicted figures with the
+    exact same code that reads signed ones.
+
+    A predicted-increase row already states its own increase (no "было"/
+    "стало" pair to compare) — it names ``estimate_totals``'s matching
+    section as the baseline and its amount as the delta straight off,
+    the same arithmetic ``cost_increase.build_report`` does once it has
+    ``baseline`` and ``current``. ``estimate_totals`` empty (no estimate to
+    measure from) leaves every baseline at zero, so the report comes back
+    with ``from_estimate=False`` and no percentage — same as a signed report
+    with no estimate, except there is no "было" left to fall back to.
+    """
+    estimate_totals = {
+        key: (value if isinstance(value, Decimal) else Decimal(str(value)))
+        for key, value in (estimate_totals or {}).items()
+    }
+    from_estimate = bool(estimate_totals)
+
+    rows = []
+    for row in report.rows:
+        baseline = estimate_totals.get(row.key, Decimal("0"))
+        current = baseline + row.amount
+        rows.append(cost_increase.Row(
+            key=row.key, label=row.label, sources=row.sources,
+            was=baseline, now=current, estimate=estimate_totals.get(row.key),
+            baseline=baseline, current=current, delta=row.amount,
+            percent=_percent(baseline, current), source=cost_increase.FROM_NOW,
+        ))
+
+    baseline_total = sum((row.baseline for row in rows), Decimal("0"))
+    current_total = sum((row.current for row in rows), Decimal("0"))
+    total = cost_increase.Row(
+        key=None, label="Итого", sources=[],
+        was=baseline_total, now=current_total,
+        estimate=(
+            sum((row.estimate or Decimal("0") for row in rows), Decimal("0"))
+            if from_estimate else None
+        ),
+        baseline=baseline_total, current=current_total,
+        delta=current_total - baseline_total,
+        percent=_percent(baseline_total, current_total), source=cost_increase.FROM_NOW,
+    )
+    return cost_increase.Report(
+        rows=rows, total=total, unmatched=report.unmatched, from_estimate=from_estimate,
+    )
 
 
 def _apply_increase(slugs, costs_by_slug, reports):

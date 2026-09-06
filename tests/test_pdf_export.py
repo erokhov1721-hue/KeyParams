@@ -553,3 +553,45 @@ def test_the_project_pdf_includes_the_coefficients():
     assert "Расчётные коэффициенты" in text
     assert "500" in text
     assert "140" in text
+
+
+# --- сводка по удорожанию ----------------------------------------------------
+
+def test_the_investor_summary_pdf_shows_every_objects_numbers():
+    from app import investor_summary
+
+    lines = [cost_increase.Line("Кровля", 100.0, 130.0)]
+    report = cost_increase.build_report(lines, {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={"a": 50.0},
+    )
+
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table)
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Сводка по удорожанию" in text
+    assert "Объект А" in text
+    assert "100" in text  # смета
+    assert "50" in text  # прогнозируемое удорожание
+    assert "30" in text  # подписанное удорожание (стало 130 против сметы 100)
+    assert "180" in text  # итоговая стоимость (100 + 30 + 50)
+    assert "Итого" in text
+
+
+def test_the_investor_summary_pdf_shows_a_dash_for_missing_figures():
+    from app import investor_summary
+
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table)
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "—" in text

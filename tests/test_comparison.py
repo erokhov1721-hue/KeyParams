@@ -841,6 +841,41 @@ def _report(rows, estimate=None):
     return cost_increase.build_report(lines, estimate)
 
 
+def _predicted_report(rows):
+    """Отчёт по прогнозируемому удорожанию из готовых строк ``(название,
+    сумма)`` — через настоящий ``predicted_increase.build_report``, той же
+    причине, что и ``_report`` выше."""
+    from app import predicted_increase
+
+    lines = [predicted_increase.Line(name, Decimal(str(amount))) for name, amount in rows]
+    return predicted_increase.build_report(lines)
+
+
+def test_predicted_report_becomes_an_increase_against_the_estimate():
+    report = _predicted_report([("Кровля", 30.0)])
+    increase = comparison.predicted_report_as_increase(report, {"roof": 100.0})
+
+    row = increase.rows[0]
+    assert row.baseline == Decimal("100.0")
+    assert row.current == Decimal("130.0")
+    assert row.delta == Decimal("30.0")
+    assert row.percent == pytest.approx(30.0)
+    assert increase.from_estimate is True
+    assert increase.total.delta == Decimal("30.0")
+    assert increase.total.percent == pytest.approx(30.0)
+
+
+def test_predicted_report_without_an_estimate_keeps_the_money_but_not_the_percent():
+    report = _predicted_report([("Кровля", 30.0)])
+    increase = comparison.predicted_report_as_increase(report, {})
+
+    row = increase.rows[0]
+    assert row.baseline == Decimal("0")
+    assert row.delta == Decimal("30.0")
+    assert row.percent is None
+    assert increase.from_estimate is False
+
+
 def test_no_project_with_a_cost_increase_file_means_no_block():
     summary = comparison.build_increase_summary(
         ["a", "b"], {"a": _passport(), "b": _passport()}, {"a": None, "b": None}, NONE,

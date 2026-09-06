@@ -1,5 +1,5 @@
-"""Сводка для инвесторов: смета, прогнозируемое и подписанное удорожание
-по каждому объекту, и дельта между ними.
+"""Сводка для инвесторов: смета, подписанное и прогнозируемое удорожание
+по каждому объекту, и итоговая прогнозная стоимость — их сумма.
 
 Ничего здесь не читает файлы и не знает про Flask — три словаря (смета,
 отчёт по удорожанию, отчёт по прогнозируемому удорожанию) уже собраны в
@@ -17,13 +17,6 @@ def _money(value):
     if value is None:
         return "—"
     return f"{format_number(round(value))} ₽"
-
-
-def _signed_money(value):
-    if value is None:
-        return "—"
-    sign = "+" if value > 0 else "−" if value < 0 else ""
-    return f"{sign}{format_number(round(abs(value)))} ₽"
 
 
 def _estimate_total(estimate_totals):
@@ -52,6 +45,16 @@ def _signed_overrun(report):
     return float(report.total.delta)
 
 
+def _sum_present(values):
+    """Сумма тех значений из ``values``, что не ``None`` — как
+    ``_sum_known`` ниже, но по голому списку чисел, а не по колонке строк.
+    ``None``, только если все величины неизвестны: отсутствие одного из
+    трёх файлов не должно превращать всю итоговую стоимость в прочерк.
+    """
+    known = [v for v in values if v is not None]
+    return sum(known) if known else None
+
+
 def _sum_known(rows, key):
     """Сумма известных значений колонки и их количество — раздельно от
     общего числа объектов: объект без цифры не тянет сумму к нулю и не
@@ -67,7 +70,7 @@ def _row(slug, label, estimate_totals, report, predicted):
     # Прогноз приходит ``Decimal`` из отчёта по прогнозируемому удорожанию —
     # тот же перевод, что и у сметы и у подписанного удорожания выше.
     predicted = float(predicted) if predicted is not None else None
-    delta = predicted - signed if predicted is not None and signed is not None else None
+    total_cost = _sum_present([estimate, signed, predicted])
     return {
         "slug": slug,
         "label": label,
@@ -77,8 +80,8 @@ def _row(slug, label, estimate_totals, report, predicted):
         "predicted_display": _money(predicted),
         "signed": signed,
         "signed_display": _money(signed),
-        "delta": delta,
-        "delta_display": _signed_money(delta),
+        "total_cost": total_cost,
+        "total_cost_display": _money(total_cost),
     }
 
 
@@ -86,7 +89,7 @@ def _total_row(rows):
     estimate_total, estimate_count = _sum_known(rows, "estimate")
     predicted_total, predicted_count = _sum_known(rows, "predicted")
     signed_total, signed_count = _sum_known(rows, "signed")
-    delta_total, delta_count = _sum_known(rows, "delta")
+    total_cost_total, total_cost_count = _sum_known(rows, "total_cost")
     return {
         "label": TOTAL_LABEL,
         "count": len(rows),
@@ -96,8 +99,8 @@ def _total_row(rows):
         "predicted_count": predicted_count,
         "signed_display": _money(signed_total),
         "signed_count": signed_count,
-        "delta_display": _signed_money(delta_total),
-        "delta_count": delta_count,
+        "total_cost_display": _money(total_cost_total),
+        "total_cost_count": total_cost_count,
     }
 
 

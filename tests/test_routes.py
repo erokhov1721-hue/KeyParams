@@ -1,7 +1,6 @@
 import io
 import json
 import re
-import urllib.parse
 
 from openpyxl import Workbook
 
@@ -869,53 +868,6 @@ def test_compare_projects_redirects_to_the_selection_when_none_chosen(tmp_path):
 
     assert resp.status_code == 200
     assert resp.request.path == "/compare/select"
-
-
-def test_compare_dashboard_redirects_to_the_selection_when_none_chosen(tmp_path):
-    app = create_app(tmp_path)
-    client = app.test_client()
-
-    resp = client.get("/compare/dashboard", follow_redirects=True)
-
-    assert resp.status_code == 200
-    assert resp.request.path == "/compare/select"
-
-
-def test_compare_dashboard_shows_charts_without_the_tables(tmp_path):
-    # Дашборд — для показа, не для чтения по строкам: те же графики, что и
-    # на «Сравнить объекты», но без таблиц и формы поправок вокруг них.
-    app = create_app(tmp_path)
-    client = app.test_client()
-    slug1 = _make_project_with_passport(
-        tmp_path, "ПроектА", contract_price_rub=100.0, total_area_sqm=1.0,
-    )
-    slug2 = _make_project_with_passport(
-        tmp_path, "ПроектБ", contract_price_rub=150.0, total_area_sqm=1.0,
-    )
-
-    body = client.get(f"/compare/dashboard?slug={slug1}&slug={slug2}").get_data(as_text=True)
-
-    assert "Дашборд сравнения" in body
-    assert 'id="chart-price_per_sqm"' in body
-    displays = [row["display"] for row in _bar_chart_data(body, "price_per_sqm")["rows"]]
-    assert "150 ₽" in displays
-    assert "Общие сведения" not in body
-    assert "adjust-form" not in body
-
-
-def test_compare_projects_page_links_to_its_dashboard(tmp_path):
-    app = create_app(tmp_path)
-    client = app.test_client()
-    slug1 = _make_project_with_passport(tmp_path, "ПроектА")
-    slug2 = _make_project_with_passport(tmp_path, "ПроектБ")
-
-    body = client.get(f"/compare?slug={slug1}&slug={slug2}").get_data(as_text=True)
-
-    match = re.search(r'href="(/compare/dashboard\?[^"]*)"', body)
-    assert match is not None
-    href = urllib.parse.unquote(match.group(1))
-    assert slug1 in href
-    assert slug2 in href
 
 
 # --- выбор проектов для сравнения живёт на своей странице ---
@@ -3097,6 +3049,39 @@ def test_compare_vs_average_pdf_redirects_without_a_valid_selection(tmp_path):
     assert no_peers.status_code == 302
 
 
+def test_investor_summary_page_offers_to_save_the_pdf(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Тест")
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    assert "Сохранить в PDF" in body
+    assert "/investors/pdf" in body
+
+
+def test_investor_summary_pdf_returns_a_pdf_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Тест")
+
+    resp = client.get("/investors/pdf")
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/pdf"
+    assert resp.data.startswith(b"%PDF")
+
+
+def test_investor_summary_pdf_redirects_when_there_are_no_projects(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = client.get("/investors/pdf")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/investors")
+
+
 def test_section_table_corrections_are_off_by_default(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -3696,12 +3681,37 @@ def test_an_estimate_of_nothing_does_not_put_the_word_none_on_the_page(tmp_path)
     assert "None" not in body
 
 
+# --- страница сравнения не прыгает наверх после выбора значений -------------
+
+def test_reload_triggering_controls_point_back_to_their_own_block(tmp_path):
+    # Форма НДС/инфляции/удорожания, выбор пары объектов и вкладки группировки
+    # средних все перегружают страницу через обычный GET — без якоря в адресе
+    # браузер после такой перезагрузки прокручивает страницу наверх, а не туда,
+    # где человек только что что-то выбрал.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "Левый", [("8. Кровля", 100.0)])
+    b = _project_with_offer(tmp_path, "Правый", [("8. Кровля", 100.0)])
+
+    body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
+
+    assert 'id="compare-sections"' in body
+    assert 'action="/compare#compare-sections"' in body
+    assert 'id="compare-averages"' in body
+    assert '#compare-averages">Все объекты</a>' in body
+    assert 'id="compare-pair"' in body
+    assert 'action="/compare#compare-pair"' in body
+
+
 # --- удорожание на странице сравнения ---------------------------------------
 
 def _project_with_increase(root, client, name, sections, rows, **fields):
-    """Проект со сметой и загруженным файлом удорожания."""
+    """Проект со сметой и загруженным файлом прогнозируемого удорожания —
+    «Удорожание проектов» в сравнении читает именно его, а не подписанное
+    удорожание. ``rows`` — ``(название, сумма предполагаемого удорожания)``.
+    """
     slug = _project_with_offer(root, name, sections, **fields)
-    _upload_increase(client, slug, _increase_bytes(rows))
+    _upload_predicted_increase(client, slug, _predicted_increase_bytes(rows))
     return slug
 
 
@@ -3710,11 +3720,11 @@ def test_the_comparison_shows_the_increase_block(tmp_path):
     client = app.test_client()
     a = _project_with_increase(
         tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_300_000.0)],
+        [("Кровля", 300_000.0)],
     )
     b = _project_with_increase(
         tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_100_000.0)],
+        [("Кровля", 100_000.0)],
     )
 
     body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
@@ -3740,11 +3750,11 @@ def test_the_works_table_has_its_own_collapse_toggle(tmp_path):
     client = app.test_client()
     a = _project_with_increase(
         tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_300_000.0)],
+        [("Кровля", 300_000.0)],
     )
     b = _project_with_increase(
         tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_100_000.0)],
+        [("Кровля", 100_000.0)],
     )
 
     body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
@@ -3761,15 +3771,18 @@ def test_the_works_table_has_its_own_collapse_toggle(tmp_path):
 def test_the_works_table_says_how_often_a_kind_of_work_gets_dearer(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
+    # Фасад — на обоих объектах ненулевое, но ниже порога «подорожало»
+    # (INCREASE_EPSILON = 1 ₽): строка остаётся в таблице частот, но
+    # не считается подорожанием ни у одного из двух.
     a = _project_with_increase(
         tmp_path, client, "Левый",
         [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
-        [("Кровля", 100.0, 110.0), ("Фасадные работы", 100.0, 100.0)],
+        [("Кровля", 10.0), ("Фасадные работы", 0.5)],
     )
     b = _project_with_increase(
         tmp_path, client, "Правый",
         [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
-        [("Кровля", 100.0, 120.0), ("Фасадные работы", 100.0, 100.0)],
+        [("Кровля", 20.0), ("Фасадные работы", 0.3)],
     )
 
     body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
@@ -3795,7 +3808,7 @@ def test_a_single_project_gets_the_figures_without_a_one_bar_chart(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     slug = _project_with_increase(
-        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 10.0)],
     )
 
     body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
@@ -3804,16 +3817,16 @@ def test_a_single_project_gets_the_figures_without_a_one_bar_chart(tmp_path):
     assert "Общее увеличение стоимости по проектам" not in body
 
 
-def test_a_broken_cost_increase_file_does_not_break_the_comparison(tmp_path):
+def test_a_broken_predicted_increase_file_does_not_break_the_comparison(tmp_path):
     from app import storage
 
     app = create_app(tmp_path)
     client = app.test_client()
     a = _project_with_increase(
-        tmp_path, client, "Целый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+        tmp_path, client, "Целый", [("8. Кровля", 100.0)], [("Кровля", 10.0)],
     )
     b = _project_with_offer(tmp_path, "Битый", [("8. Кровля", 100.0)])
-    storage.cost_increase_path(tmp_path, b).write_bytes(b"not a workbook")
+    storage.predicted_increase_path(tmp_path, b).write_bytes(b"not a workbook")
 
     resp = client.get(f"/compare?slug={a}&slug={b}")
 
@@ -3829,10 +3842,10 @@ def test_the_pdf_carries_the_increase_block_too(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     a = _project_with_increase(
-        tmp_path, client, "Левый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 130.0)],
+        tmp_path, client, "Левый", [("8. Кровля", 100.0)], [("Кровля", 30.0)],
     )
     b = _project_with_increase(
-        tmp_path, client, "Правый", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+        tmp_path, client, "Правый", [("8. Кровля", 100.0)], [("Кровля", 10.0)],
     )
 
     resp = client.get(f"/compare/pdf?slug={a}&slug={b}")
@@ -3845,7 +3858,7 @@ def test_the_works_table_is_sortable_like_the_sections_one(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     slug = _project_with_increase(
-        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 100.0, 110.0)],
+        tmp_path, client, "Один", [("8. Кровля", 100.0)], [("Кровля", 10.0)],
     )
 
     body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
@@ -3903,11 +3916,11 @@ def test_the_comparison_shows_the_increase_per_square_metre(tmp_path):
     client = app.test_client()
     a = _project_with_increase(
         tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+        [("Кровля", 300_000.0)], total_area_sqm=1000.0,
     )
     b = _project_with_increase(
         tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=1000.0,
+        [("Кровля", 100_000.0)], total_area_sqm=1000.0,
     )
 
     body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
@@ -3927,11 +3940,11 @@ def test_a_project_without_an_area_leaves_the_per_metre_figures_out(tmp_path):
     client = app.test_client()
     a = _project_with_increase(
         tmp_path, client, "С площадью", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+        [("Кровля", 300_000.0)], total_area_sqm=1000.0,
     )
     b = _project_with_increase(
         tmp_path, client, "Без площади", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=None,
+        [("Кровля", 100_000.0)], total_area_sqm=None,
     )
 
     body = client.get(f"/compare?slug={a}&slug={b}").get_data(as_text=True)
@@ -3949,11 +3962,11 @@ def test_the_pdf_carries_the_per_metre_figures_too(tmp_path):
     client = app.test_client()
     a = _project_with_increase(
         tmp_path, client, "Левый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_300_000.0)], total_area_sqm=1000.0,
+        [("Кровля", 300_000.0)], total_area_sqm=1000.0,
     )
     b = _project_with_increase(
         tmp_path, client, "Правый", [("8. Кровля", 1_000_000.0)],
-        [("Кровля", 1_000_000.0, 1_100_000.0)], total_area_sqm=1000.0,
+        [("Кровля", 100_000.0)], total_area_sqm=1000.0,
     )
 
     resp = client.get(f"/compare/pdf?slug={a}&slug={b}")

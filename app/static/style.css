@@ -1264,23 +1264,6 @@ select option {
   padding: 24px 28px;
 }
 
-/* Дашборд сравнения (кнопка «Дашборд» на странице сравнения) — те же
-   графики, но один в ряд вместо сетки в две колонки: здесь их смотрят,
-   а не читают строку за строкой, и места под каждый стоит дать больше. */
-.dashboard-charts {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.dashboard-chart-card {
-  padding: 32px 36px;
-}
-
-.dashboard-chart-card .chart-title {
-  font-size: 20px;
-}
-
 .chart-title {
   margin: 0 0 18px;
   font-size: 16px;

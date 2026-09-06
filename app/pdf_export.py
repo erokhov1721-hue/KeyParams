@@ -717,13 +717,14 @@ def _increase_block(increase, styles, page_width):
         return []
 
     sub = (
-        f'«Стало» против сметы, по файлам удорожания. Учтены '
+        f'Прогнозируемое удорожание против сметы, по файлам прогнозируемого '
+        f'удорожания. Учтены '
         f'{increase["projects_with_data"]} из {increase["projects_total"]} выбранных '
-        f'проектов — у остальных файла удорожания нет.'
+        f'проектов — у остальных файла прогнозируемого удорожания нет.'
     )
     if increase["without_estimate"]:
         names = "», «".join(_esc(name) for name in increase["without_estimate"])
-        sub += f' У «{names}» нет сметы, поэтому там считалось от столбца «было».'
+        sub += f' У «{names}» нет сметы, поэтому там есть сумма удорожания, но не процент.'
 
     story = [
         Paragraph("Удорожание проектов", styles["heading"]),
@@ -1189,6 +1190,92 @@ def build_class_average_pdf(result, project_name) -> bytes:
     story.append(PageBreak())
     story += _class_average_chart_block(result, project_name, styles, page_width, page_height)
 
+    doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
+    return buffer.getvalue()
+
+
+# --- сводка по удорожанию ----------------------------------------------------
+
+def _investor_summary_table_block(table, styles, page_width):
+    label_w = min(200.0, page_width * 0.3)
+    columns = 4
+    rest = (page_width - label_w) / columns
+    data = [[
+        Paragraph("Объект", styles["head"]),
+        Paragraph("Смета", styles["head"]),
+        Paragraph("Подписанное удорожание", styles["head"]),
+        Paragraph("Прогнозируемое удорожание", styles["head"]),
+        Paragraph("Итоговая стоимость", styles["head"]),
+    ]]
+    for row in table["rows"]:
+        data.append([
+            Paragraph(_esc(row["label"]), styles["cell"]),
+            Paragraph(row["estimate_display"], styles["cell_right"]),
+            Paragraph(row["signed_display"], styles["cell_right"]),
+            Paragraph(row["predicted_display"], styles["cell_right"]),
+            Paragraph(row["total_cost_display"], styles["cell_right"]),
+        ])
+
+    total = table["total"]
+    data.append([
+        Paragraph(total["label"], styles["cell_label"]),
+        [
+            Paragraph(total["estimate_display"], styles["cell_right"]),
+            Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
+        ],
+        [
+            Paragraph(total["signed_display"], styles["cell_right"]),
+            Paragraph(f'{total["signed_count"]} из {total["count"]}', styles["note"]),
+        ],
+        [
+            Paragraph(total["predicted_display"], styles["cell_right"]),
+            Paragraph(f'{total["predicted_count"]} из {total["count"]}', styles["note"]),
+        ],
+        [
+            Paragraph(total["total_cost_display"], styles["cell_right"]),
+            Paragraph(f'{total["total_cost_count"]} из {total["count"]}', styles["note"]),
+        ],
+    ])
+
+    tbl = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return tbl
+
+
+def build_investor_summary_pdf(table) -> bytes:
+    """«Сводка по удорожанию» — та же таблица, что на экране, одним файлом.
+
+    ``table`` — то, что вернул ``investor_summary.build_table``; вызывающий
+    отвечает за то, что в нём есть хотя бы одна строка, — файл без единого
+    объекта на этой странице не бывает.
+    """
+    _ensure_fonts()
+    styles = _styles()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=PAGE_SIZE, title="Сводка по удорожанию",
+        leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
+    )
+    page_width = PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
+
+    story = [
+        Paragraph("Сводка по удорожанию", styles["title"]),
+        Paragraph(
+            "По каждому объекту: смета, подписанное и прогнозируемое "
+            "удорожание из файла объекта. Итоговая стоимость — их сумма.",
+            styles["sub"],
+        ),
+        _investor_summary_table_block(table, styles, page_width),
+    ]
     doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()
 

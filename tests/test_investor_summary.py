@@ -89,7 +89,7 @@ def test_report_not_measured_against_an_estimate_is_a_dash_not_a_misleading_delt
     assert table["rows"][0]["signed"] is None
 
 
-def test_delta_is_predicted_minus_signed():
+def test_total_cost_is_estimate_plus_signed_plus_predicted():
     report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
@@ -97,31 +97,31 @@ def test_delta_is_predicted_minus_signed():
         cost_increase_reports_by_slug={"a": report},
         predicted_increase_by_slug={"a": 50.0},
     )
-    assert table["rows"][0]["delta"] == 20.0
+    # смета 100 + подписанное 30 (130 против сметы 100) + прогноз 50
+    assert table["rows"][0]["total_cost"] == 180.0
 
 
-def test_delta_is_a_dash_when_either_side_is_missing():
-    table = investor_summary.build_table(
-        ["a", "b"], {"a": "А", "b": "Б"},
-        estimate_totals_by_slug={"a": {}, "b": {}},
-        cost_increase_reports_by_slug={"a": None, "b": None},
-        predicted_increase_by_slug={"a": 50.0},
-    )
-    rows_by_slug = {row["slug"]: row for row in table["rows"]}
-    assert rows_by_slug["a"]["delta"] is None
-    assert rows_by_slug["b"]["delta"] is None
-
-
-def test_delta_is_not_clamped_when_signed_exceeds_predicted():
-    report = _report([("Кровля", 100.0, 200.0)], {"roof": 100.0})
+def test_total_cost_sums_whatever_is_known_and_ignores_the_rest():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
-        estimate_totals_by_slug={"a": {"roof": 100.0}},
-        cost_increase_reports_by_slug={"a": report},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
         predicted_increase_by_slug={"a": 50.0},
     )
-    assert table["rows"][0]["delta"] == -50.0
-    assert table["rows"][0]["delta_display"].startswith("−")
+    # ни сметы, ни подписанного удорожания нет — итог не дыра, а просто
+    # известная часть.
+    assert table["rows"][0]["total_cost"] == 50.0
+
+
+def test_total_cost_is_a_dash_when_nothing_at_all_is_known():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+    assert table["rows"][0]["total_cost"] is None
+    assert table["rows"][0]["total_cost_display"] == "—"
 
 
 def test_rows_are_sorted_by_project_name():
@@ -147,6 +147,8 @@ def test_total_row_sums_only_known_values_and_counts_them():
     assert total["estimate_display"] == "100 ₽"
     assert total["predicted_count"] == 2
     assert total["predicted_display"] == "30 ₽"
+    assert total["total_cost_count"] == 2
+    assert total["total_cost_display"] == "130 ₽"
 
 
 def test_total_row_is_a_dash_when_nothing_is_known_for_that_column():

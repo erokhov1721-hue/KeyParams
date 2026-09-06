@@ -171,9 +171,9 @@ def compare_projects():
     }
     adjustments = comparison.adjustments_from_args(request.args)
     costs = _section_costs(root, slugs)
-    # Прочитано один раз и передаётся и в таблицу разделов (если включена
-    # поправка на удорожание), и в блок «Удорожание проектов» ниже — второе
-    # чтение тех же файлов ничего нового не даёт.
+    # Прочитано один раз и передаётся в таблицу разделов, если включена
+    # поправка на подписанное удорожание — второе чтение тех же файлов
+    # ничего нового не даёт.
     increase_reports = _increase_reports(root, slugs, costs)
     use_increase = bool(request.args.get("increase_on"))
     predicted_reports = _predicted_increase_reports(root, slugs)
@@ -204,7 +204,8 @@ def compare_projects():
         ),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
-            slugs, passports, increase_reports, adjustments,
+            slugs, passports,
+            _predicted_increase_as_cost_increase(predicted_reports, costs), adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments, group_by=group_by,
@@ -215,35 +216,10 @@ def compare_projects():
     )
 
 
-@bp.route("/compare/dashboard", methods=["GET"])
-def compare_dashboard():
-    """Те же графики, что и на «Сравнить объекты», без таблиц и формы
-    поправок вокруг — для показа, не для чтения по строкам. НДС и инфляция
-    сюда не попадают: build_comparison_charts их не принимает, эти графики
-    от поправок не зависят."""
-    root = _projects_root()
-    slugs = _selected_compare_slugs(root)
-    if not slugs:
-        return redirect(url_for("main.compare_select"))
-
-    passports = {
-        slug: passport_module.load_passport(storage.passport_path(root, slug))
-        for slug in slugs
-    }
-    charts, colors = _comparison_charts(root, slugs, passports)
-    return render_template(
-        "compare_dashboard.html",
-        slugs=slugs,
-        passports=passports,
-        charts=charts,
-        project_colors=colors,
-    )
-
-
 def _comparison_charts(root, slugs, passports):
-    """``(charts, project_colors)`` для обеих страниц графиков сравнения —
-    «Сравнить объекты» и её дашборда. Общее место, чтобы список графиков и
-    формулы коэффициентов не пришлось держать в двух местах одинаковыми."""
+    """``(charts, project_colors)`` — коэффициенты и графики «Сравнить
+    объекты» одним местом, чтобы список графиков и формулы коэффициентов
+    не расходились между собой."""
     concrete_coefficients = _concrete_coefficients(root, slugs, passports)
     facade_coefficients = _facade_coefficients(root, slugs, passports)
     concrete_materials_per_m3, concrete_works_per_m3 = _concrete_cost_per_m3(
@@ -358,6 +334,21 @@ def _predicted_increase_totals(reports):
     return {slug: report.total.amount for slug, report in reports.items() if report}
 
 
+def _predicted_increase_as_cost_increase(reports, costs):
+    """``{slug: cost_increase.Report | None}`` from predicted-increase
+    reports — what the «Удорожание проектов» block on the comparison page
+    reads. Measured against the same смета totals as the section table
+    (``costs``), so this figure and the one next to it never disagree.
+    """
+    return {
+        slug: (
+            comparison.predicted_report_as_increase(report, costs.get(slug) or {})
+            if report is not None else None
+        )
+        for slug, report in reports.items()
+    }
+
+
 @bp.route("/compare/pdf", methods=["GET"])
 def compare_projects_pdf():
     root = _projects_root()
@@ -408,7 +399,8 @@ def compare_projects_pdf():
         pair=comparison.build_pair_cards(left, right, passports, costs, adjustments),
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
-            slugs, passports, increase_reports, adjustments,
+            slugs, passports,
+            _predicted_increase_as_cost_increase(predicted_reports, costs), adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments,
@@ -498,20 +490,15 @@ def compare_vs_average_pdf():
     )
 
 
-@bp.route("/investors", methods=["GET"])
-def investor_summary_page():
-    """Сводка для инвесторов: смета, прогнозируемое и подписанное
-    удорожание по каждому объекту, и дельта между ними — по всем
-    объектам сразу, а не только по выбранным для сравнения.
-    """
-    root = _projects_root()
-    slugs = storage.list_project_slugs(root)
+def _investor_summary_table(root, slugs):
+    """Строки инвесторской сводки для ``slugs`` — общая для страницы и
+    PDF-выгрузки, чтобы цифры в них не могли разойтись."""
     passports = {slug: _safe_passport(root, slug) for slug in slugs}
     # Смета читается один раз на объект и переиспользуется для отчёта по
     # удорожанию (ему нужна та же цифра как база для сравнения) — иначе
     # тяжёлый xlsx на каждый объект разбирался бы дважды подряд.
     estimate_totals = {slug: _estimate_totals(root, slug) for slug in slugs}
-    table = investor_summary.build_table(
+    return investor_summary.build_table(
         slugs,
         {slug: passports[slug].get("project_name") or slug for slug in slugs},
         estimate_totals,
@@ -521,7 +508,35 @@ def investor_summary_page():
         },
         _predicted_increase_totals(_predicted_increase_reports(root, slugs)),
     )
+
+
+@bp.route("/investors", methods=["GET"])
+def investor_summary_page():
+    """Сводка для инвесторов: смета, прогнозируемое и подписанное
+    удорожание по каждому объекту, и дельта между ними — по всем
+    объектам сразу, а не только по выбранным для сравнения.
+    """
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    table = _investor_summary_table(root, slugs)
     return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
+
+
+@bp.route("/investors/pdf", methods=["GET"])
+def investor_summary_pdf():
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    if not slugs:
+        # Нечего класть в файл — назад на страницу, она сама объяснит, что
+        # объектов пока нет, а не отдаст пустой PDF.
+        return redirect(url_for("main.investor_summary_page"))
+    table = _investor_summary_table(root, slugs)
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=svodka_po_udorozhaniyu.pdf"},
+    )
 
 
 @bp.route("/projects/new", methods=["GET"])
