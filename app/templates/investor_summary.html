@@ -140,11 +140,11 @@
   <p class="chart-empty">Недостаточно данных, чтобы сравнить смету с итоговой стоимостью.</p>
   {% endif %}
 
-  <h3 class="pair-subtitle">Разделы сметы, которые дорожают по прогнозируемому удорожанию</h3>
-  {% if not row.has_predicted_report %}
-  <p class="chart-empty">Нет файла прогнозируемого удорожания.</p>
+  <h3 class="pair-subtitle">Разделы сметы, которые дорожают</h3>
+  {% if not row.has_increase_data %}
+  <p class="chart-empty">Не загружен ни файл удорожания, ни файл прогнозируемого удорожания.</p>
   {% elif not row.increasing_sections %}
-  <p class="chart-empty">По прогнозируемому удорожанию ни один раздел сметы не дорожает.</p>
+  <p class="chart-empty">По подписанному и прогнозируемому удорожанию ни один раздел сметы не дорожает.</p>
   {% else %}
   <div class="sections-table-wrap">
     <table class="sections-table investor-detail-table">

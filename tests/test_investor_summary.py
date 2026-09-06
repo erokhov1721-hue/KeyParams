@@ -256,7 +256,7 @@ def test_a_section_new_to_the_estimate_is_named_new_work_not_a_dash():
     assert sections["Благоустройство"]["percent_display"] == "новые работы"
 
 
-def test_no_predicted_file_means_no_increasing_sections():
+def test_neither_file_means_no_increasing_sections():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},
@@ -266,10 +266,10 @@ def test_no_predicted_file_means_no_increasing_sections():
         area_by_slug={},
     )
     assert table["rows"][0]["increasing_sections"] == []
-    assert table["rows"][0]["has_predicted_report"] is False
+    assert table["rows"][0]["has_increase_data"] is False
 
 
-def test_a_predicted_file_marks_the_object_as_having_a_report():
+def test_a_predicted_file_marks_the_object_as_having_data():
     predicted = _predicted_report([("Кровля", 30.0)])
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
@@ -279,7 +279,66 @@ def test_a_predicted_file_marks_the_object_as_having_a_report():
         predicted_increase_reports_by_slug={"a": predicted},
         area_by_slug={},
     )
-    assert table["rows"][0]["has_predicted_report"] is True
+    assert table["rows"][0]["has_increase_data"] is True
+
+
+def test_a_signed_file_without_a_predicted_one_still_lists_increasing_sections():
+    # Объект вроде Veer: файл удорожания загружен, прогнозируемого — нет.
+    # Карточка деталей должна показывать раздел, который подорожал по
+    # подписанному файлу, а не молчать, будто данных вообще нет.
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": None},
+        area_by_slug={},
+    )
+    row = table["rows"][0]
+    assert row["has_increase_data"] is True
+    sections = row["increasing_sections"]
+    assert len(sections) == 1
+    assert sections[0]["label"] == "Кровли"
+    assert sections[0]["current_display"] == "130 ₽"
+    assert sections[0]["percent_display"] == "+30,0 %"
+
+
+def test_a_signed_file_without_an_estimate_does_not_count_toward_increasing_sections():
+    # Без сметы «стало» подписанного файла сравнивается само с собой
+    # («было»/«стало»), а не со сметой — той же базой, что и у прогноза.
+    # Смешивать эту дельту с прогнозной значило бы складывать разное как одно.
+    report = _report([("Кровля", 100.0, 130.0)], estimate=None)
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": None},
+        area_by_slug={},
+    )
+    row = table["rows"][0]
+    assert row["has_increase_data"] is False
+    assert row["increasing_sections"] == []
+
+
+def test_signed_and_predicted_increase_combine_on_the_same_section():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    predicted = _predicted_report([("Кровля", 20.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    sections = table["rows"][0]["increasing_sections"]
+
+    assert len(sections) == 1
+    # 30 подписанных + 20 прогноза против сметы в 100 -> 150, +50 %.
+    assert sections[0]["current_display"] == "150 ₽"
+    assert sections[0]["percent_display"] == "+50,0 %"
 
 
 # --- смета против итоговой стоимости ---

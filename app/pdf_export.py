@@ -1280,17 +1280,20 @@ def _investor_detail_pdf_block(row, styles, page_width):
         ))
 
     story.append(Paragraph(
-        "Разделы сметы, которые дорожают по прогнозируемому удорожанию",
+        "Разделы сметы, которые дорожают",
         styles["subheading"],
     ))
 
-    if not row["has_predicted_report"]:
-        story.append(Paragraph("Нет файла прогнозируемого удорожания.", styles["sub"]))
+    if not row["has_increase_data"]:
+        story.append(Paragraph(
+            "Не загружен ни файл удорожания, ни файл прогнозируемого удорожания.",
+            styles["sub"],
+        ))
         return story
     sections = row["increasing_sections"]
     if not sections:
         story.append(Paragraph(
-            "По прогнозируемому удорожанию ни один раздел сметы не дорожает.",
+            "По подписанному и прогнозируемому удорожанию ни один раздел сметы не дорожает.",
             styles["sub"],
         ))
         return story

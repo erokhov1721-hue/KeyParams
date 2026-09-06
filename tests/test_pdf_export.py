@@ -622,7 +622,7 @@ def test_the_investor_summary_pdf_with_a_detail_row_drops_the_total_and_adds_the
 
     assert "Объект А: смета и удорожание" in text
     assert "Смета" in text and "итоговая стоимость" in text
-    assert "Разделы сметы, которые дорожают по прогнозируемому удорожанию" in text
+    assert "Разделы сметы, которые дорожают" in text
     assert "Кровли" in text
     assert "Объект целиком" in text
     # Строка "Итого" (с подписью "N из N" под каждой суммой) суммирует все
@@ -630,7 +630,7 @@ def test_the_investor_summary_pdf_with_a_detail_row_drops_the_total_and_adds_the
     assert "из 1" not in text
 
 
-def test_the_investor_summary_pdf_detail_card_says_when_theres_no_predicted_file():
+def test_the_investor_summary_pdf_detail_card_says_when_theres_no_increase_file():
     from app import investor_summary
 
     table = investor_summary.build_table(
@@ -643,4 +643,4 @@ def test_the_investor_summary_pdf_detail_card_says_when_theres_no_predicted_file
     pdf_bytes = pdf_export.build_investor_summary_pdf(table, table["rows"][0])
     text = "\n".join(_page_texts(pdf_bytes))
 
-    assert "Нет файла прогнозируемого удорожания." in text
+    assert "Не загружен ни файл удорожания, ни файл прогнозируемого удорожания." in text

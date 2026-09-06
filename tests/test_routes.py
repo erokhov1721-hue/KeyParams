@@ -3135,7 +3135,7 @@ def test_investor_summary_has_a_hidden_detail_panel_per_object(tmp_path):
 
     assert f'<div class="card investor-detail" data-slug="{slug}" hidden>' in body
     assert "Смета → итоговая стоимость" in body
-    assert "Разделы сметы, которые дорожают по прогнозируемому удорожанию" in body
+    assert "Разделы сметы, которые дорожают" in body
 
 
 def test_investor_summary_detail_lists_only_sections_that_got_dearer(tmp_path):
@@ -3158,7 +3158,7 @@ def test_investor_summary_detail_lists_only_sections_that_got_dearer(tmp_path):
     assert "+30,0 %" in detail
 
 
-def test_investor_summary_detail_says_when_there_is_no_predicted_file(tmp_path):
+def test_investor_summary_detail_says_when_there_is_no_increase_file(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     _project_with_offer(tmp_path, "БезУдорожания", [("8. Кровля", 100.0)])
@@ -3166,7 +3166,23 @@ def test_investor_summary_detail_says_when_there_is_no_predicted_file(tmp_path):
     body = client.get("/investors").get_data(as_text=True)
     detail = body[body.index('class="card investor-detail"'):]
 
-    assert "Нет файла прогнозируемого удорожания." in detail
+    assert "Не загружен ни файл удорожания, ни файл прогнозируемого удорожания." in detail
+
+
+def test_investor_summary_detail_lists_sections_from_a_signed_file_without_a_predicted_one(tmp_path):
+    # Как объект Veer: файл удорожания загружен, прогнозируемого — нет.
+    # Карточка деталей должна всё равно показать подорожавший раздел.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "Слева", [("8. Кровля", 100.0)])
+    _upload_increase(client, a, _increase_bytes([("Кровля", 100.0, 130.0)]))
+
+    body = client.get("/investors").get_data(as_text=True)
+    detail = body[body.index('class="card investor-detail"'):]
+
+    assert "Кровли" in detail
+    assert "130 ₽" in detail
+    assert "+30,0 %" in detail
 
 
 def test_investor_summary_detail_shows_the_estimate_vs_total_bar(tmp_path):

@@ -73,34 +73,49 @@ def _percent(baseline, current):
     return (float(current) / float(baseline) - 1.0) * 100.0
 
 
-def _increasing_sections(predicted_report, estimate_totals, area):
-    """Разделы сметы, которые дорожают по прогнозируемому удорожанию —
-    крупнейший ₽/м² первым. ``[]`` без файла прогнозируемого удорожания:
-    сравнивать тогда не с чем.
+def _increasing_sections(report, predicted_report, estimate_totals, area):
+    """Разделы сметы, которые дорожают — по подписанному и прогнозируемому
+    удорожанию вместе, крупнейший ₽/м² первым. ``[]``, когда нет ни одного
+    из двух источников: сравнивать тогда не с чем.
 
-    Прогноз уже сам по себе — сумма удорожания по разделу (см.
+    Подписанное удорожание считается только когда есть смета, от которой
+    его дельта отмерена (``report.from_estimate``) — иначе его «стало»
+    сравнивалось само с собой, а не со сметой, и складывать его с прогнозом,
+    который всегда мерен от сметы, значило бы сравнивать разное как одно.
+
+    Прогноз сам по себе — сумма удорожания по разделу (см.
     ``predicted_increase``, там нет пары «было»/«стало»), поэтому смета
     раздела берётся отдельно как база: раздел, которого в смете нет,
     стартует с нуля, и любая прогнозируемая сумма по нему — целиком
     новая работа.
     """
-    if predicted_report is None:
+    if predicted_report is None and (report is None or not report.from_estimate):
         return []
     estimate_totals = {
         key: (value if isinstance(value, Decimal) else Decimal(str(value)))
         for key, value in (estimate_totals or {}).items()
     }
+    amounts, labels = {}, {}
+    if report is not None and report.from_estimate:
+        for row in report.rows:
+            amounts[row.key] = amounts.get(row.key, Decimal("0")) + row.delta
+            labels[row.key] = row.label
+    if predicted_report is not None:
+        for row in predicted_report.rows:
+            amounts[row.key] = amounts.get(row.key, Decimal("0")) + row.amount
+            labels[row.key] = row.label
+
     increasing = sorted(
-        (row for row in predicted_report.rows if row.amount > 0),
-        key=lambda row: row.amount, reverse=True,
+        ((key, amount) for key, amount in amounts.items() if amount > 0),
+        key=lambda pair: pair[1], reverse=True,
     )
     sections = []
-    for row in increasing:
-        baseline = estimate_totals.get(row.key, Decimal("0"))
-        current = baseline + row.amount
+    for key, amount in increasing:
+        baseline = estimate_totals.get(key, Decimal("0"))
+        current = baseline + amount
         per_sqm = float(current) / area if area else None
         sections.append({
-            "label": row.label,
+            "label": labels[key],
             "estimate_display": _money(float(baseline)),
             "current_display": _money(float(current)),
             "per_sqm_display": _money_per_sqm(per_sqm),
@@ -170,8 +185,12 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
         "total_cost_display": _money(total_cost),
         "total_per_sqm_display": _money_per_sqm(total_per_sqm),
         "estimate_vs_total": _estimate_vs_total(estimate, total_cost),
-        "has_predicted_report": predicted_report is not None,
-        "increasing_sections": _increasing_sections(predicted_report, estimate_totals, area),
+        "has_increase_data": predicted_report is not None or (
+            report is not None and report.from_estimate
+        ),
+        "increasing_sections": _increasing_sections(
+            report, predicted_report, estimate_totals, area,
+        ),
     }
 
 
