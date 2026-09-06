@@ -1196,7 +1196,7 @@ def build_class_average_pdf(result, project_name) -> bytes:
 
 # --- сводка по удорожанию ----------------------------------------------------
 
-def _investor_summary_table_block(table, styles, page_width):
+def _investor_summary_table_block(table, styles, page_width, show_total=True):
     label_w = min(200.0, page_width * 0.3)
     columns = 4
     rest = (page_width - label_w) / columns
@@ -1216,25 +1216,109 @@ def _investor_summary_table_block(table, styles, page_width):
             Paragraph(row["total_cost_display"], styles["cell_right"]),
         ])
 
-    total = table["total"]
+    # Строка «Итого» суммирует все объекты сводки — там, где выбран один
+    # объект (на экране это фильтр, здесь ``show_total=False``), она не
+    # отвечает ни на какой вопрос и в файл не попадает.
+    if show_total:
+        total = table["total"]
+        data.append([
+            Paragraph(total["label"], styles["cell_label"]),
+            [
+                Paragraph(total["estimate_display"], styles["cell_right"]),
+                Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
+            ],
+            [
+                Paragraph(total["signed_display"], styles["cell_right"]),
+                Paragraph(f'{total["signed_count"]} из {total["count"]}', styles["note"]),
+            ],
+            [
+                Paragraph(total["predicted_display"], styles["cell_right"]),
+                Paragraph(f'{total["predicted_count"]} из {total["count"]}', styles["note"]),
+            ],
+            [
+                Paragraph(total["total_cost_display"], styles["cell_right"]),
+                Paragraph(f'{total["total_cost_count"]} из {total["count"]}', styles["note"]),
+            ],
+        ])
+
+    tbl = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    # Плашка "Итого" — только когда сама строка есть: без неё это была бы
+    # шапка задом наперёд на последнем обычном объекте таблицы.
+    if show_total:
+        style.append(("BACKGROUND", (0, -1), (-1, -1), HEAD_BG))
+    tbl.setStyle(TableStyle(style))
+    return tbl
+
+
+def _investor_detail_pdf_block(row, styles, page_width):
+    """Карточка деталей одного объекта — та же, что на экране под таблицей,
+    когда в фильтре выбран именно он: полоса «Смета → итоговая стоимость»
+    и таблица разделов, которые дорожают по прогнозируемому удорожанию."""
+    story = [Paragraph(f'{_esc(row["label"])}: смета и удорожание', styles["heading"])]
+
+    evt = row["estimate_vs_total"]
+    if evt:
+        colour = RED if evt["is_overrun"] else (ACCENT if evt["is_savings"] else MUTED)
+        story.append(Paragraph(
+            f'Смета → итоговая стоимость: <font color="{_hex(colour)}">'
+            f'{evt["percent_display"]} ({evt["overrun_display"]})</font>',
+            styles["sub"],
+        ))
+    else:
+        story.append(Paragraph(
+            "Недостаточно данных, чтобы сравнить смету с итоговой стоимостью.",
+            styles["sub"],
+        ))
+
+    story.append(Paragraph(
+        "Разделы сметы, которые дорожают по прогнозируемому удорожанию",
+        styles["subheading"],
+    ))
+
+    if not row["has_predicted_report"]:
+        story.append(Paragraph("Нет файла прогнозируемого удорожания.", styles["sub"]))
+        return story
+    sections = row["increasing_sections"]
+    if not sections:
+        story.append(Paragraph(
+            "По прогнозируемому удорожанию ни один раздел сметы не дорожает.",
+            styles["sub"],
+        ))
+        return story
+
+    label_w = min(180.0, page_width * 0.3)
+    columns = 4
+    rest = max(page_width - label_w, 200.0) / columns
+    data = [[
+        Paragraph("Раздел", styles["head"]),
+        Paragraph("Смета", styles["head"]),
+        Paragraph("Стало", styles["head"]),
+        Paragraph("₽/м²", styles["head"]),
+        Paragraph("%", styles["head"]),
+    ]]
+    for section in sections:
+        data.append([
+            Paragraph(_esc(section["label"]), styles["cell"]),
+            Paragraph(section["estimate_display"], styles["cell_right"]),
+            Paragraph(section["current_display"], styles["cell_right"]),
+            Paragraph(section["per_sqm_display"], styles["cell_right"]),
+            Paragraph(section["percent_display"], styles["cell_right"]),
+        ])
     data.append([
-        Paragraph(total["label"], styles["cell_label"]),
-        [
-            Paragraph(total["estimate_display"], styles["cell_right"]),
-            Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
-        ],
-        [
-            Paragraph(total["signed_display"], styles["cell_right"]),
-            Paragraph(f'{total["signed_count"]} из {total["count"]}', styles["note"]),
-        ],
-        [
-            Paragraph(total["predicted_display"], styles["cell_right"]),
-            Paragraph(f'{total["predicted_count"]} из {total["count"]}', styles["note"]),
-        ],
-        [
-            Paragraph(total["total_cost_display"], styles["cell_right"]),
-            Paragraph(f'{total["total_cost_count"]} из {total["count"]}', styles["note"]),
-        ],
+        Paragraph("Объект целиком", styles["cell_label"]),
+        Paragraph(row["estimate_display"], styles["cell_right"]),
+        Paragraph(row["total_cost_display"], styles["cell_right"]),
+        Paragraph(row["total_per_sqm_display"], styles["cell_right"]),
+        Paragraph(evt["percent_display"] if evt else "—", styles["cell_right"]),
     ])
 
     tbl = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
@@ -1248,15 +1332,19 @@ def _investor_summary_table_block(table, styles, page_width):
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]))
-    return tbl
+    story.append(tbl)
+    return story
 
 
-def build_investor_summary_pdf(table) -> bytes:
-    """«Сводка по удорожанию» — та же таблица, что на экране, одним файлом.
+def build_investor_summary_pdf(table, detail_row=None) -> bytes:
+    """«Сводка по удорожанию» — то же, что сейчас на экране, одним файлом.
 
     ``table`` — то, что вернул ``investor_summary.build_table``; вызывающий
     отвечает за то, что в нём есть хотя бы одна строка, — файл без единого
-    объекта на этой странице не бывает.
+    объекта на этой странице не бывает. ``detail_row`` — строка этого же
+    ``table`` для объекта, выбранного в фильтре на экране, или ``None`` для
+    «Всех объектов»: с ней таблица выше идёт без строки «Итого» (как и на
+    экране под тем же фильтром) и следом идёт карточка деталей объекта.
     """
     _ensure_fonts()
     styles = _styles()
@@ -1274,8 +1362,12 @@ def build_investor_summary_pdf(table) -> bytes:
             "удорожание из файла объекта. Итоговая стоимость — их сумма.",
             styles["sub"],
         ),
-        _investor_summary_table_block(table, styles, page_width),
+        _investor_summary_table_block(
+            table, styles, page_width, show_total=detail_row is None,
+        ),
     ]
+    if detail_row is not None:
+        story += _investor_detail_pdf_block(detail_row, styles, page_width)
     doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()
 

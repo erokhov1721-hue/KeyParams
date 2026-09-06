@@ -205,7 +205,8 @@ def compare_projects():
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
             slugs, passports,
-            _predicted_increase_as_cost_increase(predicted_reports, costs), adjustments,
+            _increase_summary_reports(slugs, increase_reports, predicted_reports, costs),
+            adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments, group_by=group_by,
@@ -336,8 +337,7 @@ def _predicted_increase_totals(reports):
 
 def _predicted_increase_as_cost_increase(reports, costs):
     """``{slug: cost_increase.Report | None}`` from predicted-increase
-    reports — what the «Удорожание проектов» block on the comparison page
-    reads. Measured against the same смета totals as the section table
+    reports, measured against the same смета totals as the section table
     (``costs``), so this figure and the one next to it never disagree.
     """
     return {
@@ -346,6 +346,22 @@ def _predicted_increase_as_cost_increase(reports, costs):
             if report is not None else None
         )
         for slug, report in reports.items()
+    }
+
+
+def _increase_summary_reports(slugs, increase_reports, predicted_reports, costs):
+    """Подписанное и прогнозируемое удорожание каждого проекта, сложенные в
+    один отчёт — то, что читает блок «Удорожание проектов» на странице
+    сравнения, той же базой, что и итоговая стоимость в инвестор-сводке
+    (смета + подписанное + прогнозируемое), а не одним прогнозом без учёта
+    уже подписанных допников.
+    """
+    predicted_as_increase = _predicted_increase_as_cost_increase(predicted_reports, costs)
+    return {
+        slug: comparison.combine_increase_reports(
+            increase_reports.get(slug), predicted_as_increase.get(slug),
+        )
+        for slug in slugs
     }
 
 
@@ -400,7 +416,8 @@ def compare_projects_pdf():
         terms=comparison.build_terms_table(slugs, passports),
         increase=comparison.build_increase_summary(
             slugs, passports,
-            _predicted_increase_as_cost_increase(predicted_reports, costs), adjustments,
+            _increase_summary_reports(slugs, increase_reports, predicted_reports, costs),
+            adjustments,
         ),
         averages=comparison.build_averages_table(
             slugs, passports, costs, adjustments,
@@ -529,14 +546,23 @@ def investor_summary_page():
 
 @bp.route("/investors/pdf", methods=["GET"])
 def investor_summary_pdf():
+    """PDF повторяет то, что сейчас на экране: без ``?slug=`` — вся сводка,
+    с ним — тот же один объект и та же карточка деталей под ним, что
+    показывал фильтр на странице."""
     root = _projects_root()
     slugs = storage.list_project_slugs(root)
     if not slugs:
         # Нечего класть в файл — назад на страницу, она сама объяснит, что
         # объектов пока нет, а не отдаст пустой PDF.
         return redirect(url_for("main.investor_summary_page"))
-    table = _investor_summary_table(root, slugs)
-    pdf_bytes = pdf_export.build_investor_summary_pdf(table)
+    selected_slug = request.args.get("slug")
+    if selected_slug in slugs:
+        table = _investor_summary_table(root, [selected_slug])
+        detail_row = table["rows"][0]
+    else:
+        table = _investor_summary_table(root, slugs)
+        detail_row = None
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table, detail_row)
     return Response(
         pdf_bytes,
         mimetype="application/pdf",

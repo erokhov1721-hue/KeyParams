@@ -3082,6 +3082,46 @@ def test_investor_summary_pdf_redirects_when_there_are_no_projects(tmp_path):
     assert resp.headers["Location"].endswith("/investors")
 
 
+def _pdf_text(pdf_bytes):
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        return "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+
+def test_investor_summary_pdf_with_a_selected_object_matches_the_filtered_screen(tmp_path):
+    # PDF повторяет то, что сейчас на экране: с ?slug= — тот один объект,
+    # без строки «Итого», и следом та же карточка деталей.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    a = _project_with_offer(tmp_path, "Левый", [("8. Кровля", 100.0)])
+    _project_with_offer(tmp_path, "Правый", [("8. Кровля", 100.0)])
+    _upload_increase(client, a, _increase_bytes([("Кровля", 100.0, 130.0)]))
+
+    resp = client.get(f"/investors/pdf?slug={a}")
+    text = _pdf_text(resp.data)
+
+    assert resp.status_code == 200
+    assert "Левый: смета и удорожание" in text
+    assert "Правый" not in text
+    assert "из 2" not in text
+
+
+def test_investor_summary_pdf_ignores_an_unknown_slug(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _project_with_offer(tmp_path, "Левый", [("8. Кровля", 100.0)])
+    _project_with_offer(tmp_path, "Правый", [("8. Кровля", 100.0)])
+
+    resp = client.get("/investors/pdf?slug=нет-такого")
+    text = _pdf_text(resp.data)
+
+    assert resp.status_code == 200
+    assert "Левый" in text
+    assert "Правый" in text
+    assert "из 2" in text
+
+
 def test_investor_summary_has_a_hidden_detail_panel_per_object(tmp_path):
     # Панель под таблицей — про смету, итоговую стоимость и подорожавшие
     # разделы одного объекта, поэтому спрятана, пока в фильтре не выбран
@@ -3767,8 +3807,8 @@ def test_reload_triggering_controls_point_back_to_their_own_block(tmp_path):
 
 def _project_with_increase(root, client, name, sections, rows, **fields):
     """Проект со сметой и загруженным файлом прогнозируемого удорожания —
-    «Удорожание проектов» в сравнении читает именно его, а не подписанное
-    удорожание. ``rows`` — ``(название, сумма предполагаемого удорожания)``.
+    без подписанного удорожания, для тестов, которым нужен только прогноз.
+    ``rows`` — ``(название, сумма предполагаемого удорожания)``.
     """
     slug = _project_with_offer(root, name, sections, **fields)
     _upload_predicted_increase(client, slug, _predicted_increase_bytes(rows))
@@ -3800,6 +3840,22 @@ def test_the_comparison_shows_the_increase_block(tmp_path):
     assert "Виды работ, которые делают смету дороже" in body
     assert "+30,0 %" in body
     assert "+10,0 %" in body
+
+
+def test_the_increase_block_combines_signed_and_predicted_increase(tmp_path):
+    # Средний % здесь должен совпадать по смыслу с инвестор-сводкой: она
+    # складывает подписанное и прогнозируемое удорожание в одну итоговую
+    # стоимость, а не считает только прогноз без уже подписанных допников.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(tmp_path, "Один", [("8. Кровля", 1_000_000.0)])
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_000_000.0, 1_100_000.0)]))
+    _upload_predicted_increase(client, slug, _predicted_increase_bytes([("Кровля", 200_000.0)]))
+
+    body = client.get(f"/compare?slug={slug}").get_data(as_text=True)
+
+    # 100 000 подписанных + 200 000 прогноза против сметы в 1 000 000 — 30 %.
+    assert "+30,0 %" in body
 
 
 def test_the_works_table_has_its_own_collapse_toggle(tmp_path):

@@ -3,7 +3,8 @@
 {% block main_extra_class %}container-wide{% endblock %}
 {% block header_actions %}
 {% if has_projects %}
-<a class="btn btn-secondary" href="{{ url_for('main.investor_summary_pdf') }}" download>Сохранить в PDF</a>
+<a class="btn btn-secondary" id="investor-summary-pdf-link"
+   href="{{ url_for('main.investor_summary_pdf') }}" download>Сохранить в PDF</a>
 {% endif %}
 {% endblock %}
 {% block content %}
@@ -219,6 +220,8 @@
     var select = document.getElementById('investor-summary-object-filter');
     var table = document.getElementById('investor-summary-table');
     var details = document.querySelectorAll('.investor-detail');
+    var pdfLink = document.getElementById('investor-summary-pdf-link');
+    var pdfBaseHref = pdfLink ? pdfLink.getAttribute('href') : null;
     if (!select) return;
 
     select.addEventListener('change', function () {
@@ -228,11 +231,25 @@
           row.hidden = Boolean(slug) && row.dataset.slug !== slug;
         });
       }
+      // Строка «Итого» суммирует все объекты — под один выбранный объект
+      // она не отвечает ни на какой вопрос.
+      if (table && table.tFoot) {
+        Array.from(table.tFoot.rows).forEach(function (row) {
+          row.hidden = Boolean(slug);
+        });
+      }
       // Без выбранного объекта прячем все — карточка деталей имеет смысл
       // только для одного конкретного объекта, а не для «Всех объектов».
       details.forEach(function (detail) {
         detail.hidden = detail.dataset.slug !== slug;
       });
+      // PDF сохраняет то же, что сейчас на экране: с объектом в адресе —
+      // если он выбран, без — если на экране «Все объекты».
+      if (pdfLink) {
+        pdfLink.setAttribute(
+          'href', slug ? pdfBaseHref + '?slug=' + encodeURIComponent(slug) : pdfBaseHref,
+        );
+      }
     });
   })();
 </script>

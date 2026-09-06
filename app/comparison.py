@@ -419,21 +419,35 @@ def predicted_report_as_increase(report, estimate_totals):
     measure from) leaves every baseline at zero, so the report comes back
     with ``from_estimate=False`` and no percentage — same as a signed report
     with no estimate, except there is no "было" left to fall back to.
+
+    Every section the estimate prices gets a row here, not only the ones the
+    predicted-increase file happens to mention: a section the file is silent
+    about hasn't been forecast to move, which is a delta of zero against its
+    own baseline, not an absence — dropping it would understate the total
+    baseline this report measures its percentage against, and inflate every
+    percentage that comes out of it.
     """
     estimate_totals = {
         key: (value if isinstance(value, Decimal) else Decimal(str(value)))
         for key, value in (estimate_totals or {}).items()
     }
     from_estimate = bool(estimate_totals)
+    by_key = {row.key: row for row in report.rows}
 
     rows = []
-    for row in report.rows:
-        baseline = estimate_totals.get(row.key, Decimal("0"))
-        current = baseline + row.amount
+    for key in estimate_sections.CATEGORY_KEYS:
+        if key not in by_key and key not in estimate_totals:
+            continue
+        source_row = by_key.get(key)
+        amount = source_row.amount if source_row else Decimal("0")
+        baseline = estimate_totals.get(key, Decimal("0"))
+        current = baseline + amount
         rows.append(cost_increase.Row(
-            key=row.key, label=row.label, sources=row.sources,
-            was=baseline, now=current, estimate=estimate_totals.get(row.key),
-            baseline=baseline, current=current, delta=row.amount,
+            key=key,
+            label=source_row.label if source_row else estimate_sections.CATEGORY_LABELS.get(key, key),
+            sources=source_row.sources if source_row else [],
+            was=baseline, now=current, estimate=estimate_totals.get(key),
+            baseline=baseline, current=current, delta=amount,
             percent=_percent(baseline, current), source=cost_increase.FROM_NOW,
         ))
 
@@ -452,6 +466,66 @@ def predicted_report_as_increase(report, estimate_totals):
     )
     return cost_increase.Report(
         rows=rows, total=total, unmatched=report.unmatched, from_estimate=from_estimate,
+    )
+
+
+def combine_increase_reports(signed_report, predicted_report):
+    """Подписанное и прогнозируемое удорожание одного проекта, сложенные в
+    один отчёт для блока «Удорожание проектов» — та же «смета → итоговая
+    стоимость», что и в инвестор-сводке (``investor_summary._row``), только
+    по разделам сметы, а не одной суммой.
+
+    Оба отчёта уже измерены от одной и той же сметы (``signed_report`` —
+    настоящий отчёт по файлу удорожания, ``predicted_report`` —
+    ``predicted_report_as_increase`` того же проекта), так что база раздела
+    в них совпадает и складывать нужно только дельту. ``None`` только там,
+    где нет ни одного из двух отчётов — тогда и складывать нечего.
+    """
+    reports = [r for r in (signed_report, predicted_report) if r is not None]
+    if not reports:
+        return None
+
+    by_key = {}
+    for report in reports:
+        for row in report.rows:
+            entry = by_key.get(row.key)
+            if entry is None:
+                by_key[row.key] = {
+                    "label": row.label, "sources": list(row.sources),
+                    "baseline": row.baseline, "delta": row.delta,
+                }
+            else:
+                entry["sources"] += list(row.sources)
+                entry["delta"] += row.delta
+
+    from_estimate = any(report.from_estimate for report in reports)
+    rows = []
+    for key in estimate_sections.CATEGORY_KEYS:
+        entry = by_key.get(key)
+        if entry is None:
+            continue
+        baseline, delta = entry["baseline"], entry["delta"]
+        current = baseline + delta
+        rows.append(cost_increase.Row(
+            key=key, label=entry["label"], sources=entry["sources"],
+            was=baseline, now=current, estimate=baseline if from_estimate else None,
+            baseline=baseline, current=current, delta=delta,
+            percent=_percent(baseline, current), source=cost_increase.FROM_NOW,
+        ))
+
+    baseline_total = sum((row.baseline for row in rows), Decimal("0"))
+    current_total = sum((row.current for row in rows), Decimal("0"))
+    total = cost_increase.Row(
+        key=None, label="Итого", sources=[],
+        was=baseline_total, now=current_total,
+        estimate=baseline_total if from_estimate else None,
+        baseline=baseline_total, current=current_total,
+        delta=current_total - baseline_total,
+        percent=_percent(baseline_total, current_total), source=cost_increase.FROM_NOW,
+    )
+    unmatched = [name for report in reports for name in report.unmatched]
+    return cost_increase.Report(
+        rows=rows, total=total, unmatched=unmatched, from_estimate=from_estimate,
     )
 
 

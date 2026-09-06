@@ -595,3 +595,52 @@ def test_the_investor_summary_pdf_shows_a_dash_for_missing_figures():
     text = "\n".join(_page_texts(pdf_bytes))
 
     assert "—" in text
+
+
+def test_the_investor_summary_pdf_with_a_detail_row_drops_the_total_and_adds_the_card():
+    from decimal import Decimal
+
+    from app import investor_summary, predicted_increase
+
+    signed_report = cost_increase.build_report(
+        [cost_increase.Line("Кровля", 100.0, 130.0)], {"roof": 100.0},
+    )
+    predicted_report = predicted_increase.build_report(
+        [predicted_increase.Line("Кровля", Decimal("50"))],
+    )
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": signed_report},
+        predicted_increase_by_slug={"a": 50.0},
+        predicted_increase_reports_by_slug={"a": predicted_report},
+        area_by_slug={},
+    )
+
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table, table["rows"][0])
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Объект А: смета и удорожание" in text
+    assert "Смета" in text and "итоговая стоимость" in text
+    assert "Разделы сметы, которые дорожают по прогнозируемому удорожанию" in text
+    assert "Кровли" in text
+    assert "Объект целиком" in text
+    # Строка "Итого" (с подписью "N из N" под каждой суммой) суммирует все
+    # объекты сводки — единственный объект в этом файле не нуждается в ней.
+    assert "из 1" not in text
+
+
+def test_the_investor_summary_pdf_detail_card_says_when_theres_no_predicted_file():
+    from app import investor_summary
+
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+
+    pdf_bytes = pdf_export.build_investor_summary_pdf(table, table["rows"][0])
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Нет файла прогнозируемого удорожания." in text

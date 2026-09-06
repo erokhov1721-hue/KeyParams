@@ -876,6 +876,60 @@ def test_predicted_report_without_an_estimate_keeps_the_money_but_not_the_percen
     assert increase.from_estimate is False
 
 
+def test_a_section_the_predicted_file_says_nothing_about_still_counts_toward_the_baseline():
+    # Файл прогноза называет только «Кровлю» — «Фасад» в нём не упомянут
+    # вовсе, но он есть в смете и обязан войти в базу, от которой считается
+    # процент: иначе процент считался бы от куска сметы, а не от неё целиком,
+    # и оказывался бы завышен.
+    report = _predicted_report([("Кровля", 30.0)])
+    increase = comparison.predicted_report_as_increase(
+        report, {"roof": 100.0, "facade": 100.0},
+    )
+
+    assert increase.total.baseline == Decimal("200.0")
+    assert increase.total.current == Decimal("230.0")
+    assert increase.total.percent == pytest.approx(15.0)
+    facade_row = next(row for row in increase.rows if row.key == "facade")
+    assert facade_row.delta == Decimal("0")
+    assert facade_row.baseline == Decimal("100.0")
+
+
+def test_combine_increase_reports_sums_signed_and_predicted_deltas():
+    # Средний % на странице сравнения должен считаться так же, как итоговая
+    # стоимость в инвестор-сводке: смета + подписанное + прогнозируемое, а
+    # не одно из двух.
+    signed = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    predicted = comparison.predicted_report_as_increase(
+        _predicted_report([("Кровля", 20.0)]), {"roof": 100.0},
+    )
+
+    combined = comparison.combine_increase_reports(signed, predicted)
+
+    row = combined.rows[0]
+    assert row.baseline == Decimal("100.0")
+    assert row.delta == Decimal("50.0")
+    assert row.current == Decimal("150.0")
+    assert row.percent == pytest.approx(50.0)
+    assert combined.total.delta == Decimal("50.0")
+    assert combined.total.percent == pytest.approx(50.0)
+    assert combined.from_estimate is True
+
+
+def test_combine_increase_reports_with_only_one_side_present():
+    predicted = comparison.predicted_report_as_increase(
+        _predicted_report([("Кровля", 20.0)]), {"roof": 100.0},
+    )
+
+    combined = comparison.combine_increase_reports(None, predicted)
+
+    assert combined.total.delta == Decimal("20.0")
+    assert combined.total.percent == pytest.approx(20.0)
+
+
+def test_combine_increase_reports_with_neither_side_present_is_none():
+    assert comparison.combine_increase_reports(None, None) is None
+
+
 def test_no_project_with_a_cost_increase_file_means_no_block():
     summary = comparison.build_increase_summary(
         ["a", "b"], {"a": _passport(), "b": _passport()}, {"a": None, "b": None}, NONE,
