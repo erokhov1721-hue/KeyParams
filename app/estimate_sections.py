@@ -32,7 +32,7 @@ CATEGORY_RULES = [
             "стадии р", "проектирование")),
     ("preparation", ("подготовительные работы", "содержание площадки")),
     ("excavation", ("котлован",)),
-    ("waterproofing", ("гидроизоляц",)),
+    ("waterproofing", ("гидроизоляц", "виброизоляц")),
     ("concrete", ("конструктивные решения", "монолит", "несущих конструкций",
                   "конструкций здания", "ж/б конструкции", "металлические конструкции")),
     ("partitions", ("общестроительные", "перегородк")),
@@ -40,14 +40,30 @@ CATEGORY_RULES = [
     ("roof", ("кровля", "кровли")),
     # Not a bare "отделка": the flats' own finishing is a package of its own
     # ("отделка квартир" = MR Base) and must not be swept in with the finishing
-    # of the common areas.
+    # of the common areas. "помещений, моп" catches a second wording seen in
+    # Nicole 1's own estimate ("Отделка технических помещений, МОП, двери,
+    # ворота и шлагбаумы…") that "отделка моп"/"отделка паркинга" miss when
+    # neither word sits right after "отделка" — specific enough not to also
+    # catch an unrelated "технических помещений" heading (a utilities room,
+    # say) that never pairs the word "моп" with it.
     ("finishing", ("отделочные работы", "отделка моп", "отделка паркинга",
-                   "отделка мест общего", "внутреняя отделка", "внутренняя отделка")),
+                   "отделка мест общего", "внутреняя отделка", "внутренняя отделка",
+                   "помещений, моп")),
     ("lifts", ("лифт",)),
     ("utilities", ("инженерн", "вис")),
     ("landscaping", ("благоустройств",)),
     ("technology", ("технологическ", "тх")),
-    ("other", ("прочее", "зип", "другие", "дополнительные работы")),
+    # "доп работы" catches the abbreviated "ДОП работы СМР" a real
+    # predicted-increase workbook uses (CLOS 17) — "дополнительные работы"
+    # above doesn't, spelled out in full where this one is shortened.
+    ("other", ("прочее", "зип", "другие", "дополнительные работы", "доп работы")),
+    # Reconstruction/renovation work, seen so far only on Nicole 1 (a
+    # historical-building project) — absent from every other estimate this
+    # module has been checked against, which is why they sit at the bottom
+    # of the numbered list rather than among the fourteen kinds of new-build
+    # work above.
+    ("demolition", ("демонтажные работы", "демонтаж")),
+    ("restoration", ("реставрация",)),
     ("mr_base", ("mr-base", "mr base", "отделка квартир", "квартир")),
     ("mr_ready", ("mr-ready", "mr ready")),
     ("shell_core", ("shell", "нулевого цикла", "нулевой цикл")),
@@ -77,13 +93,15 @@ CATEGORY_LABELS = {
     "landscaping": "Благоустройство",
     "technology": "Технологические решения",
     "other": "Другие (ЗИП и т.д.)",
+    "demolition": "Демонтажные работы",
+    "restoration": "Реставрация",
     "mr_base": "MR Base",
     "mr_ready": "MR Ready",
     "shell_core": "SHELL & CORE",
 }
 
 # The last three lines are the finishing packages, which the sheet sets apart
-# from the fourteen numbered kinds of work.
+# from the sixteen numbered kinds of work above them.
 MR_CATEGORY_KEYS = ["mr_base", "mr_ready", "shell_core"]
 WORK_CATEGORY_KEYS = [key for key in CATEGORY_KEYS if key not in MR_CATEGORY_KEYS]
 
@@ -500,6 +518,185 @@ def _sections_from_levels(ws):
     return sections, unmatched
 
 
+# A third shape: one column per row of hierarchy numbers ("1", "1.1",
+# "1.1.1", …), either in a column of its own or — the shape actually
+# encountered — baked straight into the name ("0.1 Подготовительные
+# работы…", "1.3.1 Ж/Б конструкции…"). No "№ раздела"/"Статья" pair to find
+# a section by (the offer shape) and no "уровень N" column pairs (the
+# levels shape); just the one number, at whatever depth it's written.
+# The trailing "." is optional: one real estimate numbers its rows "1.",
+# "1.1.", "1.1.1." (a dot closing every level, including the last), another
+# "1", "1.1", "1.1.1" (only the separators) — both name the same shape of
+# hierarchy, just punctuated differently.
+_NUMBER_TOKEN_RE = re.compile(r"^\d+(\.\d+)*\.?$")
+_EMBEDDED_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)+)\s")
+
+# A column naming the row's full cost — as opposed to "Цена за ед-цу…" (a
+# per-unit rate, still multiplied out into a real total further along the
+# same row) or "Итого за материалы"/"…работы"/"…накладные" (one component
+# of the total, not the whole of it). Matched by exclusion: a candidate
+# must name a total in some way and must not also name a single component,
+# or the component columns would each look like a total of their own.
+FLAT_TOTAL_TOKENS = ("итого", "всего", "стоимост")
+FLAT_PARTIAL_TOKENS = ("материал", "работ", "наклад", "прибыл")
+
+FlatHeader = namedtuple("FlatHeader", "row name_col total_col number_col")
+
+
+def _find_flat_total_col(ws, row):
+    """The rightmost column on this header row naming a row's whole cost
+    rather than one piece of it — rightmost because, in both real shapes
+    this was written against, the grand total sits after any per-component
+    breakdown, not before it."""
+    found = None
+    for col in range(1, HEADER_SEARCH_COLS + 1):
+        text = _cell_text(ws, row, col)
+        if not any(token in text for token in FLAT_TOTAL_TOKENS):
+            continue
+        if any(token in text for token in FLAT_PARTIAL_TOKENS):
+            continue
+        found = col
+    return found
+
+
+def _find_number_col(ws, header_row, exclude):
+    """The column carrying this sheet's own hierarchy numbers ("1", "1.1",
+    "1.1.1", …), or None if the numbering instead lives inside the name
+    column itself.
+
+    Two things rule a column out even where its values happen to match the
+    pattern: a plain row count ("№п.п." — 1, 2, 3, … straight down the
+    sheet, never a dotted value) would read every line item as a section of
+    its own, and a quantity column can hold a decimal ("51130.8" m²) that
+    matches the same pattern as a two-part hierarchy number. Both are typed
+    as actual numbers by Excel; a hierarchy code like "1.1.1" cannot be — it
+    has to be text — so only text cells are counted at all.
+    """
+    best_col, best_count = None, 0
+    for col in range(1, HEADER_SEARCH_COLS + 1):
+        if col in exclude:
+            continue
+        checked = matched = dotted = 0
+        for row in range(header_row + 1, ws.max_row + 1):
+            value = ws.cell(row=row, column=col).value
+            if not isinstance(value, str):
+                continue
+            checked += 1
+            text = value.strip()
+            if _NUMBER_TOKEN_RE.match(text):
+                matched += 1
+                if "." in text:
+                    dotted += 1
+        if checked and dotted and matched / checked > 0.8 and matched > best_count:
+            best_col, best_count = col, matched
+    return best_col
+
+
+def _find_flat_header(ws):
+    for row in range(1, HEADER_SEARCH_ROWS + 1):
+        name_col = None
+        for col in range(1, HEADER_SEARCH_COLS + 1):
+            if NAME_HEADER in _cell_text(ws, row, col):
+                name_col = col
+                break
+        if name_col is None:
+            continue
+        total_col = _find_flat_total_col(ws, row)
+        if total_col is None or total_col == name_col:
+            continue
+        number_col = _find_number_col(ws, row, {name_col, total_col})
+        return FlatHeader(row, name_col, total_col, number_col)
+    return None
+
+
+def _row_number_parts(ws, row, header):
+    """This row's hierarchy number, split into its dot-separated parts, or
+    None if the row carries none at all — a plain line item rather than a
+    section marker of any depth."""
+    if header.number_col is not None:
+        value = ws.cell(row=row, column=header.number_col).value
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not _NUMBER_TOKEN_RE.match(text):
+            return None
+        # Stripped before splitting, not just tolerated by the pattern above:
+        # a bare trailing dot would otherwise leave an empty last part
+        # ("1." -> ["1", ""]), one level deeper than the same number written
+        # without it — and a sheet is free to mix the two within one column.
+        return text.rstrip(".").split(".")
+    name = str(ws.cell(row=row, column=header.name_col).value or "").strip()
+    match = _EMBEDDED_NUMBER_RE.match(name)
+    return match.group(1).split(".") if match else None
+
+
+def _sections_from_flat_numbered(ws):
+    """Section totals from a "укрупненная смета" whose only structure is a
+    single column of hierarchy numbers, at whatever depth each row is
+    written — tried last, once neither the offer shape nor the levels shape
+    has found anything on this sheet.
+
+    A row's own total is trusted where the sheet states one, the same "own
+    figure, or the sum of what's under it" rule ``_sections_from_levels``
+    applies at its own two or three fixed levels — generalised here to
+    however many levels this sheet's numbering actually goes, since nothing
+    here says in advance how deep it nests. Section rows are the shallowest
+    numbered rows on the sheet rather than assumed to sit at a fixed depth:
+    the embedded-number shape's own top level already carries a dot ("0.1",
+    not a bare "0"), so assuming depth zero would find no sections at all.
+    """
+    header = _find_flat_header(ws)
+    if header is None:
+        return [], []
+
+    numbered = []
+    for row in range(header.row + 1, ws.max_row + 1):
+        parts = _row_number_parts(ws, row, header)
+        if parts is None:
+            continue
+        name = _named(ws.cell(row=row, column=header.name_col).value)
+        if name is None:
+            continue
+        own = ws.money_at(row, header.total_col)
+        numbered.append((len(parts), name, own))
+    if not numbered:
+        return [], []
+    depth = min(level for level, _, _ in numbered)
+
+    # A stack of open frames, one per depth currently on the path to the row
+    # being read — each collapsed into its parent's ``children`` the moment a
+    # row at its own depth or shallower appears, the same close-on-the-way-by
+    # rule ``_sections_from_levels`` applies at its two fixed levels.
+    stack = []
+    sections, unmatched = [], []
+
+    def resolve(frame):
+        _level, _name, own, children = frame
+        return own if own is not None else children
+
+    def close(frame):
+        resolved = resolve(frame)
+        if stack:
+            stack[-1][3] += resolved
+            return
+        if frame[0] != depth:
+            return
+        key = classify(frame[1])
+        if key is None:
+            unmatched.append(frame[1])
+        else:
+            sections.append(Section(key, frame[1], resolved))
+
+    for level, name, own in numbered:
+        while stack and stack[-1][0] >= level:
+            close(stack.pop())
+        stack.append([level, name, own, Decimal("0")])
+    while stack:
+        close(stack.pop())
+
+    return sections, unmatched
+
+
 def _report_unmatched(unmatched):
     if unmatched:
         # Not an error: an estimate may carry sections this report has no line
@@ -513,7 +710,10 @@ def _sections_from_sheet(ws):
     sections, unmatched = _sections_from_offer(ws)
     if sections:
         return sections, unmatched
-    return _sections_from_levels(ws)
+    sections, unmatched = _sections_from_levels(ws)
+    if sections:
+        return sections, unmatched
+    return _sections_from_flat_numbered(ws)
 
 
 def _sections_from_offer(ws):

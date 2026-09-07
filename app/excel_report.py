@@ -260,13 +260,17 @@ ROW_PER_SQM = 13
 ROW_TABLE_HEAD = 14
 ROW_CONTRACT_TOTAL = 15
 ROW_WORK_FIRST = 16
-ROW_WORK_LAST = 29
-ROW_SMR_TOTAL = 30
-ROW_MR_FIRST = 31
-ROW_MR_LAST = 33
-ROW_GRAND_TOTAL = 34
-ROW_TERMS_HEAD = 36
-ROW_TERMS_FIRST = 37
+# One row per entry in ``estimate_sections.WORK_CATEGORY_KEYS`` — shifts
+# everything below it down whenever a kind of work is added there (as
+# "demolition"/"restoration" were), so this is the only place that count
+# needs to be kept in step.
+ROW_WORK_LAST = ROW_WORK_FIRST + len(estimate_sections.WORK_CATEGORY_KEYS) - 1
+ROW_SMR_TOTAL = ROW_WORK_LAST + 1
+ROW_MR_FIRST = ROW_SMR_TOTAL + 1
+ROW_MR_LAST = ROW_MR_FIRST + len(estimate_sections.MR_CATEGORY_KEYS) - 1
+ROW_GRAND_TOTAL = ROW_MR_LAST + 1
+ROW_TERMS_HEAD = ROW_GRAND_TOTAL + 2
+ROW_TERMS_FIRST = ROW_TERMS_HEAD + 1
 
 CHARACTERISTIC_LABELS = [
     (ROW_YEAR, "Год подписания договора"),

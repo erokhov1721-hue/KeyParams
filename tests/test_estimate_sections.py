@@ -982,3 +982,259 @@ def test_concrete_volume_in_a_levels_estimate_takes_a_subsections_own_total_over
     ]), tmp_path, "levels_qty.xlsx")
 
     assert estimate_sections.read_concrete_volume(path) == 100.0 + 50.0
+
+
+# --- смета с числом, зашитым в один-единственный столбец («0.1», «1.3.1») --
+
+def _embedded_number_estimate(rows, *, header_row=4):
+    """A workbook shaped like the real "Сити Бэй 3" estimate: no "№
+    раздела"/"Статья" pair and no "уровень N" column pairs — just a plain
+    running row count next to the money, with each row's place in the
+    hierarchy baked straight into its own name ("0.1 Подготовительные
+    работы…").
+
+    ``rows`` are ``(running_no, name, total)``.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=2, value="Приложение №2 к Договору")
+    ws.cell(row=header_row, column=1, value="№п.п.")
+    ws.cell(row=header_row, column=2, value="Наименование работ (элементов)")
+    ws.cell(row=header_row, column=3, value="Ед.изм.")
+    ws.cell(row=header_row, column=4, value="Стоимость материалов, в руб с НДС 20%")
+    ws.cell(row=header_row, column=5, value="Стоимость работ, в руб с НДС 20%")
+    ws.cell(row=header_row, column=6, value="ИТОГО, в руб с НДС 20%")
+
+    for offset, (running_no, name, total) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=1, value=running_no)
+        ws.cell(row=row, column=2, value=name)
+        if total is not None:
+            ws.cell(row=row, column=6, value=total)
+    return wb
+
+
+def test_an_embedded_number_estimate_sums_only_the_shallowest_sections(tmp_path):
+    # "0.1" is a section; "0.1.1"/"0.1.2" underneath it are already summed
+    # into its own total, which the estimate states directly — the shape
+    # actually seen (Сити Бэй 3), where a bare "1" never appears in the
+    # name at all, only inside the meaningless running row count.
+    path = _save(_embedded_number_estimate([
+        (1, "«Проект» (весь договор)", 999.0),
+        (2, "0.1 Подготовительные работы и содержание площадки", 300.0),
+        (3, "0.1.1 Мобилизация", 100.0),
+        (4, "0.1.2 Содержание площадки", 200.0),
+        (5, "1.1 Устройство котлована", 50.0),
+    ]), tmp_path, "embedded.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0"), "excavation": Decimal("50.0")}
+
+
+def test_an_embedded_number_estimate_reads_several_levels_deep(tmp_path):
+    path = _save(_embedded_number_estimate([
+        (1, "1.3 Возведение несущих конструкций здания", 500.0),
+        (2, "1.3.1 Ж/Б конструкции подземной части", 200.0),
+        (3, "1.3.1.1 Устройство фундаментной плиты", 150.0),
+        (4, "1.3.1.2 Устройство стен", 50.0),
+        (5, "1.3.2 Ж/Б конструкции надземной части", 300.0),
+    ]), tmp_path, "embedded.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"concrete": Decimal("500.0")}
+
+
+def test_an_embedded_number_estimate_falls_back_to_children_when_a_section_states_no_total(tmp_path):
+    path = _save(_embedded_number_estimate([
+        (1, "0.1 Подготовительные работы и содержание площадки", None),
+        (2, "0.1.1 Мобилизация", 100.0),
+        (3, "0.1.2 Содержание площадки", 200.0),
+    ]), tmp_path, "embedded.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0")}
+
+
+# --- смета с отдельным столбцом номера («1», «1.1», «1.1.1») ---------------
+
+def _numbered_column_estimate(rows, *, header_row=7):
+    """A workbook shaped like the real "Nicole 1" estimate: hierarchy
+    numbers of their own column ("№": "1", "1.1", "1.1.1", …), a clean name
+    column next to it, a per-unit-price block, and the row's actual cost in
+    a "Стоимость" column at the end — the one that must be picked over the
+    per-unit "…Всего" column and the partial "Итого за материалы/работы"
+    ones beside it.
+
+    ``rows`` are ``(number, name, cost)`` — ``cost`` is what lands in the
+    "Стоимость" column, independent of the unit-price columns this fixture
+    doesn't bother filling in.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=4, column=2, value="УКРУПНЕННАЯ СМЕТА")
+    ws.cell(row=header_row, column=2, value="№")
+    ws.cell(row=header_row, column=3, value="Наименование работ")
+    ws.cell(row=header_row, column=4, value="Ед. изм.")
+    ws.cell(row=header_row, column=5, value="Кол-во")
+    ws.cell(row=header_row, column=6, value="Цена за ед-цу,\nМАТЕРИАЛЫ\nруб. с НДС 20%")
+    ws.cell(row=header_row, column=7, value="Цена за ед-цу,\nРАБОТЫ\nруб. с НДС 20%")
+    ws.cell(row=header_row, column=8, value="Цена за ед-цу,\nВСЕГО\nруб. с НДС 20%")
+    ws.cell(row=header_row, column=9, value="Итого за \nМАТЕРИАЛЫ\nруб. с НДС 20%")
+    ws.cell(row=header_row, column=10, value="Итого за\nРАБОТЫ\nруб. с НДС 20%")
+    ws.cell(row=header_row, column=11, value="Стоимость, \nруб. с НДС 20%")
+
+    for offset, (number, name, cost) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=2, value=number)
+        ws.cell(row=row, column=3, value=name)
+        # A decoy in the per-unit "Всего" column and the partial "Итого за"
+        # ones — different from ``cost``, so a reader that picks any of them
+        # instead of "Стоимость" is caught rather than accidentally right.
+        ws.cell(row=row, column=8, value=1)
+        ws.cell(row=row, column=9, value=1)
+        ws.cell(row=row, column=10, value=1)
+        if cost is not None:
+            ws.cell(row=row, column=11, value=cost)
+    return wb
+
+
+def test_a_numbered_column_estimate_reads_the_cost_column_not_the_unit_price(tmp_path):
+    # The number column is told apart from a plain row count by carrying at
+    # least one dotted (sub-section) value somewhere on the sheet — real
+    # estimates of any size always break a section down further, so "1.1"
+    # is included here even though this test isn't about nesting itself.
+    path = _save(_numbered_column_estimate([
+        ("1", "Подготовительные работы и содержание площадки", 2093061854.06),
+        ("1.1", "Мобилизация", 100.0),
+        ("2", "Устройство котлована", 889298769.32),
+    ]), tmp_path, "numbered_col.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {
+        "preparation": Decimal("2093061854.06"),
+        "excavation": Decimal("889298769.32"),
+    }
+
+
+def test_a_numbered_column_estimate_sums_children_when_a_section_states_no_cost(tmp_path):
+    # "1.1 Мобилизация" leaves "Стоимость" empty in the real file — the
+    # money sits on its own leaf rows underneath instead.
+    path = _save(_numbered_column_estimate([
+        ("1", "Подготовительные работы и содержание площадки", None),
+        ("1.1", "Мобилизация", None),
+        ("1.1.1", "Ограждение площадки", 100.0),
+        ("1.1.2", "Устройство бытового городка", 200.0),
+    ]), tmp_path, "numbered_col.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0")}
+
+
+def test_a_numbered_column_with_a_trailing_dot_on_every_number(tmp_path):
+    # Seen in a real estimate (CLOS 17): "1.", "1.1.", "1.1.1." — a dot
+    # closing every level, including the last, rather than just separating
+    # them. Splitting "1." on "." without stripping the trailing one first
+    # leaves a spurious empty part ("1", ""), one level deeper than the
+    # same number written "1" — which would have silently changed which
+    # rows count as the shallowest (section) level.
+    path = _save(_numbered_column_estimate([
+        ("1.", "Подготовительные работы и содержание площадки", None),
+        ("1.1.", "Мобилизация", None),
+        ("1.1.1.", "Ограждение площадки", 100.0),
+        ("1.1.2.", "Устройство бытового городка", 200.0),
+        ("2.", "Устройство котлована", 50.0),
+    ]), tmp_path, "numbered_col_trailing_dot.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0"), "excavation": Decimal("50.0")}
+
+
+def test_a_numbered_column_mixing_trailing_dots_and_bare_numbers(tmp_path):
+    # A sheet is free to punctuate some rows with the trailing dot and
+    # others without it — both must land at the same depth.
+    path = _save(_numbered_column_estimate([
+        ("1", "Подготовительные работы и содержание площадки", None),
+        ("1.1.", "Мобилизация", 300.0),
+        ("2.", "Устройство котлована", 50.0),
+    ]), tmp_path, "numbered_col_mixed_dots.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0"), "excavation": Decimal("50.0")}
+
+
+def test_a_numbered_column_is_not_confused_with_a_plain_running_row_count(tmp_path):
+    # "№п.п." straight down the sheet (1, 2, 3, …) never carries a dotted
+    # value; mistaking it for the hierarchy would read every line item as a
+    # section of its own and multiply the total several times over.
+    wb = _numbered_column_estimate([
+        ("1", "Подготовительные работы и содержание площадки", 300.0),
+    ])
+    ws = wb.active
+    ws.cell(row=7, column=1, value="№п.п.")
+    for row in range(8, 12):
+        ws.cell(row=row, column=1, value=row - 7)
+    ws.cell(row=9, column=2, value="1.1")
+    ws.cell(row=9, column=3, value="Мобилизация")
+    ws.cell(row=9, column=11, value=100.0)
+    path = _save(wb, tmp_path, "numbered_col_with_count.xlsx")
+
+    totals = estimate_sections.read_section_totals(path)
+
+    assert totals == {"preparation": Decimal("300.0")}
+
+
+def test_a_workbook_with_no_number_of_any_kind_yields_nothing(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=4, column=2, value="Наименование работ")
+    ws.cell(row=4, column=3, value="Стоимость, руб.")
+    ws.cell(row=5, column=2, value="Подготовительные работы")
+    ws.cell(row=5, column=3, value=100.0)
+    path = _save(wb, tmp_path, "no_numbers.xlsx")
+
+    assert estimate_sections.read_section_totals(path) == {}
+
+
+def test_classify_recognises_a_combined_hydro_and_vibro_isolation_wording(tmp_path):
+    # Seen in a real estimate as "Устройство гидро- виброизоляция…" — no
+    # contiguous "гидроизоляц" substring for the plain waterproofing token
+    # to match, so it needs a token of its own.
+    assert estimate_sections.classify(
+        "Устройство гидро- виброизоляция подземной части здания"
+    ) == "waterproofing"
+
+
+def test_classify_recognises_demolition_and_restoration():
+    # Seen in Nicole 1 (a historical-building project): reconstruction work
+    # this report's fourteen new-build lines have no line for, hence the two
+    # extra ones at the bottom of the list.
+    assert estimate_sections.classify("Демонтажные работы") == "demolition"
+    assert estimate_sections.classify(
+        "Реставрация подвала вдоль Богояленского переулка"
+    ) == "restoration"
+    assert estimate_sections.classify("Реставрация") == "restoration"
+
+
+def test_classify_recognises_a_second_wording_of_finishing():
+    # Nicole 1's own second building phase drops "паркинга" from the
+    # section's name — "отделка моп"/"отделка паркинга" both miss it, so it
+    # needs its own token rather than falling out as unmatched.
+    assert estimate_sections.classify(
+        "Отделка технических помещений, МОП, двери, ворота и шлагбаумы "
+        "в соответствии с дизайн-проектом"
+    ) == "finishing"
+
+
+def test_demolition_and_restoration_sit_after_the_other_fourteen_work_lines():
+    # "ниже по списку" — appended at the bottom of the numbered kinds of
+    # work, not mixed in among them, and still ahead of the three MR lines
+    # (which stay literally last, per their own comment in this module).
+    assert estimate_sections.WORK_CATEGORY_KEYS[-2:] == ["demolition", "restoration"]
+    assert estimate_sections.CATEGORY_KEYS[-3:] == ["mr_base", "mr_ready", "shell_core"]

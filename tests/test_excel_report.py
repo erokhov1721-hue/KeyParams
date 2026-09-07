@@ -5,8 +5,9 @@ from openpyxl import load_workbook
 
 from app import create_app, excel_report, passport as passport_module, storage
 from app.excel_report import (
-    ROW_CONTRACT_TOTAL, ROW_GRAND_TOTAL, ROW_NAME, ROW_PER_SQM, ROW_TOTAL_AREA,
-    ROW_VAT, ROW_YEAR,
+    ROW_CONTRACT_TOTAL, ROW_GRAND_TOTAL, ROW_MR_FIRST, ROW_NAME, ROW_PER_SQM,
+    ROW_SMR_TOTAL, ROW_TERMS_FIRST, ROW_TERMS_HEAD, ROW_TOTAL_AREA, ROW_VAT,
+    ROW_YEAR,
 )
 
 
@@ -51,8 +52,8 @@ def test_report_builds_for_a_single_project(tmp_path):
     assert ws[f"E{ROW_TOTAL_AREA}"].value == 75740.9
     assert ws["C14"].value == "Стоимость по видам работ/расход:"
     assert ws["E14"].value.startswith("ГП")
-    assert ws["C30"].value.startswith("Итого СМР")
-    assert ws["C34"].value.startswith("Итого СМР, в тч Отделка")
+    assert ws[f"C{ROW_SMR_TOTAL}"].value.startswith("Итого СМР")
+    assert ws[f"C{ROW_GRAND_TOTAL}"].value.startswith("Итого СМР, в тч Отделка")
 
 
 def test_report_puts_each_project_in_its_own_column_pair(tmp_path):
@@ -102,7 +103,7 @@ def test_formulas_are_saved_as_formulas(tmp_path):
     # this program worked out once.
     assert ws[f"F{ROW_CONTRACT_TOTAL}"].value.startswith("=")
     assert f"$E${ROW_TOTAL_AREA}" in ws[f"F{ROW_CONTRACT_TOTAL}"].value
-    assert ws["E30"].value.startswith("=SUBTOTAL(9,")
+    assert ws[f"E{ROW_SMR_TOTAL}"].value.startswith("=SUBTOTAL(9,")
     assert ws[f"E{ROW_CONTRACT_TOTAL}"].value.startswith("=")
 
 
@@ -120,7 +121,7 @@ def test_a_project_name_starting_with_a_formula_trigger_stays_plain_text(tmp_pat
 def test_a_contract_term_starting_with_a_formula_trigger_stays_plain_text(tmp_path):
     ws = _build([_passport("П", smr_term="=1+1")], tmp_path)
 
-    cell = ws["E37"]
+    cell = ws[f"E{ROW_TERMS_FIRST}"]
     assert cell.value == "=1+1"
     assert cell.data_type == "s"
 
@@ -131,7 +132,7 @@ def test_the_reports_own_formulas_still_compute(tmp_path):
     # stay live.
     ws = _build([_passport("П", total_area_sqm=1000.0, contract_price_rub=2_000_000.0)], tmp_path)
 
-    assert ws["E30"].data_type == "f"
+    assert ws[f"E{ROW_SMR_TOTAL}"].data_type == "f"
     assert ws[f"F{ROW_CONTRACT_TOTAL}"].data_type == "f"
 
 
@@ -171,10 +172,10 @@ def test_contract_terms_reach_the_sheet(tmp_path):
         bank_guarantee="Включено", performance_bond_pct="5%",
     )], tmp_path)
 
-    assert ws["B36"].value == "Паспорт договора"
-    assert ws["B37"].value == "Срок СМР (мес.)"
-    assert ws["E37"].value == "30 месяцев"
-    assert ws["E40"].value == "5%"
+    assert ws[f"B{ROW_TERMS_HEAD}"].value == "Паспорт договора"
+    assert ws[f"B{ROW_TERMS_FIRST}"].value == "Срок СМР (мес.)"
+    assert ws[f"E{ROW_TERMS_FIRST}"].value == "30 месяцев"
+    assert ws[f"E{ROW_TERMS_FIRST + 3}"].value == "5%"
 
 
 # --- normalize_passport ----------------------------------------------------
@@ -418,7 +419,7 @@ def test_estimate_totals_fill_the_cost_lines(tmp_path):
     assert ws["E22"].value == 3034129955.4           # Фасад
     assert ws["E25"].value == 220000000.0            # Лифты
     # The totals stay formulas: they must follow the figures, not freeze them.
-    assert ws["E30"].value.startswith("=SUBTOTAL(9,")
+    assert ws[f"E{ROW_SMR_TOTAL}"].value.startswith("=SUBTOTAL(9,")
     assert ws["F22"].value.startswith("=")
 
 
@@ -443,8 +444,8 @@ def test_mr_lines_are_filled_from_the_estimate_too(tmp_path):
         "costs": {"mr_base": 1900000000.0},
     }], tmp_path)
 
-    assert ws["E31"].value == 1900000000.0
-    assert ws["E32"].value is None
+    assert ws[f"E{ROW_MR_FIRST}"].value == 1900000000.0
+    assert ws[f"E{ROW_MR_FIRST + 1}"].value is None
 
 
 def test_a_cost_line_the_estimate_lacks_is_highlighted(tmp_path):
