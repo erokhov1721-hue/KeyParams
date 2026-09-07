@@ -395,6 +395,43 @@ def test_extract_building_class_found_despite_unrelated_second_mention():
     assert extractors.extract_building_class(dgp, tz) == "Бизнес"
 
 
+def test_extract_building_class_finds_deluxe():
+    dgp = DocxContent(paragraphs=["Жилой комплекс делюкс-класса."], tables=[])
+    tz = DocxContent(paragraphs=[], tables=[])
+    assert extractors.extract_building_class(dgp, tz) == "Делюкс"
+
+
+def test_extract_building_class_finds_business_premium_as_one_class():
+    # A compound class, not "бизнес" with "премиум" mentioned nearby —
+    # letting the plain "бизнес" alternative win first would silently drop
+    # the "-премиум" half and misfile the whole complex under "Бизнес".
+    dgp = DocxContent(
+        paragraphs=["Жилой комплекс бизнес-премиум класса."], tables=[],
+    )
+    tz = DocxContent(paragraphs=[], tables=[])
+    assert extractors.extract_building_class(dgp, tz) == "Бизнес - Премиум"
+
+
+def test_extract_building_class_normalises_business_premium_spelling():
+    # Whatever spacing/punctuation the document uses, the result matches the
+    # one spelling the passport's own dropdown offers.
+    for wording in ("бизнес премиум", "бизнес - премиум", "БИЗНЕС-ПРЕМИУМ"):
+        dgp = DocxContent(paragraphs=[f"Комплекс класса {wording}."], tables=[])
+        tz = DocxContent(paragraphs=[], tables=[])
+        assert extractors.extract_building_class(dgp, tz) == "Бизнес - Премиум", wording
+
+
+def test_extract_building_class_ignores_business_premium_enumeration():
+    # "бизнес" and "премиум" mentioned as two separate classes, not the
+    # compound one — still correctly rejected as an enumeration.
+    dgp = DocxContent(paragraphs=[], tables=[])
+    tz = DocxContent(
+        paragraphs=["Комплекс подходит под классы бизнес и премиум одновременно."],
+        tables=[],
+    )
+    assert extractors.extract_building_class(dgp, tz) is None
+
+
 # --- area extractors (synthetic) ---
 
 def test_extract_underground_area_found():

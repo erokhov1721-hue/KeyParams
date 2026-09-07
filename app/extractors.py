@@ -99,14 +99,33 @@ SPLIT_PRICE_ANCHOR_RE = re.compile(r'состоит\s+из\s+\S+\s+частей'
 SPLIT_PRICE_PART_RE = re.compile(
     r'сумму\s+в\s+размере\s+([\d\s\xa0]+[.,]\d{2})\s*руб', re.IGNORECASE,
 )
+# "Бизнес-премиум" is its own class, not an enumeration of "бизнес" and
+# "премиум" — matched by its own regex (below, tried before either of these)
+# rather than folded into this alternation: with a greedy gap in front of
+# it, "класс ... бизнес премиум" backtracks from the far end and can land
+# the whole alternation on "премиум" alone, several characters past where
+# "бизнес" started, silently dropping the "бизнес-" half.
+BUSINESS_PREMIUM_TOKEN = r'бизнес[\s-]*премиум'
 BUILDING_CLASS_RE = re.compile(
-    r'класс[а-яё\s«»"\'-]{0,20}(бизнес|премиум|комфорт|эконом|элит)', re.IGNORECASE
+    r'класс[а-яё\s«»"\'-]{0,20}(бизнес|премиум|комфорт|эконом|элит|делюкс)', re.IGNORECASE
 )
 BUILDING_CLASS_REVERSED_RE = re.compile(
-    r'(бизнес|премиум|комфорт|эконом|элит)[а-яё\s«»"\'-]{0,10}класс', re.IGNORECASE
+    r'(бизнес|премиум|комфорт|эконом|элит|делюкс)[а-яё\s«»"\'-]{0,10}класс', re.IGNORECASE
 )
+# Tried on its own, ahead of the two general regexes above: the compound
+# class named either before or after the word "класс", the same two orders
+# ``BUILDING_CLASS_RE``/``BUILDING_CLASS_REVERSED_RE`` cover for a single
+# keyword.
+BUSINESS_PREMIUM_NEAR_CLASS_RE = re.compile(
+    r'класс[а-яё\s«»"\'-]{0,20}(?:' + BUSINESS_PREMIUM_TOKEN + r')'
+    r'|(?:' + BUSINESS_PREMIUM_TOKEN + r')[а-яё\s«»"\'-]{0,10}класс',
+    re.IGNORECASE,
+)
+# Compound listed first so a "бизнес-премиум" span counts as the one class
+# it is, not two — matters for the "is this an enumeration of several
+# classes" check both ``_first_valid_class_match`` paths run below.
 BUILDING_CLASS_KEYWORD_RE = re.compile(
-    r'бизнес|премиум|комфорт|эконом|элит', re.IGNORECASE
+    BUSINESS_PREMIUM_TOKEN + r'|бизнес|премиум|комфорт|эконом|элит|делюкс', re.IGNORECASE
 )
 WHITESPACE_RE = re.compile(r'\s+')
 # A cell holding a value: a number, optionally followed by a unit of measure.
@@ -323,6 +342,15 @@ def extract_signing_year(dgp):
 
 
 def _first_valid_class_match(para):
+    # The compound class first, on its own dedicated pattern — however the
+    # document spells it ("бизнес-премиум", "бизнес премиум", ...), the
+    # result is normalised to the one spelling ``BUILDING_CLASS_OPTIONS``
+    # offers on the passport's own dropdown, so an extracted value lands on
+    # that option instead of showing up as a lookalike entry of its own.
+    m = BUSINESS_PREMIUM_NEAR_CLASS_RE.search(para)
+    if m and len(BUILDING_CLASS_KEYWORD_RE.findall(m.group(0))) == 1:
+        return "Бизнес - Премиум"
+
     for regex in (BUILDING_CLASS_RE, BUILDING_CLASS_REVERSED_RE):
         for m in regex.finditer(para):
             # If the matched span itself (which includes the "класс" +
