@@ -30,9 +30,12 @@ def _signed_money(value):
 
 
 def _money_per_sqm(value):
+    # No " ₽/м²" suffix: every table this feeds already headers the column
+    # "₽/м²", and repeating it on each row just adds noise next to a
+    # neighbouring "Всего" column that does carry its own "₽" per row.
     if value is None:
         return "—"
-    return f"{format_number(round(value))} ₽/м²"
+    return format_number(round(value))
 
 
 def _estimate_total(estimate_totals):
@@ -74,14 +77,18 @@ def _percent(baseline, current):
 
 
 def _increasing_sections(report, predicted_report, estimate_totals, area):
-    """Разделы сметы, которые дорожают — по подписанному и прогнозируемому
-    удорожанию вместе, крупнейший ₽/м² первым. ``[]``, когда нет ни одного
-    из двух источников: сравнивать тогда не с чем.
+    """Разделы сметы, которые дорожают — смета, подписанное и прогнозируемое
+    удорожание порознь (та же разбивка, что и у объекта целиком в таблице
+    выше), крупнейший ₽/м² первым. ``[]``, когда нет ни одного из двух
+    источников: сравнивать тогда не с чем.
 
     Подписанное удорожание считается только когда есть смета, от которой
     его дельта отмерена (``report.from_estimate``) — иначе его «стало»
     сравнивалось само с собой, а не со сметой, и складывать его с прогнозом,
     который всегда мерен от сметы, значило бы сравнивать разное как одно.
+    Раздел, которого в этом файле нет вовсе (при том что файл в принципе
+    есть и сравним со сметой), не подорожал по нему ни на рубль — это ноль,
+    а не «неизвестно», и то же самое для прогноза.
 
     Прогноз сам по себе — сумма удорожания по разделу (см.
     ``predicted_increase``, там нет пары «было»/«стало»), поэтому смета
@@ -89,36 +96,49 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
     стартует с нуля, и любая прогнозируемая сумма по нему — целиком
     новая работа.
     """
-    if predicted_report is None and (report is None or not report.from_estimate):
+    has_signed = report is not None and report.from_estimate
+    has_predicted = predicted_report is not None
+    if not has_signed and not has_predicted:
         return []
     estimate_totals = {
         key: (value if isinstance(value, Decimal) else Decimal(str(value)))
         for key, value in (estimate_totals or {}).items()
     }
-    amounts, labels = {}, {}
-    if report is not None and report.from_estimate:
+    signed_amounts, predicted_amounts, labels = {}, {}, {}
+    if has_signed:
         for row in report.rows:
-            amounts[row.key] = amounts.get(row.key, Decimal("0")) + row.delta
+            signed_amounts[row.key] = signed_amounts.get(row.key, Decimal("0")) + row.delta
             labels[row.key] = row.label
-    if predicted_report is not None:
+    if has_predicted:
         for row in predicted_report.rows:
-            amounts[row.key] = amounts.get(row.key, Decimal("0")) + row.amount
+            predicted_amounts[row.key] = predicted_amounts.get(row.key, Decimal("0")) + row.amount
             labels[row.key] = row.label
 
+    keys = set(signed_amounts) | set(predicted_amounts)
+    totals = {
+        key: signed_amounts.get(key, Decimal("0")) + predicted_amounts.get(key, Decimal("0"))
+        for key in keys
+    }
     increasing = sorted(
-        ((key, amount) for key, amount in amounts.items() if amount > 0),
+        ((key, amount) for key, amount in totals.items() if amount > 0),
         key=lambda pair: pair[1], reverse=True,
     )
     sections = []
     for key, amount in increasing:
         baseline = estimate_totals.get(key, Decimal("0"))
         current = baseline + amount
-        per_sqm = float(current) / area if area else None
+        signed = float(signed_amounts.get(key, Decimal("0"))) if has_signed else None
+        predicted = float(predicted_amounts.get(key, Decimal("0"))) if has_predicted else None
         sections.append({
             "label": labels[key],
             "estimate_display": _money(float(baseline)),
+            "estimate_per_sqm_display": _money_per_sqm(_per_sqm(float(baseline), area)),
+            "signed_display": _money(signed),
+            "signed_per_sqm_display": _money_per_sqm(_per_sqm(signed, area)),
+            "predicted_display": _money(predicted),
+            "predicted_per_sqm_display": _money_per_sqm(_per_sqm(predicted, area)),
             "current_display": _money(float(current)),
-            "per_sqm_display": _money_per_sqm(per_sqm),
+            "per_sqm_display": _money_per_sqm(_per_sqm(float(current), area)),
             "percent_display": cost_increase.format_percent(
                 _percent(baseline, current)
             ) or "новые работы",
@@ -164,6 +184,10 @@ def _sum_known(rows, key):
     return (sum(values) if values else None), len(values)
 
 
+def _per_sqm(value, area):
+    return value / area if value is not None and area else None
+
+
 def _row(slug, label, estimate_totals, report, predicted, predicted_report, area):
     estimate = _estimate_total(estimate_totals)
     signed = _signed_overrun(report)
@@ -171,18 +195,28 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
     # тот же перевод, что и у сметы и у подписанного удорожания выше.
     predicted = float(predicted) if predicted is not None else None
     total_cost = _sum_present([estimate, signed, predicted])
-    total_per_sqm = total_cost / area if total_cost is not None and area else None
+    estimate_per_sqm = _per_sqm(estimate, area)
+    predicted_per_sqm = _per_sqm(predicted, area)
+    signed_per_sqm = _per_sqm(signed, area)
+    total_per_sqm = _per_sqm(total_cost, area)
     return {
         "slug": slug,
         "label": label,
         "estimate": estimate,
         "estimate_display": _money(estimate),
+        "estimate_per_sqm": estimate_per_sqm,
+        "estimate_per_sqm_display": _money_per_sqm(estimate_per_sqm),
         "predicted": predicted,
         "predicted_display": _money(predicted),
+        "predicted_per_sqm": predicted_per_sqm,
+        "predicted_per_sqm_display": _money_per_sqm(predicted_per_sqm),
         "signed": signed,
         "signed_display": _money(signed),
+        "signed_per_sqm": signed_per_sqm,
+        "signed_per_sqm_display": _money_per_sqm(signed_per_sqm),
         "total_cost": total_cost,
         "total_cost_display": _money(total_cost),
+        "total_per_sqm": total_per_sqm,
         "total_per_sqm_display": _money_per_sqm(total_per_sqm),
         "estimate_vs_total": _estimate_vs_total(estimate, total_cost),
         "has_increase_data": predicted_report is not None or (

@@ -46,6 +46,10 @@ ACCENT = colors.HexColor("#12705c")
 ACCENT_2 = colors.HexColor("#1c9a80")
 RED = colors.HexColor("#c62828")
 AMBER = colors.HexColor("#9a5b00")
+# Смета / прогнозируемое удорожание в сводке по удорожанию — тот же синий и
+# фиолетовый, что и на экране (см. style.css, светлая тема: --blue, --purple).
+BLUE = colors.HexColor("#1d4ed8")
+PURPLE = colors.HexColor("#6d28d9")
 INK = colors.HexColor("#13201e")
 MUTED = colors.HexColor("#4f625f")
 MUTED_2 = colors.HexColor("#6d807d")
@@ -160,8 +164,41 @@ def _styles():
             "cell_right", fontName="Arial", fontSize=8, leading=10.5,
             textColor=INK, alignment=2,
         ),
+        # Итоговая стоимость объекта — то единственное число в строке, что
+        # отвечает на вопрос «сколько объект будет стоить всего»; выделено
+        # начертанием, как и на экране (.col-total-cost).
+        "cell_right_bold": ParagraphStyle(
+            "cell_right_bold", fontName="Arial-Bold", fontSize=8, leading=10.5,
+            textColor=INK, alignment=2,
+        ),
         "head": ParagraphStyle(
             "head", fontName="Arial-Bold", fontSize=8, leading=10.5, textColor=INK,
+        ),
+        # Группа денежных колонок в сводке по удорожанию («Смета», «Подписанное
+        # удорожание», …) — по центру над своей парой «Всего»/«₽/м²», в цвете
+        # той же группы, что и на экране (см. investor_summary.html).
+        "head_group_blue": ParagraphStyle(
+            "head_group_blue", fontName="Arial-Bold", fontSize=8, leading=10.5,
+            textColor=BLUE, alignment=1,
+        ),
+        "head_group_amber": ParagraphStyle(
+            "head_group_amber", fontName="Arial-Bold", fontSize=8, leading=10.5,
+            textColor=AMBER, alignment=1,
+        ),
+        "head_group_purple": ParagraphStyle(
+            "head_group_purple", fontName="Arial-Bold", fontSize=8, leading=10.5,
+            textColor=PURPLE, alignment=1,
+        ),
+        "head_group_accent": ParagraphStyle(
+            "head_group_accent", fontName="Arial-Bold", fontSize=8, leading=10.5,
+            textColor=ACCENT, alignment=1,
+        ),
+        # «Всего» / «₽/м²» под каждой группой — мельче и глуше группы над
+        # ними, тем же приглушённым серым для любой группы: цвет уже сказан
+        # подложкой, повторять его в этой строке незачем.
+        "subhead_right": ParagraphStyle(
+            "subhead_right", fontName="Arial", fontSize=6.5, leading=8.5,
+            textColor=MUTED, alignment=2,
         ),
         "note": ParagraphStyle(
             "note", fontName="Arial", fontSize=6.5, leading=8.5, textColor=AMBER,
@@ -1196,29 +1233,63 @@ def build_class_average_pdf(result, project_name) -> bytes:
 
 # --- сводка по удорожанию ----------------------------------------------------
 
+#  Группа  → (заголовок, стиль заголовка, цвет подложки под обеими строками
+#  шапки этой группы). Тот же порядок и те же четыре цвета, что на экране
+#  (investor_summary.html: .group-smeta/.group-signed/.group-forecast/
+#  .group-total) — так строка PDF-файла и колонка на экране узнаются с
+#  одного взгляда, даже когда файл открыт рядом с браузером.
+_INVESTOR_SUMMARY_GROUPS = (
+    ("Смета", "head_group_blue", BLUE),
+    ("Подписанное удорожание", "head_group_amber", AMBER),
+    ("Прогнозируемое удорожание", "head_group_purple", PURPLE),
+    ("Итоговая стоимость", "head_group_accent", ACCENT),
+)
+
+
 def _investor_summary_table_block(table, styles, page_width, show_total=True):
-    label_w = min(200.0, page_width * 0.3)
-    columns = 4
-    rest = (page_width - label_w) / columns
-    data = [[
-        Paragraph("Объект", styles["head"]),
-        Paragraph("Смета", styles["head"]),
-        Paragraph("Подписанное удорожание", styles["head"]),
-        Paragraph("Прогнозируемое удорожание", styles["head"]),
-        Paragraph("Итоговая стоимость", styles["head"]),
-    ]]
+    """Смета, подписанное и прогнозируемое удорожание, итоговая стоимость —
+    каждое своей парой колонок «Всего»/«₽/м²», сгруппированных под общим
+    заголовком с подложкой цвета группы. Та же двухуровневая шапка, что и
+    на экране; отличается только тем, что тут её рисует reportlab, а не
+    CSS ``colspan``/``rowspan``.
+    """
+    label_w = min(170.0, page_width * 0.22)
+    rest_total = page_width - label_w
+    # «Всего» шире «₽/м²»: 27 710 828 200 ₽ против 118 012 — вдвое больше
+    # знаков, и половина ширины колонки под шестизначное число выглядела бы
+    # пустой тратой места на 12-значное.
+    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.5 + 1.0))
+    money_w, sqm_w = unit * 1.5, unit * 1.0
+    col_widths = [label_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS)
+
+    group_row = [Paragraph("Объект", styles["head"])]
+    subhead_row = [""]
+    for title, head_style, _color in _INVESTOR_SUMMARY_GROUPS:
+        group_row += [Paragraph(title, styles[head_style]), ""]
+        subhead_row += [
+            Paragraph("Всего", styles["subhead_right"]),
+            Paragraph("₽/м²", styles["subhead_right"]),
+        ]
+    data = [group_row, subhead_row]
+
     for row in table["rows"]:
         data.append([
             Paragraph(_esc(row["label"]), styles["cell"]),
             Paragraph(row["estimate_display"], styles["cell_right"]),
+            Paragraph(row["estimate_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["signed_display"], styles["cell_right"]),
+            Paragraph(row["signed_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["predicted_display"], styles["cell_right"]),
-            Paragraph(row["total_cost_display"], styles["cell_right"]),
+            Paragraph(row["predicted_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(row["total_cost_display"], styles["cell_right_bold"]),
+            Paragraph(row["total_per_sqm_display"], styles["cell_muted_right"]),
         ])
 
     # Строка «Итого» суммирует все объекты сводки — там, где выбран один
     # объект (на экране это фильтр, здесь ``show_total=False``), она не
-    # отвечает ни на какой вопрос и в файл не попадает.
+    # отвечает ни на какой вопрос и в файл не попадает. «₽/м²» в ней пусто,
+    # как и на экране: единого способа сложить эту величину по объектам
+    # разной площади нет.
     if show_total:
         total = table["total"]
         data.append([
@@ -1227,30 +1298,42 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
                 Paragraph(total["estimate_display"], styles["cell_right"]),
                 Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
             ],
+            "",
             [
                 Paragraph(total["signed_display"], styles["cell_right"]),
                 Paragraph(f'{total["signed_count"]} из {total["count"]}', styles["note"]),
             ],
+            "",
             [
                 Paragraph(total["predicted_display"], styles["cell_right"]),
                 Paragraph(f'{total["predicted_count"]} из {total["count"]}', styles["note"]),
             ],
+            "",
             [
-                Paragraph(total["total_cost_display"], styles["cell_right"]),
+                Paragraph(total["total_cost_display"], styles["cell_right_bold"]),
                 Paragraph(f'{total["total_cost_count"]} из {total["count"]}', styles["note"]),
             ],
+            "",
         ])
 
-    tbl = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
+    tbl = Table(data, colWidths=col_widths, repeatRows=2)
     style = [
         ("GRID", (0, 0), (-1, -1), 0.5, GRID),
-        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (0, 1), HEAD_BG),
+        ("SPAN", (0, 0), (0, 1)),
+        ("VALIGN", (0, 0), (0, 1), "BOTTOM"),
+        ("VALIGN", (1, 1), (-1, 1), "BOTTOM"),
+        ("VALIGN", (0, 2), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]
+    for index, (_title, _head_style, color) in enumerate(_INVESTOR_SUMMARY_GROUPS):
+        col = 1 + index * 2
+        style.append(("SPAN", (col, 0), (col + 1, 0)))
+        style.append(("BACKGROUND", (col, 0), (col + 1, 1), _fade(color, 0.88)))
+        style.append(("VALIGN", (col, 0), (col + 1, 0), "MIDDLE"))
     # Плашка "Итого" — только когда сама строка есть: без неё это была бы
     # шапка задом наперёд на последнем обычном объекте таблицы.
     if show_total:
@@ -1298,43 +1381,78 @@ def _investor_detail_pdf_block(row, styles, page_width):
         ))
         return story
 
-    label_w = min(180.0, page_width * 0.3)
-    columns = 4
-    rest = max(page_width - label_w, 200.0) / columns
-    data = [[
-        Paragraph("Раздел", styles["head"]),
-        Paragraph("Смета", styles["head"]),
-        Paragraph("Стало", styles["head"]),
-        Paragraph("₽/м²", styles["head"]),
-        Paragraph("%", styles["head"]),
-    ]]
+    # Та же группировка «Смета / Подписанное / Прогноз / Итого», каждая своей
+    # парой «Всего»/«₽/м²» и своей подложкой, что и в таблице объектов выше —
+    # только по разделам сметы этого объекта, а не по объектам. «Раздел» и
+    # «%» держат свой один столбец через обе строки шапки, как «Объект» там.
+    label_w = min(150.0, page_width * 0.2)
+    pct_w = 42.0
+    rest_total = page_width - label_w - pct_w
+    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.3 + 0.85))
+    money_w, sqm_w = unit * 1.3, unit * 0.85
+    col_widths = [label_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS) + [pct_w]
+
+    group_row = [Paragraph("Раздел", styles["head"])]
+    subhead_row = [""]
+    for title, head_style, _color in _INVESTOR_SUMMARY_GROUPS:
+        group_row += [Paragraph(title, styles[head_style]), ""]
+        subhead_row += [
+            Paragraph("Всего", styles["subhead_right"]),
+            Paragraph("₽/м²", styles["subhead_right"]),
+        ]
+    group_row.append(Paragraph("%", styles["head"]))
+    subhead_row.append("")
+    data = [group_row, subhead_row]
+
     for section in sections:
         data.append([
             Paragraph(_esc(section["label"]), styles["cell"]),
             Paragraph(section["estimate_display"], styles["cell_right"]),
-            Paragraph(section["current_display"], styles["cell_right"]),
-            Paragraph(section["per_sqm_display"], styles["cell_right"]),
+            Paragraph(section["estimate_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(section["signed_display"], styles["cell_right"]),
+            Paragraph(section["signed_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(section["predicted_display"], styles["cell_right"]),
+            Paragraph(section["predicted_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(section["current_display"], styles["cell_right_bold"]),
+            Paragraph(section["per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(section["percent_display"], styles["cell_right"]),
         ])
     data.append([
         Paragraph("Объект целиком", styles["cell_label"]),
         Paragraph(row["estimate_display"], styles["cell_right"]),
-        Paragraph(row["total_cost_display"], styles["cell_right"]),
-        Paragraph(row["total_per_sqm_display"], styles["cell_right"]),
+        Paragraph(row["estimate_per_sqm_display"], styles["cell_muted_right"]),
+        Paragraph(row["signed_display"], styles["cell_right"]),
+        Paragraph(row["signed_per_sqm_display"], styles["cell_muted_right"]),
+        Paragraph(row["predicted_display"], styles["cell_right"]),
+        Paragraph(row["predicted_per_sqm_display"], styles["cell_muted_right"]),
+        Paragraph(row["total_cost_display"], styles["cell_right_bold"]),
+        Paragraph(row["total_per_sqm_display"], styles["cell_muted_right"]),
         Paragraph(evt["percent_display"] if evt else "—", styles["cell_right"]),
     ])
 
-    tbl = Table(data, colWidths=[label_w] + [rest] * columns, repeatRows=1)
-    tbl.setStyle(TableStyle([
+    tbl = Table(data, colWidths=col_widths, repeatRows=2)
+    style = [
         ("GRID", (0, 0), (-1, -1), 0.5, GRID),
-        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("BACKGROUND", (0, 0), (0, 1), HEAD_BG),
+        ("BACKGROUND", (-1, 0), (-1, 1), HEAD_BG),
+        ("SPAN", (0, 0), (0, 1)),
+        ("SPAN", (-1, 0), (-1, 1)),
+        ("VALIGN", (0, 0), (0, 1), "BOTTOM"),
+        ("VALIGN", (-1, 0), (-1, 1), "BOTTOM"),
+        ("VALIGN", (1, 1), (-2, 1), "BOTTOM"),
+        ("VALIGN", (0, 2), (-1, -1), "TOP"),
         ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-    ]))
+    ]
+    for index, (_title, _head_style, color) in enumerate(_INVESTOR_SUMMARY_GROUPS):
+        col = 1 + index * 2
+        style.append(("SPAN", (col, 0), (col + 1, 0)))
+        style.append(("BACKGROUND", (col, 0), (col + 1, 1), _fade(color, 0.88)))
+        style.append(("VALIGN", (col, 0), (col + 1, 0), "MIDDLE"))
+    tbl.setStyle(TableStyle(style))
     story.append(tbl)
     return story
 

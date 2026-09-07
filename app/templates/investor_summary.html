@@ -40,33 +40,43 @@
 
 <div class="card sections-card">
   <div class="sections-table-wrap">
-    <table class="sections-table" id="investor-summary-table">
+    <table class="sections-table investor-summary-table" id="investor-summary-table">
       <thead>
         <tr>
-          <th class="sections-label-col">
+          <th class="sections-label-col" rowspan="2">
             <button type="button" class="sections-sort" data-sort-index="0" data-sort-type="text">
               Объект<span class="sections-arrow"></span>
             </button>
           </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">
-              Смета<span class="sections-arrow"></span>
-            </button>
+          <th colspan="2" class="group-th group-smeta">Смета</th>
+          <th colspan="2" class="group-th group-signed">Подписанное удорожание</th>
+          <th colspan="2" class="group-th group-forecast">Прогнозируемое удорожание</th>
+          <th colspan="2" class="group-th group-total">Итоговая стоимость</th>
+        </tr>
+        <tr>
+          <th class="subgroup-th group-smeta">
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">
-              Подписанное удорожание<span class="sections-arrow"></span>
-            </button>
+          <th class="subgroup-th group-smeta">
+            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">
-              Прогнозируемое удорожание<span class="sections-arrow"></span>
-            </button>
+          <th class="subgroup-th group-signed">
+            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
-          <th>
-            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">
-              Итоговая стоимость<span class="sections-arrow"></span>
-            </button>
+          <th class="subgroup-th group-signed">
+            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+          </th>
+          <th class="subgroup-th group-forecast">
+            <button type="button" class="sections-sort" data-sort-index="5" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+          </th>
+          <th class="subgroup-th group-forecast">
+            <button type="button" class="sections-sort" data-sort-index="6" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+          </th>
+          <th class="subgroup-th group-total">
+            <button type="button" class="sections-sort" data-sort-index="7" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+          </th>
+          <th class="subgroup-th group-total">
+            <button type="button" class="sections-sort" data-sort-index="8" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
         </tr>
       </thead>
@@ -80,17 +90,33 @@
               data-sort-value="{{ row.estimate if row.estimate is not none else -1 }}">
             <span class="sections-number">{{ row.estimate_display }}</span>
           </td>
+          <td class="sections-value col-per-sqm{{ ' is-empty' if row.estimate_per_sqm is none }}"
+              data-sort-value="{{ row.estimate_per_sqm if row.estimate_per_sqm is not none else -1 }}">
+            <span class="sections-number">{{ row.estimate_per_sqm_display }}</span>
+          </td>
           <td class="sections-value{{ ' is-empty' if row.signed is none }}"
               data-sort-value="{{ row.signed if row.signed is not none else -1 }}">
             <span class="sections-number">{{ row.signed_display }}</span>
+          </td>
+          <td class="sections-value col-per-sqm{{ ' is-empty' if row.signed_per_sqm is none }}"
+              data-sort-value="{{ row.signed_per_sqm if row.signed_per_sqm is not none else -1 }}">
+            <span class="sections-number">{{ row.signed_per_sqm_display }}</span>
           </td>
           <td class="sections-value{{ ' is-empty' if row.predicted is none }}"
               data-sort-value="{{ row.predicted if row.predicted is not none else -1 }}">
             <span class="sections-number">{{ row.predicted_display }}</span>
           </td>
-          <td class="sections-value{{ ' is-empty' if row.total_cost is none }}"
+          <td class="sections-value col-per-sqm{{ ' is-empty' if row.predicted_per_sqm is none }}"
+              data-sort-value="{{ row.predicted_per_sqm if row.predicted_per_sqm is not none else -1 }}">
+            <span class="sections-number">{{ row.predicted_per_sqm_display }}</span>
+          </td>
+          <td class="sections-value col-total-cost{{ ' is-empty' if row.total_cost is none }}"
               data-sort-value="{{ row.total_cost if row.total_cost is not none else -1 }}">
             <span class="sections-number">{{ row.total_cost_display }}</span>
+          </td>
+          <td class="sections-value col-per-sqm{{ ' is-empty' if row.total_per_sqm is none }}"
+              data-sort-value="{{ row.total_per_sqm if row.total_per_sqm is not none else -1 }}">
+            <span class="sections-number">{{ row.total_per_sqm_display }}</span>
           </td>
         </tr>
         {% endfor %}
@@ -102,18 +128,22 @@
             <span class="sections-number">{{ table.total.estimate_display }}</span>
             <span class="avg-count-note">{{ table.total.estimate_count }} из {{ table.total.count }}</span>
           </td>
+          <td class="sections-value"></td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total.signed_display }}</span>
             <span class="avg-count-note">{{ table.total.signed_count }} из {{ table.total.count }}</span>
           </td>
+          <td class="sections-value"></td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total.predicted_display }}</span>
             <span class="avg-count-note">{{ table.total.predicted_count }} из {{ table.total.count }}</span>
           </td>
+          <td class="sections-value"></td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total.total_cost_display }}</span>
             <span class="avg-count-note">{{ table.total.total_cost_count }} из {{ table.total.count }}</span>
           </td>
+          <td class="sections-value"></td>
         </tr>
       </tfoot>
     </table>
@@ -147,14 +177,25 @@
   <p class="chart-empty">По подписанному и прогнозируемому удорожанию ни один раздел сметы не дорожает.</p>
   {% else %}
   <div class="sections-table-wrap">
-    <table class="sections-table investor-detail-table">
+    <table class="sections-table investor-detail-table investor-summary-table">
       <thead>
         <tr>
-          <th class="sections-label-col">Раздел</th>
-          <th>Смета</th>
-          <th>Стало</th>
-          <th>₽/м²</th>
-          <th>%</th>
+          <th class="sections-label-col" rowspan="2">Раздел</th>
+          <th colspan="2" class="group-th group-smeta">Смета</th>
+          <th colspan="2" class="group-th group-signed">Подписанное удорожание</th>
+          <th colspan="2" class="group-th group-forecast">Прогнозируемое удорожание</th>
+          <th colspan="2" class="group-th group-total">Итоговая стоимость</th>
+          <th class="pct-th" rowspan="2">%</th>
+        </tr>
+        <tr>
+          <th class="subgroup-th group-smeta">Всего</th>
+          <th class="subgroup-th group-smeta">₽/м²</th>
+          <th class="subgroup-th group-signed">Всего</th>
+          <th class="subgroup-th group-signed">₽/м²</th>
+          <th class="subgroup-th group-forecast">Всего</th>
+          <th class="subgroup-th group-forecast">₽/м²</th>
+          <th class="subgroup-th group-total">Всего</th>
+          <th class="subgroup-th group-total">₽/м²</th>
         </tr>
       </thead>
       <tbody>
@@ -164,8 +205,13 @@
             <span class="sections-label" title="{{ section.label }}">{{ section.label }}</span>
           </td>
           <td class="sections-value"><span class="sections-number">{{ section.estimate_display }}</span></td>
-          <td class="sections-value"><span class="sections-number">{{ section.current_display }}</span></td>
-          <td class="sections-value"><span class="sections-number">{{ section.per_sqm_display }}</span></td>
+          <td class="sections-value col-per-sqm"><span class="sections-number">{{ section.estimate_per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ section.signed_display }}</span></td>
+          <td class="sections-value col-per-sqm"><span class="sections-number">{{ section.signed_per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ section.predicted_display }}</span></td>
+          <td class="sections-value col-per-sqm"><span class="sections-number">{{ section.predicted_per_sqm_display }}</span></td>
+          <td class="sections-value col-total-cost"><span class="sections-number">{{ section.current_display }}</span></td>
+          <td class="sections-value col-per-sqm"><span class="sections-number">{{ section.per_sqm_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ section.percent_display }}</span></td>
         </tr>
         {% endfor %}
@@ -174,6 +220,11 @@
         <tr>
           <td class="sections-label-col">Объект целиком</td>
           <td class="sections-value"><span class="sections-number">{{ row.estimate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.estimate_per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.signed_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.signed_per_sqm_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.predicted_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.predicted_per_sqm_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.total_cost_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.total_per_sqm_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.estimate_vs_total.percent_display if row.estimate_vs_total else '—' }}</span></td>

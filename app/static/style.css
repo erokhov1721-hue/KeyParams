@@ -2180,6 +2180,64 @@ select option {
   white-space: normal;
 }
 
+/* --- Сводка по удорожанию: двухуровневая шапка, «Всего» / «₽/м²» ---------
+   Смета, подписанное и прогнозируемое удорожание, итоговая стоимость — у
+   каждой своя пара колонок и свой оттенок подложки в шапке, чтобы взглядом
+   было видно, где кончается один блок и начинается следующий, не читая
+   заголовки по одному. Подложка красит обе строки шапки (группу и «Всего»/
+   «₽/м²» под ней) — только шапку: в теле таблицы цвет отвлекал бы от самих
+   чисел. */
+
+.investor-summary-table thead th.sections-label-col,
+.investor-summary-table thead th.pct-th {
+  vertical-align: bottom;
+}
+
+.investor-summary-table .group-th {
+  text-align: center;
+  font-weight: 500;
+}
+
+.investor-summary-table .subgroup-th {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-500);
+}
+
+.investor-summary-table .group-smeta { background: var(--blue-dim); }
+.investor-summary-table .group-signed { background: var(--amber-dim); }
+.investor-summary-table .group-forecast { background: var(--purple-dim); }
+.investor-summary-table .group-total { background: var(--accent-dim); }
+
+.investor-summary-table .group-th.group-smeta { color: var(--blue); }
+.investor-summary-table .group-th.group-signed { color: var(--amber); }
+.investor-summary-table .group-th.group-forecast { color: var(--purple); }
+.investor-summary-table .group-th.group-total { color: var(--accent); }
+
+/* «₽/м²» читается как второстепенная цифра рядом с «Всего» — приглушённый
+   цвет, кроме случая, когда её и так уже нет (``.is-empty`` красит прочерк
+   ещё тусклее, и должен побеждать). */
+.investor-summary-table .col-per-sqm:not(.is-empty) .sections-number {
+  color: var(--text-500);
+}
+
+/* Итоговая стоимость объекта — то единственное число в строке, которое
+   отвечает на вопрос «сколько объект будет стоить всего»; выделено
+   начертанием, а не цветом, чтобы не спорить с подложками групп. */
+.investor-summary-table .col-total-cost .sections-number {
+  font-weight: 500;
+}
+
+/* Строка «Итого» — на всю ширину, включая прилипающую колонку объекта,
+   которая иначе осталась бы в цвете обычной строки при прокрутке вбок. */
+.investor-summary-table tfoot td {
+  background: var(--bg-700);
+}
+
+.investor-summary-table tfoot .sections-label-col {
+  background: var(--bg-700);
+}
+
 /* --- Карточки сравнения двух объектов --- */
 
 /* Здесь таблицы нет — только сетки, поэтому боковой отступ живёт на самой

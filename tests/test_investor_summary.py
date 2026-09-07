@@ -236,7 +236,7 @@ def test_increasing_sections_show_cost_per_square_metre():
     section = table["rows"][0]["increasing_sections"][0]
 
     # 100 + 30 = 130 ₽ за 2 м² -> 65 ₽/м²
-    assert section["per_sqm_display"] == "65 ₽/м²"
+    assert section["per_sqm_display"] == "65"
 
 
 def test_a_section_new_to_the_estimate_is_named_new_work_not_a_dash():
@@ -339,6 +339,68 @@ def test_signed_and_predicted_increase_combine_on_the_same_section():
     # 30 подписанных + 20 прогноза против сметы в 100 -> 150, +50 %.
     assert sections[0]["current_display"] == "150 ₽"
     assert sections[0]["percent_display"] == "+50,0 %"
+    # Каждая цифра ещё и порознь — как в таблице объектов, только по разделу.
+    assert sections[0]["estimate_display"] == "100 ₽"
+    assert sections[0]["signed_display"] == "30 ₽"
+    assert sections[0]["predicted_display"] == "20 ₽"
+
+
+def test_increasing_sections_show_signed_and_predicted_per_sqm_separately():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    predicted = _predicted_report([("Кровля", 20.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={"a": 2.0},
+    )
+    section = table["rows"][0]["increasing_sections"][0]
+
+    # смета 100/2 -> 50; подписанное 30/2 -> 15; прогноз 20/2 -> 10.
+    assert section["estimate_per_sqm_display"] == "50"
+    assert section["signed_per_sqm_display"] == "15"
+    assert section["predicted_per_sqm_display"] == "10"
+
+
+def test_increasing_section_with_no_signed_file_shows_a_dash_not_zero():
+    # Файла удорожания вовсе нет — «подписанное» по разделу неизвестно, а не
+    # ноль: ноль означало бы «файл есть и в нём для этого раздела пусто».
+    predicted = _predicted_report([("Кровля", 30.0)])
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    section = table["rows"][0]["increasing_sections"][0]
+
+    assert section["signed_display"] == "—"
+    assert section["signed_per_sqm_display"] == "—"
+
+
+def test_increasing_section_untouched_by_the_signed_file_is_a_zero_not_a_dash():
+    # Файл удорожания есть и сравним со сметой, но про раздел «Благоустройство»
+    # ничего не говорит (в нём нет такой строки, и в смете раздела тоже нет) —
+    # по нему ноль подписанного удорожания, а не «неизвестно».
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    predicted = _predicted_report(
+        [("Кровля", 10.0), ("Благоустройство, дороги", 50.0)],
+    )
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    sections = {s["label"]: s for s in table["rows"][0]["increasing_sections"]}
+
+    assert sections["Благоустройство"]["signed_display"] == "0 ₽"
 
 
 # --- смета против итоговой стоимости ---
@@ -399,7 +461,7 @@ def test_total_per_sqm_is_the_total_cost_over_the_objects_area():
         area_by_slug={"a": 2.0},
     )
     # смета 100 + подписанное 30 = итог 130 ₽ за 2 м² -> 65 ₽/м²
-    assert table["rows"][0]["total_per_sqm_display"] == "65 ₽/м²"
+    assert table["rows"][0]["total_per_sqm_display"] == "65"
 
 
 def test_total_per_sqm_is_a_dash_without_an_area():
@@ -411,3 +473,57 @@ def test_total_per_sqm_is_a_dash_without_an_area():
         predicted_increase_by_slug={},
     )
     assert table["rows"][0]["total_per_sqm_display"] == "—"
+
+
+# --- смета, подписанное и прогнозируемое удорожание за м² ---
+
+def test_estimate_signed_and_predicted_per_sqm_are_each_over_the_objects_area():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={"a": 40.0},
+        area_by_slug={"a": 2.0},
+    )
+    row = table["rows"][0]
+    # смета 100 / 2 м² -> 50 ₽/м²; подписанное 30 / 2 -> 15 ₽/м²;
+    # прогноз 40 / 2 -> 20 ₽/м².
+    assert row["estimate_per_sqm"] == 50.0
+    assert row["estimate_per_sqm_display"] == "50"
+    assert row["signed_per_sqm"] == 15.0
+    assert row["signed_per_sqm_display"] == "15"
+    assert row["predicted_per_sqm"] == 20.0
+    assert row["predicted_per_sqm_display"] == "20"
+
+
+def test_estimate_signed_and_predicted_per_sqm_are_dashes_without_an_area():
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={"a": 40.0},
+    )
+    row = table["rows"][0]
+    assert row["estimate_per_sqm"] is None
+    assert row["estimate_per_sqm_display"] == "—"
+    assert row["signed_per_sqm"] is None
+    assert row["signed_per_sqm_display"] == "—"
+    assert row["predicted_per_sqm"] is None
+    assert row["predicted_per_sqm_display"] == "—"
+
+
+def test_per_sqm_is_a_dash_without_the_underlying_figure():
+    # Без файла удорожания «подписанное» — прочерк, и его ₽/м² тоже, даже
+    # когда площадь известна.
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        area_by_slug={"a": 2.0},
+    )
+    row = table["rows"][0]
+    assert row["signed_per_sqm"] is None
+    assert row["signed_per_sqm_display"] == "—"
