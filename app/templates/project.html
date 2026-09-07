@@ -53,6 +53,9 @@
     {% if dgp_problem %}
     <div class="alert alert-error">ДГП: {{ dgp_problem }}</div>
     {% endif %}
+    {% if tz_problem %}
+    <div class="alert alert-error">ТЗ: {{ tz_problem }}</div>
+    {% endif %}
     <div class="accordion" data-accordion>
       <button type="button" class="accordion-header" aria-expanded="false">
         <span>Паспорт объекта</span>
@@ -113,11 +116,27 @@
         </form>
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_dgp', slug=slug) }}" enctype="multipart/form-data"
+              {% if has_dgp %}
               data-confirm="Заменить ДГП? Поля паспорта выше будут пересобраны заново из нового файла — включая те, что были поправлены вручную.">
+              {% else %}
+              data-confirm="Загрузить ДГП? Поля паспорта выше будут заполнены из него — включая те, что уже вписаны вручную.">
+              {% endif %}
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="version" value="{{ passport.version }}">
-          <label class="contract-replace-link" for="dgp-input">Заменить ДГП</label>
+          <label class="contract-replace-link" for="dgp-input">{{ 'Заменить ДГП' if has_dgp else 'Загрузить ДГП' }}</label>
           <input class="file-input" type="file" id="dgp-input" name="dgp_file" accept=".docx">
+        </form>
+        <form class="file-upload-form" method="post"
+              action="{{ url_for('main.upload_tz', slug=slug) }}" enctype="multipart/form-data"
+              {% if has_tz %}
+              data-confirm="Заменить ТЗ? Поля паспорта выше будут пересобраны заново из нового файла — включая те, что были поправлены вручную.">
+              {% else %}
+              data-confirm="Загрузить ТЗ? Поля паспорта выше будут заполнены из него — включая те, что уже вписаны вручную.">
+              {% endif %}
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="version" value="{{ passport.version }}">
+          <label class="contract-replace-link" for="tz-input">{{ 'Заменить ТЗ' if has_tz else 'Загрузить ТЗ' }}</label>
+          <input class="file-input" type="file" id="tz-input" name="tz_file" accept=".docx">
         </form>
       </div>
     </div>

@@ -590,16 +590,22 @@ def create_project():
 
     if not project_name:
         return render_template("new_project.html", error="Введите название проекта"), 400
-    if not dgp_file or not dgp_file.filename.lower().endswith(ALLOWED_EXTENSION):
-        return render_template("new_project.html", error="Загрузите файл Договора в формате .docx"), 400
-    if not upload_guard.is_office_zip(dgp_file):
+    # ДГП и ТЗ are what the passport is auto-filled from, but neither is
+    # required to create a project: a project started with nothing but a
+    # name gets an empty passport, filled in by hand, and either file can be
+    # added afterwards from the project page (``upload_dgp``/``upload_tz``).
+    has_dgp = bool(dgp_file and dgp_file.filename)
+    if has_dgp and not dgp_file.filename.lower().endswith(ALLOWED_EXTENSION):
+        return render_template("new_project.html", error="Договор должен быть в формате .docx"), 400
+    if has_dgp and not upload_guard.is_office_zip(dgp_file):
         return render_template(
             "new_project.html",
             error="Файл Договора повреждён или не является настоящим .docx",
         ), 400
-    if not tz_file or not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
-        return render_template("new_project.html", error="Загрузите файл ТЗ в формате .docx"), 400
-    if not upload_guard.is_office_zip(tz_file):
+    has_tz = bool(tz_file and tz_file.filename)
+    if has_tz and not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
+        return render_template("new_project.html", error="ТЗ должно быть в формате .docx"), 400
+    if has_tz and not upload_guard.is_office_zip(tz_file):
         return render_template(
             "new_project.html", error="Файл ТЗ повреждён или не является настоящим .docx",
         ), 400
@@ -723,8 +729,10 @@ def create_project():
     raw = storage.raw_dir(staging_root, slug)
     dgp_path = raw / "dgp.docx"
     tz_path = raw / "tz.docx"
-    dgp_file.save(dgp_path)
-    tz_file.save(tz_path)
+    if has_dgp:
+        dgp_file.save(dgp_path)
+    if has_tz:
+        tz_file.save(tz_path)
 
     if has_cover:
         storage.save_cover(
@@ -772,7 +780,9 @@ def create_project():
         )
 
     try:
-        data = passport_module.build_passport(project_name, dgp_path, tz_path)
+        data = passport_module.build_passport(
+            project_name, dgp_path if has_dgp else None, tz_path if has_tz else None,
+        )
     except DocxReadError as e:
         current_app.logger.warning("Не удалось разобрать загруженный файл: %s", e)
         storage.discard_staging(staging_root, slug)
@@ -1038,7 +1048,10 @@ def project_page(slug):
         predicted_increase_problem=predicted_increase.PROBLEM_MESSAGES.get(
             request.args.get("predicted_increase")
         ),
+        has_dgp=storage.dgp_path(root, slug).exists(),
+        has_tz=storage.tz_path(root, slug).exists(),
         dgp_problem=passport_module.DGP_PROBLEM_MESSAGES.get(request.args.get("dgp")),
+        tz_problem=passport_module.TZ_PROBLEM_MESSAGES.get(request.args.get("tz")),
         estimate_problem=estimate.PROBLEM_MESSAGES.get(request.args.get("estimate")),
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
@@ -1267,8 +1280,8 @@ def upload_predicted_increase(slug):
 
 @bp.route("/projects/<slug>/dgp", methods=["POST"])
 def upload_dgp(slug):
-    """Заменить ДГП и пересобрать паспорт заново — из нового ДГП и уже
-    сохранённого при создании проекта ТЗ, тем же способом, что при создании.
+    """Добавить или заменить ДГП и пересобрать паспорт заново — из нового
+    ДГП и ТЗ, если оно у проекта есть, тем же способом, что при создании.
 
     Новый файл сначала разбирается во временном месте и только при успехе
     занимает место старого — как и у файла удорожания: неудачная попытка
@@ -1293,9 +1306,11 @@ def upload_dgp(slug):
     if not upload_guard.is_office_zip(dgp_file):
         return refuse("format")
 
+    # Missing rather than aborting: a project created without a ТЗ is meant
+    # to be completed one document at a time, and the passport still rebuilds
+    # fine off the ДГП alone — the fields only ТЗ supplies just stay unset.
     tz = storage.tz_path(root, slug)
-    if not tz.exists():
-        abort(404)
+    tz_path = tz if tz.exists() else None
 
     expected_version = _expected_version()
     path = storage.passport_path(root, slug)
@@ -1309,9 +1324,52 @@ def upload_dgp(slug):
     tmp = dest.with_stem(dest.stem + "_upload")
     dgp_file.save(tmp)
     try:
-        fresh = passport_module.build_passport(data.get("project_name") or slug, tmp, tz)
+        fresh = passport_module.build_passport(data.get("project_name") or slug, tmp, tz_path)
     except DocxReadError as e:
         current_app.logger.warning("ДГП отклонён: %s", e)
+        tmp.unlink(missing_ok=True)
+        return refuse("unreadable")
+
+    tmp.replace(dest)
+    data.update(fresh)
+    passport_module.save_passport_checked(data, path, expected_version)
+    return redirect(url_for("main.project_page", slug=slug))
+
+
+@bp.route("/projects/<slug>/tz", methods=["POST"])
+def upload_tz(slug):
+    """Добавить или заменить ТЗ — тот же приём, что и у ``upload_dgp``, с
+    заменёнными местами документами."""
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+
+    tz_file = request.files.get("tz_file")
+    if not tz_file or not tz_file.filename:
+        abort(400)
+
+    def refuse(code):
+        return redirect(url_for("main.project_page", slug=slug, tz=code))
+
+    if not tz_file.filename.lower().endswith(ALLOWED_EXTENSION):
+        return refuse("format")
+    if not upload_guard.is_office_zip(tz_file):
+        return refuse("format")
+
+    dgp = storage.dgp_path(root, slug)
+    dgp_path = dgp if dgp.exists() else None
+
+    expected_version = _expected_version()
+    path = storage.passport_path(root, slug)
+    data = passport_module.load_passport(path)
+
+    dest = storage.tz_path(root, slug)
+    tmp = dest.with_stem(dest.stem + "_upload")
+    tz_file.save(tmp)
+    try:
+        fresh = passport_module.build_passport(data.get("project_name") or slug, dgp_path, tmp)
+    except DocxReadError as e:
+        current_app.logger.warning("ТЗ отклонён: %s", e)
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 

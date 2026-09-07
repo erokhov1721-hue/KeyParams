@@ -42,7 +42,9 @@ TEXT_FIELDS = (
 AREA_FIELDS = ("underground_area_sqm", "aboveground_area_sqm", "total_area_sqm")
 NUMERIC_FIELDS = AREA_FIELDS + ("contract_price_rub",)
 
-BUILDING_CLASS_OPTIONS = ["Эконом", "Комфорт", "Бизнес", "Бизнес - Премиум", "Премиум", "Элит"]
+BUILDING_CLASS_OPTIONS = [
+    "Эконом", "Комфорт", "Бизнес", "Бизнес - Премиум", "Премиум", "Делюкс", "Элит",
+]
 
 # The "Паспорт договора" card — filled from a separately uploaded contract
 # terms protocol (often a PDF), independent of the object passport above.
@@ -173,9 +175,18 @@ def _apply_ocr_fallback(data, dgp, tz):
     return filled, ocr_dgp, ocr_tz
 
 
-def build_passport(project_name: str, dgp_path, tz_path) -> dict:
-    dgp = read_docx(dgp_path)
-    tz = read_docx(tz_path)
+_EMPTY_DOCX = DocxContent(paragraphs=[], tables=[], images=[])
+
+
+def build_passport(project_name: str, dgp_path=None, tz_path=None) -> dict:
+    """The passport auto-filled from the ДГП and ТЗ — either or both may be
+    absent (``None``): a project can be created, or later completed, without
+    one of them, and the fields the missing document would have supplied
+    just stay unset for the fields below to fill in by hand, the same as a
+    document that was read but had nothing for a particular field.
+    """
+    dgp = read_docx(dgp_path) if dgp_path is not None else _EMPTY_DOCX
+    tz = read_docx(tz_path) if tz_path is not None else _EMPTY_DOCX
     data = {
         "project_name": project_name,
         "address": extractors.extract_address(dgp),
@@ -274,6 +285,14 @@ DGP_PROBLEM_MESSAGES = {
     "unreadable": (
         "Не удалось прочитать файл — убедитесь, что это корректный .docx. "
         "Прежний ДГП оставлен на месте."
+    ),
+}
+
+TZ_PROBLEM_MESSAGES = {
+    "format": "Загрузите файл ТЗ в формате .docx",
+    "unreadable": (
+        "Не удалось прочитать файл — убедитесь, что это корректный .docx. "
+        "Прежний ТЗ оставлен на месте."
     ),
 }
 

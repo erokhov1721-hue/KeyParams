@@ -320,6 +320,43 @@ def test_build_passport_fills_found_fields_and_nulls_missing(tmp_path):
     assert result["total_area_sqm"] is None
 
 
+def test_build_passport_with_no_tz_leaves_its_fields_none(tmp_path):
+    # A project can be created (or completed) with only a ДГП — the fields
+    # only a ТЗ supplies stay unset rather than the call failing outright.
+    dgp_xml = document_xml(paragraphs=[
+        "Общество с ограниченной ответственностью «Ромашка» (ООО «Ромашка»), "
+        "именуемое в дальнейшем «Генподрядчик», с третьей стороны,"
+    ])
+    dgp_path = make_docx(tmp_path, dgp_xml, "dgp.docx")
+
+    result = passport.build_passport("Тестовый проект", dgp_path, None)
+
+    assert result["general_contractor"] == "ООО «Ромашка»"
+    assert result["underground_area_sqm"] is None
+    assert result["aboveground_area_sqm"] is None
+    assert result["total_area_sqm"] is None
+
+
+def test_build_passport_with_no_dgp_leaves_its_fields_none(tmp_path):
+    tz_xml = document_xml(tables=[[["1", "Площадь подземной части", "м2", "1 000"]]])
+    tz_path = make_docx(tmp_path, tz_xml, "tz.docx")
+
+    result = passport.build_passport("Тестовый проект", None, tz_path)
+
+    assert result["underground_area_sqm"] == 1000.0
+    assert result["general_contractor"] is None
+    assert result["year_signed"] is None
+    assert result["contract_price_rub"] is None
+
+
+def test_build_passport_with_neither_document_still_returns_the_name(tmp_path):
+    result = passport.build_passport("Пустой проект", None, None)
+
+    assert result["project_name"] == "Пустой проект"
+    assert result["general_contractor"] is None
+    assert result["underground_area_sqm"] is None
+
+
 def test_save_and_load_passport_roundtrip(tmp_path):
     fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [
         passport.REBAR_COEFFICIENT_FIELD, passport.FACADE_AREA_FIELD,

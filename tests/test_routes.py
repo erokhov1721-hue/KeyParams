@@ -166,6 +166,37 @@ def test_create_project_rejects_corrupted_docx(tmp_path):
     assert resp.status_code == 400
 
 
+def test_create_project_works_without_dgp_or_tz(tmp_path):
+    # Neither document is required: a project can start as just a name, with
+    # everything else filled in by hand or added later from its own page.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без документов",
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 302
+
+    body = client.get(resp.headers["Location"]).get_data(as_text=True)
+    assert "Загрузить ДГП" in body
+    assert "Загрузить ТЗ" in body
+
+
+def test_create_project_with_only_a_dgp_extracts_what_it_can(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Только ДГП",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+    }, content_type="multipart/form-data")
+    assert resp.status_code == 302
+
+    body = client.get(resp.headers["Location"]).get_data(as_text=True)
+    # ДГП's own field (general contractor) comes through; ТЗ's fields do not
+    # since there is no ТЗ, and the page offers to add one.
+    assert "ООО «Ромашка»" in body
+    assert "Загрузить ТЗ" in body
+
+
 def test_create_project_then_view_passport(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -4189,6 +4220,113 @@ def test_replacing_the_dgp_for_an_unknown_project_is_not_found(tmp_path):
     client = app.test_client()
 
     resp = _upload_dgp(client, "нет-такого", _dgp_bytes_alt())
+
+    assert resp.status_code == 404
+
+
+def test_uploading_a_dgp_works_for_a_project_with_no_tz(tmp_path):
+    # A project started with neither document still rebuilds its passport
+    # off the ДГП alone once one is added — the ТЗ-only fields just stay
+    # unset rather than the upload being refused outright.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={"project_name": "Без ТЗ"}, content_type="multipart/form-data")
+    slug = resp.headers["Location"].rsplit("/", 1)[-1]
+
+    resp = _upload_dgp(client, slug, _dgp_bytes_alt())
+
+    assert resp.status_code == 302
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "ООО «Вектор»" in body
+    assert "Заменить ДГП" in body
+    assert "Загрузить ТЗ" in body
+
+
+# --- заменить/добавить ТЗ -----------------------------------------------------
+
+def _tz_bytes_alt():
+    return build_docx_bytes(document_xml(
+        tables=[[["1", "Площадь подземной части", "м2", "2 000"]]],
+    ))
+
+
+def _upload_tz(client, slug, data, filename="tz.docx"):
+    return client.post(
+        f"/projects/{slug}/tz",
+        data={"tz_file": (io.BytesIO(data), filename)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_the_passport_offers_to_replace_the_tz(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Заменить ТЗ" in body
+
+
+def test_uploading_a_tz_for_a_project_that_had_none_fills_the_passport(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    resp = client.post("/projects", data={
+        "project_name": "Без ТЗ 2",
+        "dgp_file": (io.BytesIO(_dgp_bytes()), "dgp.docx"),
+    }, content_type="multipart/form-data")
+    slug = resp.headers["Location"].rsplit("/", 1)[-1]
+
+    resp = _upload_tz(client, slug, _tz_bytes())
+
+    assert resp.status_code == 302
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "1 000" in body
+    assert "Заменить ТЗ" in body
+
+
+def test_replacing_the_tz_rebuilds_the_passport_fields(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_tz(client, slug, _tz_bytes_alt())
+
+    assert resp.status_code == 302
+    assert "tz=" not in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "2 000" in body
+
+
+def test_a_tz_in_the_wrong_format_is_refused(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_tz(client, slug, b"whatever", filename="tz.txt")
+
+    assert "tz=format" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?tz=format").get_data(as_text=True)
+    assert "формате .docx" in body
+
+
+def test_an_unreadable_tz_is_refused_and_the_old_one_kept(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _create_full_project(client, "Тест")
+
+    resp = _upload_tz(client, slug, _valid_zip_with_wrong_contents())
+
+    assert "tz=unreadable" in resp.headers["Location"]
+    body = client.get(f"/projects/{slug}?tz=unreadable").get_data(as_text=True)
+    assert "Прежний ТЗ оставлен на месте" in body
+
+
+def test_uploading_tz_for_an_unknown_project_is_not_found(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+
+    resp = _upload_tz(client, "нет-такого", _tz_bytes_alt())
 
     assert resp.status_code == 404
 
