@@ -38,6 +38,33 @@ def _report(rows, **kwargs):
     return predicted_increase.read_report(buf)
 
 
+def _hierarchy_workbook(rows, *, header_row=1, amount_header="Предполагаемое ДС"):
+    """A workbook numbered into a hierarchy, the shape seen in a real file
+    (CLOS 17): a top-level row states its own amount already including
+    whatever is nested under it. ``rows`` are ``(number, name, amount)`` —
+    ``number`` written exactly as given (str, int or float — the real file
+    mixes all three in the same column, apparently depending on who typed
+    each row)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=header_row, column=1, value="№")
+    ws.cell(row=header_row, column=2, value="Стоимость по видам работ/расход:")
+    ws.cell(row=header_row, column=3, value=amount_header)
+    for offset, (number, name, amount) in enumerate(rows):
+        row = header_row + 1 + offset
+        ws.cell(row=row, column=1, value=number)
+        ws.cell(row=row, column=2, value=name)
+        ws.cell(row=row, column=3, value=amount)
+    return wb
+
+
+def _hierarchy_report(rows, **kwargs):
+    buf = io.BytesIO()
+    _hierarchy_workbook(rows, **kwargs).save(buf)
+    buf.seek(0)
+    return predicted_increase.read_report(buf)
+
+
 def _by_key(report):
     return {row.key: row for row in report.rows}
 
@@ -126,6 +153,49 @@ def test_a_zero_amount_row_is_dropped_from_the_report():
     report = _report([("Фасад", 0)])
 
     assert report.rows == []
+
+
+# --- numbered rows are each read on their own account -------------------------
+
+def test_a_numbered_sub_row_adds_to_its_parent_rather_than_being_absorbed():
+    # Real case (CLOS 17): the workbook's own grand total is a plain sum
+    # over every row, "5." and "5.5." alike (``=SUBTOTAL(9, C4:C96)`` in
+    # the real file) — a sub-item states an extra adjustment of its own,
+    # on top of its parent's figure, not a restatement of part of it.
+    # Rolling child rows into their numbered parent (as a smeta's own
+    # "укрупненная" rollup does — see estimate_sections) would silently
+    # drop this row's contribution instead of adding it.
+    report = _hierarchy_report([
+        (5, "Возведение монолитных конструкций здания+МК", 71482697.82),
+        ("5.1", "Фундаментная плита", 0),
+        ("5.5", "Сборные ж/б конструкции/Прочее", -5246879),
+    ])
+    rows = _by_key(report)
+
+    assert rows["concrete"].amount == Decimal("66235818.82")
+    assert set(rows["concrete"].sources) == {
+        "Возведение монолитных конструкций здания+МК", "Сборные ж/б конструкции/Прочее",
+    }
+
+
+def test_a_numbered_column_does_not_change_which_rows_count():
+    # Whether or not the sheet happens to carry a "№" column, every row
+    # with a name and an amount is its own line — the column is read as
+    # ordinary row content, not as a rollup signal.
+    with_numbers = _hierarchy_report([(7, "Устройство фасада", 100)])
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=1, value="Стоимость по видам работ/расход:")
+    ws.cell(row=1, column=2, value="Предполагаемое ДС")
+    ws.cell(row=2, column=1, value="Устройство фасада")
+    ws.cell(row=2, column=2, value=100)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    without_numbers = predicted_increase.read_report(buf)
+
+    assert _by_key(with_numbers)["facade"].amount == Decimal("100")
+    assert _by_key(without_numbers)["facade"].amount == Decimal("100")
 
 
 # --- errors ------------------------------------------------------------------

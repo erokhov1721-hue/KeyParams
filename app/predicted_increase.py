@@ -155,6 +155,18 @@ def read_lines(source) -> list:
 
 
 def _lines_from_sheet(ws, header) -> list:
+    """Every priced row read on its own account, numbered hierarchy or not.
+
+    Tempting as it looks next to a smeta's own "укрупненная" shape (see
+    estimate_sections._sections_from_flat_numbered), this file's numbering
+    is not a rollup: a real workbook's own grand-total cell is a plain
+    ``SUBTOTAL(9, ...)`` over every row in the range, top-level and
+    sub-level alike, which only adds up if each row is its own independent
+    predicted change rather than a parent already including its children.
+    A row numbered "5.5" under "5" is a specific extra adjustment noted
+    against that one sub-item, on top of "5"'s own figure, not a part of it
+    restated.
+    """
     lines = []
     for row in range(header.row + 1, ws.max_row + 1):
         name = _named(ws.cell(row=row, column=header.name_col).value)
