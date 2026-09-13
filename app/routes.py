@@ -72,6 +72,14 @@ def _project_names(root, slugs):
     return {slug: _project_name(root, slug) for slug in slugs}
 
 
+def _project_addresses(root, slugs):
+    return {slug: _safe_passport(root, slug).get("address") or "" for slug in slugs}
+
+
+def _project_field_map(root, slugs, field):
+    return {slug: _safe_passport(root, slug).get(field) or "" for slug in slugs}
+
+
 def _cover_problem(cover_file):
     """Why this photo can't be used, in words, or None if it can.
 
@@ -104,6 +112,10 @@ def inject_sidebar_projects():
     return {
         "sidebar_slugs": slugs,
         "sidebar_names": _project_names(root, slugs),
+        "sidebar_addresses": _project_addresses(root, slugs),
+        "sidebar_classes": _project_field_map(root, slugs, "building_class"),
+        "sidebar_contractors": _project_field_map(root, slugs, "general_contractor"),
+        "sidebar_years": _project_field_map(root, slugs, "year_signed"),
         "sidebar_covers": {slug: _cover_version(root, slug) for slug in slugs},
     }
 

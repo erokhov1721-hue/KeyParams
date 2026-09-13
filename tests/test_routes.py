@@ -969,6 +969,24 @@ def test_sidebar_leads_to_both_adding_and_comparing(tmp_path):
     assert 'href="/compare/select"' in body
 
 
+def test_sidebar_search_data_covers_class_contractor_and_year(tmp_path):
+    # Поле поиска в сайдбаре ищет не только по имени и адресу — по классу,
+    # генподрядчику и году подписания тоже, значит эти значения должны быть
+    # в data-атрибутах каждого пункта списка, где их видит JS-фильтр.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(
+        tmp_path, "ПроектА",
+        building_class="Бизнес", general_contractor="ООО «Ромашка»", year_signed="2024",
+    )
+
+    body = client.get("/").data.decode("utf-8")
+
+    assert 'data-class="Бизнес"' in body
+    assert 'data-contractor="ООО «Ромашка»"' in body
+    assert 'data-year="2024"' in body
+
+
 def test_compare_select_page_offers_renaming_and_deleting(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

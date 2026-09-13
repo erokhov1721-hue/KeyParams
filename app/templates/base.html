@@ -96,12 +96,41 @@
             </a>
           </li>
         </ul>
+        {% if sidebar_slugs %}
+        <div class="sidebar-search">
+          <div class="sidebar-search-field">
+            <svg class="sidebar-search-field-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input type="text" class="sidebar-search-input" id="sidebar-search-input"
+                   placeholder="Поиск по проектам, адресу, классу, генподрядчику, году…"
+                   aria-label="Поиск по проектам, адресу, классу, генподрядчику, году"
+                   autocomplete="off">
+            <button type="button" class="sidebar-search-clear" id="sidebar-search-clear"
+                    aria-label="Очистить поиск" hidden>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18"/>
+              </svg>
+            </button>
+          </div>
+          <button type="button" class="sidebar-search-collapsed-btn" id="sidebar-search-collapsed-btn"
+                  aria-label="Поиск по проектам" title="Поиск">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
+          </button>
+        </div>
+        {% endif %}
         <div class="sidebar-section-title">Проекты</div>
         {% if sidebar_slugs %}
-        <ul class="sidebar-list">
+        <ul class="sidebar-list" id="sidebar-project-list">
           {% set active_slug = request.view_args.slug if request.view_args else none %}
           {% for slug in sidebar_slugs %}
-          <li class="sidebar-item">
+          <li class="sidebar-item" data-name="{{ sidebar_names[slug] }}" data-address="{{ sidebar_addresses[slug] }}"
+              data-class="{{ sidebar_classes[slug] }}" data-contractor="{{ sidebar_contractors[slug] }}"
+              data-year="{{ sidebar_years[slug] }}">
             <a class="sidebar-link {{ 'is-active' if slug == active_slug else '' }}"
                href="{{ url_for('main.project_page', slug=slug) }}"
                title="{{ sidebar_names[slug] }}">
@@ -120,6 +149,7 @@
           </li>
           {% endfor %}
         </ul>
+        <p class="sidebar-empty" id="sidebar-search-empty" hidden>Ничего не найдено</p>
         {% else %}
         <p class="sidebar-empty">Проектов пока нет</p>
         {% endif %}
@@ -230,6 +260,71 @@
         var collapsed = sidebar.classList.toggle('is-collapsed');
         localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
       });
+    })();
+
+    (function () {
+      var input = document.getElementById('sidebar-search-input');
+      var clearBtn = document.getElementById('sidebar-search-clear');
+      var list = document.getElementById('sidebar-project-list');
+      var emptyState = document.getElementById('sidebar-search-empty');
+      var collapsedBtn = document.getElementById('sidebar-search-collapsed-btn');
+      var sidebar = document.getElementById('sidebar');
+      if (!input || !list) return;
+
+      var items = Array.prototype.slice.call(list.querySelectorAll('.sidebar-item'));
+      var debounceTimer = null;
+
+      function applyFilter() {
+        var query = input.value.trim().toLowerCase();
+        var visibleCount = 0;
+        items.forEach(function (item) {
+          var matches = !query
+            || (item.dataset.name || '').toLowerCase().indexOf(query) !== -1
+            || (item.dataset.address || '').toLowerCase().indexOf(query) !== -1
+            || (item.dataset.class || '').toLowerCase().indexOf(query) !== -1
+            || (item.dataset.contractor || '').toLowerCase().indexOf(query) !== -1
+            || (item.dataset.year || '').toLowerCase().indexOf(query) !== -1;
+          item.hidden = !matches;
+          if (matches) visibleCount += 1;
+        });
+        if (emptyState) emptyState.hidden = !(query && visibleCount === 0);
+      }
+
+      function clearSearch() {
+        clearTimeout(debounceTimer);
+        input.value = '';
+        clearBtn.hidden = true;
+        applyFilter();
+      }
+
+      // Дебаунс только на саму фильтрацию — крестик и появление/скрытие
+      // крестика реагируют сразу, иначе поле кажется залипшим при вводе.
+      input.addEventListener('input', function () {
+        clearBtn.hidden = input.value.length === 0;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(applyFilter, 180);
+      });
+
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          clearSearch();
+        }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        clearSearch();
+        input.focus();
+      });
+
+      if (collapsedBtn && sidebar) {
+        collapsedBtn.addEventListener('click', function () {
+          sidebar.classList.remove('is-collapsed');
+          try {
+            localStorage.setItem('sidebar-collapsed', '0');
+          } catch (e) {}
+          input.focus();
+        });
+      }
     })();
 
     (function () {

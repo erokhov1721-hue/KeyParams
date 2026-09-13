@@ -215,6 +215,93 @@ a {
   margin-bottom: 18px;
 }
 
+.sidebar-search {
+  margin-bottom: 14px;
+}
+
+.sidebar-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-search-field-icon {
+  position: absolute;
+  left: 11px;
+  color: var(--text-600);
+  pointer-events: none;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  padding: 9px 30px 9px 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 13px;
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--text-600);
+}
+
+.sidebar-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.sidebar-search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-600);
+  cursor: pointer;
+}
+
+.sidebar-search-clear:hover {
+  color: var(--text-100);
+  background: var(--bg-800);
+}
+
+/* Свёрнутая панель отдаёт полю поиска слишком мало места для текста, так
+   что вместо него — сама иконка лупы: клик по ней разворачивает панель и
+   сразу передаёт фокус полю, как и любой другой развёрнутый пункт. */
+.sidebar-search-collapsed-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-700);
+  color: var(--text-500);
+  cursor: pointer;
+}
+
+.sidebar-search-collapsed-btn:hover {
+  color: var(--text-100);
+  background: var(--bg-800);
+}
+
+.sidebar.is-collapsed .sidebar-search-field {
+  display: none;
+}
+
+.sidebar.is-collapsed .sidebar-search-collapsed-btn {
+  display: flex;
+}
+
 .sidebar-list {
   list-style: none;
   margin: 0;
@@ -1670,6 +1757,14 @@ select option {
   .sidebar .sidebar-link-text,
   .sidebar .sidebar-toggle-text {
     display: none;
+  }
+
+  .sidebar .sidebar-search-field {
+    display: none;
+  }
+
+  .sidebar .sidebar-search-collapsed-btn {
+    display: flex;
   }
 
 }
