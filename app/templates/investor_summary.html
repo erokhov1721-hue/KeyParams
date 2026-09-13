@@ -8,6 +8,7 @@
 {% endif %}
 {% endblock %}
 {% block content %}
+<script src="{{ url_for('static', filename='waterfall.js') }}"></script>
 <div class="page-head">
   <div>
     <h1>Сводка по удорожанию</h1>
@@ -170,12 +171,23 @@
   <p class="chart-empty">Недостаточно данных, чтобы сравнить смету с итоговой стоимостью.</p>
   {% endif %}
 
-  <h3 class="pair-subtitle">Разделы сметы, которые дорожают</h3>
+  <div class="sections-head-row">
+    <h3 class="pair-subtitle">Разделы сметы, которые дорожают</h3>
+    {% if row.has_increase_data and row.increasing_sections %}
+    <div class="sections-view-tabs" role="tablist">
+      <button type="button" class="sections-view-tab is-active" role="tab"
+              aria-selected="true" data-sections-view="table">Таблица</button>
+      <button type="button" class="sections-view-tab" role="tab"
+              aria-selected="false" data-sections-view="chart">График</button>
+    </div>
+    {% endif %}
+  </div>
   {% if not row.has_increase_data %}
   <p class="chart-empty">Не загружен ни файл удорожания, ни файл прогнозируемого удорожания.</p>
   {% elif not row.increasing_sections %}
   <p class="chart-empty">По подписанному и прогнозируемому удорожанию ни один раздел сметы не дорожает.</p>
   {% else %}
+  <div data-sections-panel="table">
   <div class="sections-table-wrap">
     <table class="sections-table investor-detail-table investor-summary-table">
       <thead>
@@ -232,6 +244,26 @@
       </tfoot>
     </table>
   </div>
+  </div>
+  {# График — водопадная диаграмма (app/static/waterfall.js): по разделу
+     группа, три строки — Смета, Подписанное удорожание (прирост к смете) и
+     Прогнозируемое удорожание (прирост дальше), с нарастающим итогом.
+     Строится лениво, при первом переключении на «График» — пока панель
+     скрыта, у контейнера нулевая ширина, мерить там нечего.
+
+     Легенда — один раз здесь, а не под каждым разделом: сама диаграмма
+     подписывает строки коротко («Смета», «Подпис.», «Итог» …), полный смысл
+     цвета — только тут. #}
+  <div class="wf-legend" data-sections-panel="chart">
+    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-estimate"></i>Смета</span>
+    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-increase"></i>Удорожание</span>
+    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-total"></i>Итог</span>
+  </div>
+  <div class="wf-toggle-host" id="waterfall-toggle-{{ row.slug }}"></div>
+  <div class="grouped-bar-chart-wrap" data-sections-panel="chart" id="waterfall-{{ row.slug }}"></div>
+  <script id="waterfall-{{ row.slug }}-data" type="application/json">
+    {{ {"groups": row.waterfall_groups} | tojson }}
+  </script>
   {% endif %}
 </div>
 {% endfor %}
@@ -301,6 +333,55 @@
           'href', slug ? pdfBaseHref + '?slug=' + encodeURIComponent(slug) : pdfBaseHref,
         );
       }
+    });
+  })();
+</script>
+
+{# Таблица / График — переключатель вида «Разделы сметы, которые
+   дорожают». Тот же приём, что и «По разделам / Накопительно» в
+   сравнении двух объектов: два блока разметки, [data-sections-panel]
+   на карточке решает, какой виден. График — водопадная диаграмма
+   (app/static/waterfall.js) с капсулой единиц «%»/«тотал»/«на м²» над
+   ней. Строится лениво, при первом переключении на «График» — пока
+   панель скрыта, у контейнера нулевая ширина, мерить там нечего. #}
+<script>
+  (function () {
+    function buildWaterfallPanel(card) {
+      var slug = card.dataset.slug;
+      var dataEl = document.getElementById('waterfall-' + slug + '-data');
+      var container = document.getElementById('waterfall-' + slug);
+      var toggleHost = document.getElementById('waterfall-toggle-' + slug);
+      if (!dataEl || !container || container.dataset.built) return;
+      var payload = JSON.parse(dataEl.textContent);
+      var groups = payload.groups || [];
+      if (!groups.length) return;
+      container.dataset.built = '1';
+
+      var currentUnit = 'total';
+      toggleHost.innerHTML = window.buildSegToggleHTML(currentUnit, {
+        percent: 'Доля к смете раздела: рост в процентах',
+        total: 'Суммы в рублях',
+        perSqm: 'На квадратный метр площади объекта',
+      });
+      window.renderWaterfall(container, groups, currentUnit);
+      window.initSegToggle(toggleHost.firstElementChild, function (unit) {
+        window.renderWaterfall(container, groups, unit);
+      });
+    }
+
+    document.querySelectorAll('.investor-detail').forEach(function (card) {
+      var tabs = card.querySelectorAll('.sections-view-tabs .sections-view-tab');
+      if (!tabs.length) return;
+      tabs.forEach(function (button) {
+        button.addEventListener('click', function () {
+          tabs.forEach(function (other) {
+            other.classList.toggle('is-active', other === button);
+            other.setAttribute('aria-selected', other === button ? 'true' : 'false');
+          });
+          card.dataset.sectionsView = button.dataset.sectionsView;
+          if (button.dataset.sectionsView === 'chart') buildWaterfallPanel(card);
+        });
+      });
     });
   })();
 </script>

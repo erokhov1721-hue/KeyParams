@@ -70,6 +70,24 @@
      зависит. Полоса одна на все страницы, и высота у неё одна — от того,
      сколько на странице кнопок, она не считается. */
   --header-height: 64px;
+
+  /* Водопадная диаграмма «Разделы сметы, которые дорожают» и её капсула
+     единиц (сводка по удорожанию) — свои имена переменных (задал их сам
+     компонент), но не свои цвета: чистые псевдонимы уже существующих
+     токенов, поэтому светлая тема ниже не должна переопределять их
+     отдельно — она уже меняет то, на что они ссылаются. */
+  --wf-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --mut: var(--text-500);
+  --tx: var(--text-100);
+  --wf-grid: var(--border);
+  --fill-neutral: var(--text-600);
+  --p-mira: var(--purple);
+  --danger: var(--red);
+  --p1: var(--bg-700);
+  --p2: var(--bg-800);
+  --hair: var(--border);
+  --acc: var(--accent);
+  --on-acc: var(--accent-ink);
 }
 
 /* Light theme.
@@ -1809,8 +1827,12 @@ select option {
 .sections-card > .sections-heat-legend,
 .investor-detail > .sections-head,
 .investor-detail > .pair-subtitle,
+.investor-detail > .sections-head-row,
 .investor-detail > .delta-list,
 .investor-detail > .chart-empty,
+.investor-detail > .wf-legend,
+.investor-detail > .wf-toggle-host,
+.investor-detail > .grouped-bar-chart-wrap,
 .compare-card > .sections-head {
   margin-inline: var(--table-edge);
 }
@@ -2001,6 +2023,29 @@ select option {
 
 [data-sections-view="waterfall"] [data-sections-panel="waterfall"] {
   display: block;
+}
+
+/* Тот же приём для «Разделы сметы, которые дорожают» в сводке по
+   удорожанию: Таблица (числа как есть) / График (те же числа —
+   сгруппированные горизонтальные бары, три на раздел). */
+[data-sections-panel="chart"] {
+  display: none;
+}
+
+[data-sections-view="chart"] [data-sections-panel="table"] {
+  display: none;
+}
+
+[data-sections-view="chart"] [data-sections-panel="chart"] {
+  display: block;
+}
+
+.grouped-bar-chart-wrap {
+  position: relative;
+  width: 100%;
+  /* Пересчитывается в JS под число разделов (см. charts.js) — этот
+     запасной рост виден только на долю секунды до первой отрисовки. */
+  height: 320px;
 }
 
 /* Свёрнутая дельта по разделам в «Сравнении двух объектов» — сама карточка
@@ -2326,6 +2371,212 @@ select option {
    начертанием, а не цветом, чтобы не спорить с подложками групп. */
 .investor-summary-table .col-total-cost .sections-number {
   font-weight: 500;
+}
+
+/* Водопадная диаграмма «Разделы сметы, которые дорожают» (вид «График» у
+   этого блока) — чистый SVG из app/static/waterfall.js, строит DOM сам;
+   здесь только оформление, которое CSS-переменными не задать: анимация
+   въезда полос и всплывающая подсказка по наведению.
+
+   Без явной ширины у .grouped-bar-chart-wrap: блочный элемент и так
+   растягивается на доступную ширину сам — а со своим же margin-inline
+   (задан выше, вместе с остальными прямыми детьми .investor-detail) явные
+   100% заставили бы его вылезать за карточку на величину этого отступа с
+   обеих сторон. */
+
+/* Отключаем выделение текста внутри самого графика — вплотную стоящие
+   строки-ловцы курсора (.wf-hover-row, на всю ширину, для всплывающей
+   подсказки) иначе выделяются драгом мыши как обычный текст, и получившееся
+   выделение рисуется поверх диаграммы сплошной полосой, будто у одного
+   раздела другой фон, чем у соседних — это не фон, это выделение. */
+.waterfall-svg {
+  user-select: none;
+}
+
+/* Легенда над диаграммой — один раз на карточку, а не под каждым разделом
+   (сама диаграмма подписывает свои строки только коротко). Те же три цвета,
+   что и сами бары в waterfall.js, — если там переопределят переменную,
+   легенда не разъедется с диаграммой. */
+.wf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--mut);
+}
+
+.wf-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wf-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.wf-legend-swatch-estimate {
+  background: var(--fill-neutral);
+}
+
+.wf-legend-swatch-increase {
+  background: var(--danger);
+}
+
+.wf-legend-swatch-total {
+  background: var(--p-mira);
+}
+
+.waterfall-svg .wf-bar-anim {
+  transform-box: fill-box;
+  transform-origin: 0% 50%;
+  animation: wf-bar-grow 320ms ease-out both;
+}
+
+@keyframes wf-bar-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waterfall-svg .wf-bar-anim { animation: none; }
+}
+
+.waterfall-svg .wf-hover-row {
+  cursor: default;
+}
+
+.wf-tooltip {
+  position: absolute;
+  z-index: 10;
+  background: var(--p2);
+  border: 1px solid var(--hair);
+  color: var(--tx);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  box-shadow: var(--shadow-card);
+}
+
+/* Капсула-переключатель единиц (%, тотал, на м²) над диаграммой. */
+.seg-toggle {
+  --seg-h: 36px;
+  display: inline-flex;
+  align-items: center;
+  height: var(--seg-h);
+  border-radius: 999px;
+  background: var(--p1);
+  border: 1px solid var(--hair);
+  padding: 3px;
+  gap: 2px;
+  position: relative;
+  margin-bottom: 14px;
+}
+
+/* Заливку активной кнопки рисует не она сама, а этот псевдоэлемент —
+   так бегунок можно плавно двигать между кнопками transform'ом одной
+   фигуры, а не перекрашивать разные кнопки по очереди. */
+.seg-toggle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--iw, 0px);
+  height: var(--ih, 0px);
+  transform: translate(var(--ix, 0px), var(--iy, 0px));
+  border-radius: 999px;
+  background: var(--acc);
+  opacity: var(--ion, 0);
+  z-index: 0;
+  pointer-events: none;
+  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1),
+              width 0.42s cubic-bezier(0.34, 1.56, 0.64, 1),
+              height 0.42s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.18s linear;
+}
+
+/* Первая посадка бегунка и пересчёт при ресайзе — без перехода, иначе он
+   на каждую загрузку приезжал бы из левого верхнего угла (см. initSegToggle
+   в waterfall.js: класс ставится и снимается вокруг форс-пересчёта раскладки). */
+.seg-toggle.seg-no-anim::before {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seg-toggle::before { transition: none; }
+}
+
+.seg-btn {
+  position: relative;
+  z-index: 1;
+  height: 28px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--wf-mono);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.seg-btn:hover {
+  color: var(--tx);
+}
+
+.seg-btn[aria-pressed="true"] {
+  color: var(--on-acc);
+  font-weight: 700;
+}
+
+.seg-btn:focus-visible {
+  outline: 2px solid var(--tx);
+  outline-offset: 2px;
+}
+
+.seg-btn[aria-pressed="true"]:focus-visible {
+  outline-color: var(--on-acc);
+}
+
+/* Тач-устройство — капсула выше (не сама кнопка, иначе она вылезла бы за
+   её пределы), чтобы попасть пальцем было так же легко, как курсором. */
+@media (pointer: coarse) {
+  .seg-toggle { --seg-h: 52px; }
+}
+
+.seg-tooltip {
+  position: fixed;
+  z-index: 100;
+  display: none;
+  background: var(--p2);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 11px;
+  max-width: 280px;
+  color: var(--tx);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s linear;
+}
+
+/* На тач-устройствах подсказка не показывается вовсе — initSegToggle сам не
+   создаёт для неё элемент при (pointer: coarse), это правило на случай,
+   если он всё же окажется в разметке. */
+@media (pointer: coarse) {
+  .seg-tooltip { display: none !important; }
 }
 
 /* Строка «Итого» — на всю ширину, включая прилипающую колонку объекта,
@@ -3150,6 +3401,37 @@ select option {
   justify-content: space-between;
   align-items: baseline;
   gap: 16px;
+}
+
+/* Это ключевая метрика страницы (насколько объект подорожал целиком) —
+   рядом с ней всего лишь переключатель «Таблица/График», так что она должна
+   явно перевешивать его по весу, а не читаться как ещё одна строка цифр. */
+.investor-detail-bar {
+  padding: 14px 16px;
+  margin-bottom: 4px;
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.investor-detail-bar .delta-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-500);
+}
+
+.investor-detail-bar .delta-value {
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.investor-detail-bar .delta-value-abs {
+  font-size: 15px;
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.75;
 }
 
 .works-table .sections-value {
