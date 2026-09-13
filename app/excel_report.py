@@ -26,7 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.units import pixels_to_EMU
 from PIL import Image
 
-from . import estimate_sections, extractors, passport as passport_module, storage
+from . import estimate_sections, extractors, master_import, passport as passport_module, storage
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,14 @@ def load_project(project_dir) -> dict:
     }
 
 
+def _totals_and_sources(sections):
+    totals, sources = {}, {}
+    for section in sections:
+        totals[section.key] = totals.get(section.key, Decimal("0")) + section.amount
+        sources.setdefault(section.key, []).append(section.name)
+    return totals, sources
+
+
 def estimate_costs(root, slug):
     """``({line: total}, {line: [section names]}, [unmatched section names])``
     from the project's estimate.
@@ -206,21 +214,30 @@ def estimate_costs(root, slug):
     over: the passport half of the report is still worth having, and the cost
     lines fall back to being blank, which is what they were before an estimate
     was attached at all.
+
+    Where the project has no real смета to read (or it parsed to nothing
+    usable), the portfolio Excel import's own cost table is tried next, if
+    the project has one — see ``master_import.estimate_sections_from_cost_table``.
+    A real смета always wins outright where it has anything at all; the two
+    are never merged section by section.
     """
     path = storage.estimate_path(root, slug)
-    if not path.exists():
-        return {}, {}, []
-    try:
-        sections, unmatched = estimate_sections.read_sections_with_warnings(path)
-    except estimate_sections.EstimateSectionsError:
-        logger.exception("Не удалось разобрать смету проекта «%s»", slug)
-        return {}, {}, []
+    if path.exists():
+        try:
+            sections, unmatched = estimate_sections.read_sections_with_warnings(path)
+        except estimate_sections.EstimateSectionsError:
+            logger.exception("Не удалось разобрать смету проекта «%s»", slug)
+            sections, unmatched = [], []
+        totals, sources = _totals_and_sources(sections)
+        if totals:
+            return totals, sources, unmatched
 
-    totals, sources = {}, {}
-    for section in sections:
-        totals[section.key] = totals.get(section.key, Decimal("0")) + section.amount
-        sources.setdefault(section.key, []).append(section.name)
-    return totals, sources, unmatched
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return {}, {}, []
+    sections = master_import.estimate_sections_from_cost_table(cost_table)
+    totals, sources = _totals_and_sources(sections)
+    return totals, sources, []
 
 
 # --- the sheet -------------------------------------------------------------

@@ -2,6 +2,7 @@ import io
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote
 
 from flask import (
     Blueprint, Response, abort, current_app, redirect, render_template, request, send_file,
@@ -10,8 +11,8 @@ from flask import (
 
 from . import (
     chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
-    extractors, investor_summary, passport as passport_module, pdf_export, pdf_reader,
-    predicted_increase, project_filter, storage, upload_guard, workbook_cache,
+    extractors, investor_summary, master_import, passport as passport_module, pdf_export,
+    pdf_reader, predicted_increase, project_filter, storage, upload_guard, workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -25,6 +26,10 @@ MAX_COVER_SIZE = 5 * 1024 * 1024
 ALLOWED_CONTRACT_TERMS_EXTENSION = ".pdf"
 MAX_CONTRACT_TERMS_SIZE = 15 * 1024 * 1024
 MAX_COST_INCREASE_SIZE = 15 * 1024 * 1024
+# A portfolio-wide workbook, not a single project's file — real ones seen
+# so far run to ~25MB just from formatting across 280+ columns, well past
+# the 15MB cap used for a single project's upload.
+MAX_MASTER_IMPORT_SIZE = 50 * 1024 * 1024
 
 
 def _projects_root():
@@ -277,28 +282,21 @@ def _pair_choice(slugs):
 def _increase_reports(root, slugs, costs):
     """Удорожание каждого проекта — ``{slug: отчёт | None}``.
 
-    None у проекта без файла удорожания и у проекта, чей файл прочитать не
-    удалось: сравнение из-за одного испорченного файла падать не должно, а
-    в расчёт такой проект всё равно не идёт.
+    None у проекта без файла удорожания (и без данных импорта сводного
+    файла ему на замену) и у проекта, чей файл прочитать не удалось:
+    сравнение из-за одного испорченного файла падать не должно, а в расчёт
+    такой проект всё равно не идёт.
 
     Смета берётся уже прочитанная — та же, что легла в таблицу разделов, —
     чтобы удорожание на этой странице считалось от той же базы, что и цифры
-    рядом с ним.
+    рядом с ним. Через ``_cost_increase_report``, чтобы у этой страницы и у
+    страницы одного проекта был ровно один источник правды, включая
+    запасной вариант из импорта сводного файла.
     """
-    reports = {}
-    for slug in slugs:
-        path = storage.cost_increase_path(root, slug)
-        if not path.exists():
-            reports[slug] = None
-            continue
-        try:
-            reports[slug] = cost_increase.read_report(path, costs.get(slug) or {})
-        except cost_increase.CostIncreaseError as e:
-            current_app.logger.warning(
-                "Проект «%s»: файл удорожания не прочитан: %s", slug, e
-            )
-            reports[slug] = None
-    return reports
+    return {
+        slug: _cost_increase_report(root, slug, costs.get(slug) or {})
+        for slug in slugs
+    }
 
 
 def _section_costs(root, slugs):
@@ -312,24 +310,13 @@ def _section_costs(root, slugs):
 
 def _predicted_increase_reports(root, slugs):
     """Each project's predicted cost-increase report, or None for a project
-    with no file, or one that couldn't be read — same shape as
-    ``_increase_reports``, and for the same reason: one broken file must
-    not take the whole comparison or investor summary down with it.
+    with no file (and no import data to fall back on), or one that
+    couldn't be read — same shape as ``_increase_reports``, and for the
+    same reason: one broken file must not take the whole comparison or
+    investor summary down with it. Through ``_predicted_increase_report``,
+    same as ``_increase_reports`` does for the paired file.
     """
-    reports = {}
-    for slug in slugs:
-        path = storage.predicted_increase_path(root, slug)
-        if not path.exists():
-            reports[slug] = None
-            continue
-        try:
-            reports[slug] = predicted_increase.read_report(path)
-        except predicted_increase.PredictedIncreaseError as e:
-            current_app.logger.warning(
-                "Проект «%s»: файл прогнозируемого удорожания не прочитан: %s", slug, e
-            )
-            reports[slug] = None
-    return reports
+    return {slug: _predicted_increase_report(root, slug) for slug in slugs}
 
 
 def _predicted_increase_by_section(reports):
@@ -585,6 +572,55 @@ def investor_summary_pdf():
 @bp.route("/projects/new", methods=["GET"])
 def new_project_form():
     return render_template("new_project.html", error=None)
+
+
+@bp.route("/master-import", methods=["GET"])
+def master_import_form():
+    return render_template("master_import.html", error=None, report=None)
+
+
+@bp.route("/master-import", methods=["POST"])
+def run_master_import():
+    """Create or update a project for every project block in the uploaded
+    portfolio workbook. Overwrites passport fields it finds on existing
+    projects outright — no partial-merge protection — because that's what
+    was asked for in exchange for keeping this simple; see
+    ``master_import.apply_import`` for exactly which fields that covers.
+    """
+    root = _projects_root()
+    xlsx_file = request.files.get("workbook_file")
+    if not xlsx_file or not xlsx_file.filename:
+        return render_template(
+            "master_import.html", error="Выберите файл .xlsx", report=None,
+        ), 400
+    if not xlsx_file.filename.lower().endswith(ALLOWED_ESTIMATE_EXTENSION):
+        return render_template(
+            "master_import.html", error="Файл должен быть в формате .xlsx", report=None,
+        ), 400
+    data = xlsx_file.read()
+    if len(data) > MAX_MASTER_IMPORT_SIZE:
+        return render_template(
+            "master_import.html", error="Файл слишком большой — до 50 МБ", report=None,
+        ), 400
+    if not upload_guard.is_office_zip(io.BytesIO(data)):
+        return render_template(
+            "master_import.html",
+            error="Файл повреждён или не является настоящим .xlsx", report=None,
+        ), 400
+    try:
+        parsed = master_import.parse_workbook(io.BytesIO(data))
+    except master_import.MasterImportError as e:
+        current_app.logger.warning("Импорт из сводного файла отклонён: %s", e)
+        return render_template("master_import.html", error=str(e), report=None), 400
+
+    report = master_import.apply_import(root, parsed)
+    current_app.logger.info(
+        "Импорт из сводного файла: %d проектов (создано %d, обновлено %d)",
+        len(report),
+        sum(1 for r in report if r["action"] == "created"),
+        sum(1 for r in report if r["action"] == "updated"),
+    )
+    return render_template("master_import.html", error=None, report=report)
 
 
 @bp.route("/projects", methods=["POST"])
@@ -848,6 +884,37 @@ def _estimate_unmatched_sections(root, slug):
     return excel_report.estimate_costs(root, slug)[2]
 
 
+def _estimate_from_master_import(root, slug):
+    """``[{"label", "volume", "amount"}, ...]`` — вид работ, объём и сумма
+    из импорта сводного файла (колонки «Объем» и «ДГП»), одна строка на
+    строку сводного файла, для показа в «Смете» там, где своего файла
+    сметы нет, но данные импорта есть. None, если для проекта не было
+    импорта или в нём нет ни одной подходящей строки.
+
+    Строки не группируются по виду работ, в отличие от того, что считается
+    для сравнения объектов и коэффициентов (там «Ж/Б конструкции» и
+    «Металлические конструкции» складываются в одну «Монолит + МК») —
+    объёмы этих двух строк в разных единицах измерения, складывать их было
+    бы неверно, а показывать сумму денег без объёма после того, как объём
+    попросили, тоже не дело.
+    """
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return None
+    rows = []
+    for row in cost_table["rows"]:
+        if estimate_sections.classify(row["label"]) is None:
+            continue
+        amount = row["values"].get(master_import.ESTIMATE_COST_COLUMN_KEY)
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            continue
+        volume = row["values"].get(master_import.VOLUME_COLUMN_KEY)
+        if isinstance(volume, bool) or not isinstance(volume, (int, float)):
+            volume = None
+        rows.append({"label": row["label"], "volume": volume, "amount": amount})
+    return rows or None
+
+
 def _concrete_volume_from_estimate(root, slug):
     """Объём монолита по смете проекта, в м³ — «Предлагаемое количество» из
     раздела «Возведение несущих конструкций здания». None, если сметы нет, её
@@ -865,16 +932,28 @@ def _concrete_volume_from_estimate(root, slug):
         return None
 
 
+def _concrete_volume_from_master_import(root, slug):
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return None
+    return master_import.concrete_volume_from_cost_table(cost_table)
+
+
 def _concrete_volume(root, slug, passport_data):
     """Действующий объём монолита: вписанный вручную в паспорте, а если там
-    пусто — тот, что нашёлся в смете. Ручное значение важнее смeтного — оно и
+    пусто — тот, что нашёлся в смете, а если и сметы нет — тот, что пришёл
+    из импорта сводного файла. Ручное значение важнее смeтного — оно и
     существует ради тех случаев, где разбор смет ошибается, смета устроена не
-    так, как он ожидает, или её вовсе нет.
+    так, как он ожидает, или её вовсе нет; смета важнее импорта, потому что
+    она про сам проект, а сводный файл — портфельная сводка.
     """
     manual = passport_data.get(passport_module.CONCRETE_VOLUME_FIELD)
     if manual is not None:
         return manual
-    return _concrete_volume_from_estimate(root, slug)
+    from_estimate = _concrete_volume_from_estimate(root, slug)
+    if from_estimate is not None:
+        return from_estimate
+    return _concrete_volume_from_master_import(root, slug)
 
 
 def _concrete_coefficients(root, slugs, passports):
@@ -902,16 +981,26 @@ def _facade_area_from_estimate(root, slug):
         return None
 
 
+def _facade_area_from_master_import(root, slug):
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return None
+    return master_import.facade_area_from_cost_table(cost_table)
+
+
 def _facade_area(root, slug, passport_data):
     """Действующая площадь фасада: вписанная вручную в паспорте, а если там
-    пусто — та, что нашлась в смете. Ручное значение важнее смeтного: оно и
-    существует ради тех случаев, где разбор смет ошибается или смета устроена
-    не так, как он ожидает.
+    пусто — та, что нашлась в смете, а если и сметы нет — та, что пришла из
+    импорта сводного файла. Тот же порядок приоритета, что и у
+    ``_concrete_volume``.
     """
     manual = passport_data.get(passport_module.FACADE_AREA_FIELD)
     if manual is not None:
         return manual
-    return _facade_area_from_estimate(root, slug)
+    from_estimate = _facade_area_from_estimate(root, slug)
+    if from_estimate is not None:
+        return from_estimate
+    return _facade_area_from_master_import(root, slug)
 
 
 def _facade_coefficients(root, slugs, passports):
@@ -976,34 +1065,58 @@ def _cost_increase_report(root, slug, estimate_totals=None):
     сводки по удорожанию читает смету каждого объекта отдельно): смета
     — тяжёлый xlsx, и второй раз его разбирать ради той же цифры незачем.
     Не передан — читается здесь же, как раньше.
+
+    Файла нет — пробуем собрать тот же отчёт из колонки «ИТОГО ДС» импорта
+    сводного файла, если он для этого проекта был. Свой загруженный файл
+    удорожания важнее: если он есть, импорт даже не смотрится.
     """
     path = storage.cost_increase_path(root, slug)
-    if not path.exists():
+    if path.exists():
+        if estimate_totals is None:
+            estimate_totals = _estimate_totals(root, slug)
+        try:
+            return cost_increase.read_report(path, estimate_totals)
+        except cost_increase.CostIncreaseError as e:
+            current_app.logger.warning("Не удалось прочитать файл удорожания: %s", e)
+            return None
+
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return None
+    lines = master_import.cost_increase_lines_from_cost_table(cost_table)
+    if not lines:
         return None
     if estimate_totals is None:
         estimate_totals = _estimate_totals(root, slug)
-    try:
-        return cost_increase.read_report(path, estimate_totals)
-    except cost_increase.CostIncreaseError as e:
-        current_app.logger.warning("Не удалось прочитать файл удорожания: %s", e)
-        return None
+    return cost_increase.build_report(lines, estimate_totals)
 
 
 def _predicted_increase_report(root, slug):
     """Прогнозируемое удорожание по видам работ для одного проекта, или
     None, если файла нет или прочитать его не удалось — та же логика, что
     и у ``_cost_increase_report``, для того же файла, только про
-    предполагаемую, а не подписанную сумму."""
+    предполагаемую, а не подписанную сумму.
+
+    Файла нет — тот же запасной источник, что и у ``_cost_increase_report``:
+    колонка «Предполагаемое ДС» импорта сводного файла, если он был.
+    """
     path = storage.predicted_increase_path(root, slug)
-    if not path.exists():
+    if path.exists():
+        try:
+            return predicted_increase.read_report(path)
+        except predicted_increase.PredictedIncreaseError as e:
+            current_app.logger.warning(
+                "Не удалось прочитать файл прогнозируемого удорожания: %s", e
+            )
+            return None
+
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
         return None
-    try:
-        return predicted_increase.read_report(path)
-    except predicted_increase.PredictedIncreaseError as e:
-        current_app.logger.warning(
-            "Не удалось прочитать файл прогнозируемого удорожания: %s", e
-        )
+    lines = master_import.predicted_increase_lines_from_cost_table(cost_table)
+    if not lines:
         return None
+    return predicted_increase.build_report(lines)
 
 
 @bp.route("/projects/<slug>", methods=["GET"])
@@ -1040,6 +1153,9 @@ def project_page(slug):
         format_number=passport_module.format_number,
         has_estimate=has_estimate,
         sheets=estimate.read_estimate(estimate_file) if has_estimate else [],
+        estimate_from_master_import=(
+            None if has_estimate else _estimate_from_master_import(root, slug)
+        ),
         concrete_volume=concrete_volume,
         concrete_coefficient=concrete_coefficient,
         facade_area=facade_area,
@@ -1048,6 +1164,11 @@ def project_page(slug):
         manual_coefficients_date=manual_coefficients_date,
         cover_version=_cover_version(root, slug),
         has_contract_terms=storage.contract_terms_path(root, slug).exists(),
+        # A project can have some of these fields filled from the portfolio
+        # Excel import despite never having had a protocol PDF uploaded —
+        # the "Паспорт договора" card should still offer to show/edit them
+        # rather than showing only the upload prompt.
+        has_contract_fields=any(data.get(field) for field in passport_module.CONTRACT_FIELDS),
         has_cost_increase=increase_file.exists(),
         cost_increase_report=_cost_increase_report(root, slug),
         format_percent=cost_increase.format_percent,
@@ -1074,6 +1195,32 @@ def project_page(slug):
             request.args.get("problem")
         ),
     )
+
+
+def _pdf_download_headers(project_name):
+    """``Content-Disposition`` for the справка PDF, named after the object
+    instead of a bare "spravka_obekta.pdf" for every project.
+
+    Not the slug itself: it can contain characters a plain ``filename=``
+    can't carry (Cyrillic, in particular). So this sends both forms — an
+    ASCII-only ``filename`` a client with no RFC 5987 support falls back
+    to, and the real (possibly Cyrillic) name as ``filename*``, which every
+    modern browser prefers.
+    """
+    base = "spravka_obekta"
+    try:
+        safe_name = storage.slugify(project_name) if project_name else ""
+    except ValueError:
+        safe_name = ""
+    ascii_name = safe_name.encode("ascii", "ignore").decode("ascii").strip("_")
+    ascii_filename = f"{base}_{ascii_name}.pdf" if ascii_name else f"{base}.pdf"
+    full_filename = f"{base}_{safe_name}.pdf" if safe_name else f"{base}.pdf"
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_filename}"; '
+            f"filename*=UTF-8''{quote(full_filename)}"
+        ),
+    }
 
 
 @bp.route("/projects/<slug>/pdf", methods=["GET"])
@@ -1116,9 +1263,7 @@ def project_pdf(slug):
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
-        # Не имя слага: он бывает кириллическим, а Content-Disposition без
-        # RFC 5987 кодировки такое не переживает.
-        headers={"Content-Disposition": "attachment; filename=spravka_obekta.pdf"},
+        headers=_pdf_download_headers(data.get("project_name")),
     )
 
 

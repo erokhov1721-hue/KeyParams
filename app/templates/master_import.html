@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
+    <h1>Импорт из сводного файла</h1>
+    <p class="page-sub">
+      Загрузите портфельный Excel-файл (лист «Проекты_НДС 20%») — программа
+      создаст в нём недостающие проекты и обновит паспортные поля (год,
+      класс, генподрядчик, площади) у уже существующих. Найденные по каждому
+      проекту названия работ и версии стоимости (Протокол ОУ, ДГП, ДС...)
+      попадут в отдельный блок на странице проекта — существующую смету и
+      удорожание этот импорт не трогает. Адрес объекта этот файл не
+      содержит и никогда не меняется этим импортом.
+    </p>
+  </div>
+</div>
+
+<div class="card form-card">
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('main.run_master_import') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="field">
+      <label for="workbook_file">Сводный файл, .xlsx</label>
+      <label class="file-drop" for="workbook_file">
+        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+      </label>
+      <input class="file-input" type="file" id="workbook_file" name="workbook_file" accept=".xlsx">
+    </div>
+    <button type="submit" class="btn btn-primary">Импортировать</button>
+  </form>
+</div>
+
+{% if report is not none %}
+<div class="card">
+  <p class="page-sub">
+    Готово: {{ report | length }} проектов, из них
+    {{ report | selectattr('action', 'equalto', 'created') | list | length }} создано,
+    {{ report | selectattr('action', 'equalto', 'updated') | list | length }} обновлено.
+  </p>
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Проект</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report %}
+        <tr>
+          <td class="sections-label-col">
+            <a href="{{ url_for('main.project_page', slug=row.slug) }}">{{ row.name }}</a>
+          </td>
+          <td>{{ 'Создан' if row.action == 'created' else 'Обновлён' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  document.querySelectorAll('.file-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var textEl = input.closest('.field').querySelector('.file-drop-text');
+      textEl.textContent = input.files[0] ? input.files[0].name : textEl.dataset.placeholder;
+    });
+  });
+</script>
+{% endblock %}

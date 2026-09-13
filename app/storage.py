@@ -44,6 +44,14 @@ def passport_path(root: Path, slug: str) -> Path:
     return project_dir(root, slug) / "passport.json"
 
 
+def master_import_path(root: Path, slug: str) -> Path:
+    """The project's cost-by-work-type table as last imported from the
+    portfolio workbook — kept separate from ``passport.json`` and from a
+    real uploaded smeta, since it isn't parsed the same way either is and
+    mixing it in risks miscounting one as the other."""
+    return project_dir(root, slug) / "master_import.json"
+
+
 def estimate_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "smeta.xlsx"
 
@@ -105,6 +113,21 @@ def save_cover(root: Path, slug: str, file_storage, ext: str) -> Path:
     directory = project_dir(root, slug)
     dest = directory / f"cover{ext}"
     save_upload(file_storage, dest)
+    for existing_ext in COVER_EXTENSIONS:
+        if existing_ext != ext:
+            (directory / f"cover{existing_ext}").unlink(missing_ok=True)
+    return dest
+
+
+def save_cover_bytes(root: Path, slug: str, data: bytes, ext: str) -> Path:
+    """Like ``save_cover``, but for image bytes already in hand — the
+    portfolio import pulls photos straight out of the workbook, with no
+    Werkzeug ``FileStorage`` on hand to call ``.save()`` on."""
+    directory = project_dir(root, slug)
+    dest = directory / f"cover{ext}"
+    tmp = dest.with_name(dest.name + ".upload")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
     for existing_ext in COVER_EXTENSIONS:
         if existing_ext != ext:
             (directory / f"cover{existing_ext}").unlink(missing_ok=True)

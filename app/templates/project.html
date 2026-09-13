@@ -155,7 +155,13 @@
         </svg>
       </button>
       <div class="accordion-panel" hidden>
-        {% if has_contract_terms %}
+        {# Поля показываются не только когда загружен PDF-протокол, но и
+           когда что-то в них уже есть из другого источника — например,
+           импорта из сводного Excel-файла: иначе эти значения были бы
+           сохранены, но ни увидеть, ни поправить их было бы негде. Загрузка
+           и замена PDF-протокола ниже работает как раньше и, как раньше,
+           полностью перезаписывает все поля своими значениями. #}
+        {% if has_contract_terms or has_contract_fields %}
         <form method="post" action="{{ url_for('main.update_contract_terms', slug=slug) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="version" value="{{ passport.version }}">
@@ -178,18 +184,15 @@
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>
         </form>
+        {% endif %}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="version" value="{{ passport.version }}">
+          {% if has_contract_terms %}
           <label class="contract-replace-link" for="contract-terms-input">Заменить файл протокола (PDF)</label>
           <input class="file-input" type="file" id="contract-terms-input" name="contract_terms_file" accept=".pdf">
-        </form>
-        {% else %}
-        <form class="file-upload-form" method="post"
-              action="{{ url_for('main.upload_contract_terms', slug=slug) }}" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="version" value="{{ passport.version }}">
+          {% else %}
           <label class="file-drop" for="contract-terms-input">
             <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
@@ -203,8 +206,8 @@
             пару секунд. На компьютере без встроенного распознавания это может
             занять несколько минут.
           </span>
+          {% endif %}
         </form>
-        {% endif %}
       </div>
     </div>
 
@@ -283,7 +286,39 @@
           <input class="file-input" type="file" id="estimate-input" name="estimate_file" accept=".xlsx">
         </form>
         {% else %}
+        {% if estimate_from_master_import %}
+        <p class="increase-basis">
+          Своей сметы для этого проекта нет — ниже вид работ, объём и сумма
+          из импорта сводного файла (колонки «Объем» и «ДГП»). Единица
+          измерения объёма — какая указана в самом файле для этой строки
+          (м², м³, шт. — по-разному для разных видов работ), сам файл её не
+          называет. Суммы по видам работ из этой таблицы используются в
+          сравнении объектов и коэффициентах ниже. Загрузите настоящую
+          смету — она их заменит.
+        </p>
+        <div class="sections-table-wrap">
+          <table class="sections-table">
+            <thead>
+              <tr>
+                <th class="sections-label-col">Вид работ</th>
+                <th>Объём</th>
+                <th>Сумма, руб.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in estimate_from_master_import %}
+              <tr>
+                <td class="sections-label-col">{{ row.label }}</td>
+                <td>{{ format_number(row.volume) if row.volume is not none else '—' }}</td>
+                <td>{{ format_number(row.amount) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
         <p class="accordion-empty">Смета не загружена для этого проекта.</p>
+        {% endif %}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_estimate', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -389,12 +424,11 @@
             </tfoot>
           </table>
         </div>
-        {% if cost_increase_report.unmatched %}
-        <p class="field-hint">
-          Строки файла, для которых в отчёте нет вида работ, в таблицу не попали:
-          {{ cost_increase_report.unmatched | join('; ') }}.
-        </p>
-        {% endif %}
+        {# Строки файла, не попавшие в отчёт (cost_increase_report.unmatched),
+           на странице больше не перечисляются текстом — при подробном файле
+           список выходил на сотни строк и превращался в нечитаемую простыню.
+           Само значение по-прежнему считается и уходит в лог, так что при
+           необходимости разобраться, что пропущено, это видно там. #}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_cost_increase', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -469,12 +503,8 @@
             </tfoot>
           </table>
         </div>
-        {% if report.unmatched %}
-        <p class="field-hint">
-          Строки файла, для которых в отчёте нет вида работ, в таблицу не попали:
-          {{ report.unmatched | join('; ') }}.
-        </p>
-        {% endif %}
+        {# См. тот же комментарий у «Удорожание проектов» выше — список
+           непопавших строк больше не выводится текстом на странице. #}
         <form class="file-upload-form" method="post"
               action="{{ url_for('main.upload_predicted_increase', slug=slug) }}" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

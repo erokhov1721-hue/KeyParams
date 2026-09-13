@@ -79,8 +79,12 @@ def _percent(baseline, current):
 def _increasing_sections(report, predicted_report, estimate_totals, area):
     """Разделы сметы, которые дорожают — смета, подписанное и прогнозируемое
     удорожание порознь (та же разбивка, что и у объекта целиком в таблице
-    выше), крупнейший ₽/м² первым. ``[]``, когда нет ни одного из двух
-    источников: сравнивать тогда не с чем.
+    выше), самый подорожавший в процентах первым (не по сумме в рублях —
+    иначе маленький, но сильно подорожавший раздел тонул бы ниже большого,
+    едва тронутого). Раздел, которого не было в смете вовсе (рост со «100 ₽»
+    вниз ошибка не считать), встаёт первым — рост от нуля не выразить
+    процентом, но это точно не «подорожал меньше всех». ``[]``, когда нет ни
+    одного из двух источников: сравнивать тогда не с чем.
 
     Подписанное удорожание считается только когда есть смета, от которой
     его дельта отмерена (``report.from_estimate``) — иначе его «стало»
@@ -119,29 +123,51 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
         key: signed_amounts.get(key, Decimal("0")) + predicted_amounts.get(key, Decimal("0"))
         for key in keys
     }
-    increasing = sorted(
-        ((key, amount) for key, amount in totals.items() if amount > 0),
-        key=lambda pair: pair[1], reverse=True,
-    )
-    sections = []
-    for key, amount in increasing:
+    candidates = []
+    for key, amount in totals.items():
+        if amount <= 0:
+            continue
         baseline = estimate_totals.get(key, Decimal("0"))
         current = baseline + amount
+        candidates.append((key, baseline, current, _percent(baseline, current)))
+    # percent is None only for baseline == 0 with current > 0 ("новые
+    # работы") — сорт ставит такие впереди (True > False), а не роняет их
+    # в конец из-за отсутствующего числа.
+    candidates.sort(key=lambda item: (item[3] is None, item[3] or 0.0), reverse=True)
+
+    sections = []
+    for key, baseline, current, percent in candidates:
         signed = float(signed_amounts.get(key, Decimal("0"))) if has_signed else None
         predicted = float(predicted_amounts.get(key, Decimal("0"))) if has_predicted else None
+        estimate_per_sqm = _per_sqm(float(baseline), area)
+        signed_per_sqm = _per_sqm(signed, area)
+        predicted_per_sqm = _per_sqm(predicted, area)
+        current_per_sqm = _per_sqm(float(current), area)
         sections.append({
             "label": labels[key],
+            # Сырые числа — рядом со своими же "_display" строками, не
+            # вместо них: таблица продолжает читать готовый текст, а
+            # график (переключатель «таблица / график» на странице) берёт
+            # числа отсюда напрямую, вместо того чтобы разбирать их обратно
+            # из "12 345 ₽".
+            "estimate": float(baseline),
+            "signed": signed,
+            "predicted": predicted,
+            "current": float(current),
+            "percent": percent,
+            "estimate_per_sqm": estimate_per_sqm,
+            "signed_per_sqm": signed_per_sqm,
+            "predicted_per_sqm": predicted_per_sqm,
+            "current_per_sqm": current_per_sqm,
             "estimate_display": _money(float(baseline)),
-            "estimate_per_sqm_display": _money_per_sqm(_per_sqm(float(baseline), area)),
+            "estimate_per_sqm_display": _money_per_sqm(estimate_per_sqm),
             "signed_display": _money(signed),
-            "signed_per_sqm_display": _money_per_sqm(_per_sqm(signed, area)),
+            "signed_per_sqm_display": _money_per_sqm(signed_per_sqm),
             "predicted_display": _money(predicted),
-            "predicted_per_sqm_display": _money_per_sqm(_per_sqm(predicted, area)),
+            "predicted_per_sqm_display": _money_per_sqm(predicted_per_sqm),
             "current_display": _money(float(current)),
-            "per_sqm_display": _money_per_sqm(_per_sqm(float(current), area)),
-            "percent_display": cost_increase.format_percent(
-                _percent(baseline, current)
-            ) or "новые работы",
+            "per_sqm_display": _money_per_sqm(current_per_sqm),
+            "percent_display": cost_increase.format_percent(percent) or "новые работы",
         })
     return sections
 
@@ -188,6 +214,40 @@ def _per_sqm(value, area):
     return value / area if value is not None and area else None
 
 
+# Форма, которую ждёт статический app/static/waterfall.js для одной группы
+# водопадной диаграммы «Разделы сметы, которые дорожают»: опорная строка
+# («Смета») плюс пары «дельта → нарастающий итог» для подписанного и
+# прогнозируемого удорожания. ``nativeUnit: "rub"`` говорит движку, что
+# значения уже в рублях (не в процентах, как у его собственного тестового
+# набора) — переключатель единиц «%»/«на м²» тогда переводит их через
+# ``dgpAmount``/``areaSqm``, а не наоборот.
+def _waterfall_groups(sections, area):
+    return [
+        {
+            "name": section["label"],
+            "bases": [{"label": "Смета", "value": section["estimate"]}],
+            "deltas": [
+                {
+                    "deltaLabel": "Подписанное удорожание",
+                    "cumulativeLabel": "с учётом подписанного удорожания",
+                    "delta": section["signed"],
+                    "color": "mira",
+                },
+                {
+                    "deltaLabel": "Прогнозируемое удорожание",
+                    "cumulativeLabel": "Итоговая стоимость",
+                    "delta": section["predicted"],
+                    "color": "danger",
+                },
+            ],
+            "nativeUnit": "rub",
+            "dgpAmount": section["estimate"],
+            "areaSqm": area,
+        }
+        for section in sections
+    ]
+
+
 def _row(slug, label, estimate_totals, report, predicted, predicted_report, area):
     estimate = _estimate_total(estimate_totals)
     signed = _signed_overrun(report)
@@ -199,9 +259,15 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
     predicted_per_sqm = _per_sqm(predicted, area)
     signed_per_sqm = _per_sqm(signed, area)
     total_per_sqm = _per_sqm(total_cost, area)
+    sections = _increasing_sections(report, predicted_report, estimate_totals, area)
     return {
         "slug": slug,
         "label": label,
+        # Площадь объекта как есть — переключатель единиц «на м²» на
+        # графике разделов делит на неё сам, тем же способом, что и
+        # ``_per_sqm`` здесь, вместо того чтобы заново разбирать уже
+        # готовые "_per_sqm_display" строки на странице.
+        "area": area,
         "estimate": estimate,
         "estimate_display": _money(estimate),
         "estimate_per_sqm": estimate_per_sqm,
@@ -222,9 +288,8 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
         "has_increase_data": predicted_report is not None or (
             report is not None and report.from_estimate
         ),
-        "increasing_sections": _increasing_sections(
-            report, predicted_report, estimate_totals, area,
-        ),
+        "increasing_sections": sections,
+        "waterfall_groups": _waterfall_groups(sections, area),
     }
 
 

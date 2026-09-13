@@ -3,7 +3,7 @@ from datetime import date
 
 from openpyxl import load_workbook
 
-from app import create_app, excel_report, passport as passport_module, storage
+from app import create_app, excel_report, master_import, passport as passport_module, storage
 from app.excel_report import (
     ROW_CONTRACT_TOTAL, ROW_GRAND_TOTAL, ROW_MR_FIRST, ROW_NAME, ROW_PER_SQM,
     ROW_SMR_TOTAL, ROW_TERMS_FIRST, ROW_TERMS_HEAD, ROW_TOTAL_AREA, ROW_VAT,
@@ -579,3 +579,59 @@ def test_load_project_reports_the_sections_behind_each_line(tmp_path):
 
     assert project["costs"] == {"other": 12.5}
     assert project["cost_sources"] == {"other": ["99. Прочее", "Дополнительные работы"]}
+
+
+def _apply_master_import_with_row(tmp_path, project_name, label, дгп):
+    parsed = [{
+        "raw_name": project_name, "name_candidates": [project_name],
+        "passport": {
+            "year_signed": None, "building_class": None, "general_contractor": None,
+            "underground_area_sqm": None, "aboveground_area_sqm": None,
+            "total_area_sqm": None, "contract_price_rub": None, "smr_term": None,
+            "advance_payment": None, "performance_bond_pct": None,
+            "bank_guarantee": None, "vat": None,
+        },
+        "cost_table": {
+            "primary_version": "Протокол ОУ",
+            "columns": ["ДГП"],
+            "rows": [{"number": "8", "label": label, "values": {"ДГП": дгп}}],
+        },
+    }]
+    return master_import.apply_import(tmp_path, parsed)[0]["slug"]
+
+
+def test_estimate_costs_falls_back_to_the_master_import_cost_table(tmp_path):
+    # No raw/smeta.xlsx for this project at all — only a portfolio-file
+    # import, which estimate_costs should use in its place.
+    slug = _apply_master_import_with_row(tmp_path, "MIRA", "Фасад", 700_000.0)
+
+    totals, sources, unmatched = excel_report.estimate_costs(tmp_path, slug)
+
+    assert totals == {"facade": 700_000.0}
+    assert sources == {"facade": ["Фасад"]}
+    assert unmatched == []
+
+
+def test_estimate_costs_prefers_a_real_smeta_over_the_master_import_fallback(tmp_path):
+    from openpyxl import Workbook
+
+    slug = _apply_master_import_with_row(tmp_path, "MIRA", "Фасад", 700_000.0)
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(row=1, column=1, value="№ п/п")
+    ws.cell(row=1, column=2, value="№ раздела")
+    ws.cell(row=1, column=3, value="Статья СМР")
+    ws.cell(row=1, column=4, value="Наименование работ")
+    ws.cell(row=1, column=5, value="Стоимость всего, RUB")
+    ws.merge_cells(start_row=1, start_column=5, end_row=1, end_column=6)
+    ws.cell(row=2, column=6, value="Всего")
+    ws.cell(row=3, column=1, value=1)
+    ws.cell(row=3, column=2, value=1)
+    ws.cell(row=3, column=3, value="6. Фасадные работы")
+    ws.cell(row=3, column=6, value=999.0)
+    wb.save(storage.estimate_path(tmp_path, slug))
+
+    totals, sources, unmatched = excel_report.estimate_costs(tmp_path, slug)
+
+    # The real (if minimal) смета's own figure, not the portfolio import's.
+    assert totals == {"facade": 999.0}

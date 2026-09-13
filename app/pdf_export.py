@@ -1580,7 +1580,11 @@ def _project_facts_block(passport, fields, field_labels, numeric_fields,
 
 def _project_terms_block(passport, has_contract_terms, contract_fields,
                          contract_field_labels, styles, page_width):
-    if not has_contract_terms:
+    # Shown either when a real protocol was uploaded, or when at least one
+    # field already has a value from somewhere else (the portfolio Excel
+    # import, typically) — the same two cases the project page itself shows
+    # this card for.
+    if not has_contract_terms and not any(passport.get(field) for field in contract_fields):
         return []
     rows = [
         (contract_field_labels.get(field, field), passport.get(field) or "—")
@@ -1716,13 +1720,10 @@ def _project_increase_block(report, format_number, format_percent, format_delta,
     block.append(table)
     story = [KeepTogether(block)]
 
-    if report.unmatched:
-        names = "; ".join(_esc(name) for name in report.unmatched)
-        story.append(Paragraph(
-            'Строки файла, для которых в отчёте нет вида работ, в таблицу не '
-            f'попали: {names}.',
-            styles["sub"],
-        ))
+    # report.unmatched (rows the file has no «вид работ» line for) isn't
+    # listed here any more — a detailed file can name hundreds of them,
+    # turning this into an unreadable wall of text. Still computed and
+    # logged by cost_increase.build_report, just not printed.
     return story
 
 

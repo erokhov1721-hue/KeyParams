@@ -520,6 +520,21 @@ def test_the_project_pdf_omits_contract_terms_when_absent():
     assert "Паспорт договора" not in text
 
 
+def test_the_project_pdf_includes_contract_terms_filled_without_a_protocol():
+    # Same as the portfolio Excel import: fields can be filled despite
+    # has_contract_terms being False (no PDF was ever uploaded).
+    pdf_bytes = _build_project_pdf(
+        has_contract_terms=False,
+        contract_fields=passport_module.CONTRACT_FIELDS,
+        contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
+        passport_fields={"smr_term": "29"},
+    )
+    text = "\n".join(_page_texts(pdf_bytes))
+
+    assert "Паспорт договора" in text
+    assert "29" in text
+
+
 def test_the_project_pdf_includes_the_cost_increase_report():
     lines = [cost_increase.Line("Кровля", 100.0, 130.0)]
     report = cost_increase.build_report(lines)

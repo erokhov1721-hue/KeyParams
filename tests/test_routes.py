@@ -1085,7 +1085,9 @@ def test_project_page_shows_a_long_value_in_full_on_hover(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
     slug = _make_project_with_passport(tmp_path, "ПроектА", smr_term=long_value)
-    # Паспорт договора показывается только там, где протокол загружен.
+    # Паспорт договора показывается и без него (когда поля уже заполнены
+    # откуда-то ещё), но именно эта подсказка про badge «Найдено в
+    # протоколе» относится только к полям из настоящего протокола.
     storage.contract_terms_path(tmp_path, slug).write_bytes(b"%PDF-fake")
 
     body = client.get(f"/projects/{slug}").data.decode("utf-8")
@@ -1093,6 +1095,44 @@ def test_project_page_shows_a_long_value_in_full_on_hover(tmp_path):
     assert 'class="value-hint"' in body
     assert "mouseenter" in body
     assert long_value in body
+
+
+def test_project_page_shows_contract_fields_filled_without_an_uploaded_protocol(tmp_path):
+    # A project imported from the portfolio Excel file can have smr_term
+    # (and friends) filled in despite never having had a protocol PDF —
+    # the card should offer to view/edit them anyway, not just the upload
+    # prompt as if nothing were there.
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = storage.create_project(tmp_path, "Проект из Excel")
+    passport_module.save_passport({
+        "project_name": "Проект из Excel", "year_signed": None, "building_class": None,
+        "general_contractor": None, "underground_area_sqm": None,
+        "aboveground_area_sqm": None, "total_area_sqm": None, "ocr_fields": [],
+        "smr_term": "29",
+    }, storage.passport_path(tmp_path, slug))
+
+    body = client.get(f"/projects/{slug}").data.decode("utf-8")
+
+    assert 'name="smr_term"' in body
+    assert 'value="29"' in body
+    # The upload control is still there, just as a first upload rather than
+    # a replace — the underlying upload/overwrite logic isn't touched.
+    assert "Загрузить протокол условий (PDF)" in body
+    assert "Заменить файл протокола (PDF)" not in body
+
+
+def test_project_page_offers_only_the_upload_prompt_with_nothing_filled(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Пустой проект")
+
+    body = client.get(f"/projects/{slug}").data.decode("utf-8")
+
+    assert 'name="smr_term"' not in body
+    assert "Загрузить протокол условий (PDF)" in body
 
 
 def test_project_page_flags_ocr_filled_field(tmp_path):
@@ -2059,6 +2099,130 @@ def test_concrete_volume_falls_back_to_the_estimate_once_the_manual_value_is_cle
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
 
     assert passport_module.format_number(500.0) in body   # снова из сметы
+
+
+def _apply_master_import_with_rows(tmp_path, project_name, rows, total_area_sqm=1000.0):
+    from app import master_import
+
+    parsed = [{
+        "raw_name": project_name, "name_candidates": [project_name],
+        "passport": {
+            "year_signed": None, "building_class": None, "general_contractor": None,
+            "underground_area_sqm": None, "aboveground_area_sqm": None,
+            "total_area_sqm": total_area_sqm, "contract_price_rub": None, "smr_term": None,
+            "advance_payment": None, "performance_bond_pct": None,
+            "bank_guarantee": None, "vat": None,
+        },
+        "cost_table": {
+            "primary_version": "Протокол ОУ",
+            "columns": ["Объем", "ДГП", "ИТОГО ДС", "Предполагаемое ДС"],
+            "rows": rows,
+        },
+    }]
+    return master_import.apply_import(tmp_path, parsed)[0]["slug"]
+
+
+def test_concrete_volume_falls_back_to_master_import_without_an_estimate(tmp_path):
+    from app import passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcel", [{
+        "number": "5", "label": "Ж/Б конструкции",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+    }])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(500.0) in body
+
+
+def test_estimate_still_overrides_master_import_for_concrete_volume(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcelИСметой", [{
+        "number": "5", "label": "Ж/Б конструкции",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+    }])
+    storage.estimate_path(tmp_path, slug).write_bytes(_offer_with_concrete_quantity(321.0))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(321.0) in body
+    assert passport_module.format_number(500.0) not in body
+
+
+def test_cost_increase_table_falls_back_to_master_import_without_a_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcelУдорожание", [{
+        "number": "8", "label": "Фасад",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": 1_200_000.0, "Предполагаемое ДС": None},
+    }])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Удорожание объекта" in body
+    assert "Фасад" in body
+
+
+def test_predicted_increase_table_falls_back_to_master_import_without_a_file(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcelПрогноз", [{
+        "number": "8", "label": "Фасад",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": None, "Предполагаемое ДС": 1_300_000.0},
+    }])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Прогнозируемое удорожание объекта" in body
+    assert "Фасад" in body
+
+
+def test_cost_increase_file_still_overrides_master_import(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcelИФайлом", [{
+        "number": "8", "label": "Фасад",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": 1_200_000.0, "Предполагаемое ДС": None},
+    }])
+    _upload_increase(client, slug, _increase_bytes([("Фасад", 1_000_000.0, 1_555_555.0)]))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    from app import passport as passport_module
+    assert passport_module.format_number(1555555.0) in body
+    # The значение импорта (1 200 000) shouldn't be the one shown once a
+    # real удорожание file exists.
+    assert passport_module.format_number(1200000.0) not in body
+
+
+def test_estimate_tab_shows_work_type_volume_and_amount_from_master_import(tmp_path):
+    from app import passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "СметаИзExcel", [
+        {
+            "number": "5", "label": "Ж/Б конструкции",
+            "values": {"Объем": 13570.81, "ДГП": 775682206.08, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+        },
+        {
+            # Банковская гарантия — не вид работ, не должна попасть в таблицу.
+            "number": "2.1", "label": "Банковская гарантия на авансовые платежи",
+            "values": {"Объем": "да", "ДГП": None, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+        },
+    ])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "Ж/Б конструкции" in body
+    assert passport_module.format_number(13570.81) in body
+    assert passport_module.format_number(775682206.08) in body
+    assert "Банковская гарантия" not in body
 
 
 def test_project_page_explains_missing_concrete_estimate_instead_of_a_blank(tmp_path):
@@ -3098,6 +3262,30 @@ def test_compare_vs_average_pdf_redirects_without_a_valid_selection(tmp_path):
     assert no_peers.status_code == 302
 
 
+def test_investor_summary_shows_estimate_signed_and_predicted_from_master_import(tmp_path):
+    # No smeta.xlsx, udorozhanie.xlsx or predicted_increase.xlsx for this
+    # project at all — everything on this page should still come from the
+    # portfolio Excel import (ДГП for the смета baseline, «ИТОГО ДС» for
+    # подписанное удорожание, «Предполагаемое ДС» for прогнозируемое),
+    # exactly as it already does on the project's own page.
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИзExcelСводка", [{
+        "number": "8", "label": "Фасад",
+        "values": {
+            "Объем": 500.0, "ДГП": 10_000_000.0,
+            "ИТОГО ДС": 11_000_000.0, "Предполагаемое ДС": 12_000_000.0,
+        },
+    }])
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    from app import passport as passport_module
+    assert passport_module.format_number(10_000_000.0) in body   # смета
+    assert passport_module.format_number(11_000_000.0) in body   # подписанное
+    assert passport_module.format_number(12_000_000.0) in body   # прогнозируемое
+
+
 def test_investor_summary_page_offers_to_save_the_pdf(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
@@ -3205,6 +3393,34 @@ def test_investor_summary_detail_lists_only_sections_that_got_dearer(tmp_path):
     assert "Фасад" not in detail.split("</table>")[0]
     assert "130 ₽" in detail
     assert "+30,0 %" in detail
+
+
+def test_investor_summary_detail_offers_a_table_chart_toggle_with_raw_numbers(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _project_with_offer(
+        tmp_path, "Объект", [("8. Кровля", 100.0), ("6. Фасадные работы", 100.0)],
+    )
+    _upload_predicted_increase(
+        client, slug,
+        _predicted_increase_bytes([("Кровля", 30.0), ("Фасадные работы", -10.0)]),
+    )
+
+    body = client.get("/investors").get_data(as_text=True)
+    detail = body[body.index('class="card investor-detail"'):]
+
+    assert 'data-sections-view="table"' in detail
+    assert 'data-sections-view="chart"' in detail
+    assert f'id="waterfall-{slug}-data"' in detail
+    payload_start = detail.index(f'waterfall-{slug}-data" type="application/json">')
+    payload = detail[payload_start:detail.index("</script>", payload_start)]
+    data = json.loads(payload.split(">", 1)[1])
+
+    assert [group["name"] for group in data["groups"]] == ["Кровли"]
+    group = data["groups"][0]
+    assert group["bases"] == [{"label": "Смета", "value": 100.0}]
+    assert group["deltas"][0]["delta"] is None  # подписанного файла нет
+    assert group["deltas"][1]["delta"] == 30.0  # прогнозируемое
 
 
 def test_investor_summary_detail_says_when_there_is_no_increase_file(tmp_path):
@@ -3449,6 +3665,30 @@ def test_the_project_pdf_route_returns_a_pdf(tmp_path):
 
     assert resp.status_code == 200
     assert resp.data.startswith(b"%PDF")
+
+
+def test_the_project_pdf_filename_includes_the_project_name(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Nicole 1")
+
+    resp = client.get(f"/projects/{slug}/pdf")
+
+    disposition = resp.headers["Content-Disposition"]
+    assert 'filename="spravka_obekta_Nicole_1.pdf"' in disposition
+    assert "filename*=UTF-8''spravka_obekta_Nicole_1.pdf" in disposition
+
+
+def test_the_project_pdf_filename_falls_back_to_ascii_for_a_cyrillic_name(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Проспект Мира")
+
+    resp = client.get(f"/projects/{slug}/pdf")
+
+    disposition = resp.headers["Content-Disposition"]
+    assert 'filename="spravka_obekta.pdf"' in disposition
+    assert "filename*=UTF-8''spravka_obekta_%D0%9F%D1%80%D0%BE%D1%81%D0%BF%D0%B5%D0%BA%D1%82_%D0%9C%D0%B8%D1%80%D0%B0.pdf" in disposition
 
 
 def test_the_project_pdf_for_an_unknown_project_is_not_found(tmp_path):
@@ -3715,7 +3955,11 @@ def test_uploading_a_predicted_increase_file_to_an_unknown_project_is_not_found(
     assert resp.status_code == 404
 
 
-def test_rows_of_the_cost_increase_file_with_no_line_in_the_report_are_named(tmp_path):
+def test_rows_of_the_cost_increase_file_with_no_line_in_the_report_are_not_listed_on_the_page(tmp_path):
+    # A detailed file can leave hundreds of rows unmatched, and listing them
+    # all turned the page into an unreadable wall of text — so unlike
+    # before, an unmatched row's name is no longer printed on the page.
+    # (The matched "Кровля" line still shows normally, in the table.)
     app = create_app(tmp_path)
     client = app.test_client()
     slug = _make_project_with_passport(tmp_path, "Тест")
@@ -3726,7 +3970,8 @@ def test_rows_of_the_cost_increase_file_with_no_line_in_the_report_are_named(tmp
     ]))
 
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
-    assert "Аренда вертолётной площадки" in body
+    assert "Кровля" in body
+    assert "Аренда вертолётной площадки" not in body
 
 
 def test_a_cost_increase_file_broken_after_it_was_saved_does_not_break_the_page(tmp_path):

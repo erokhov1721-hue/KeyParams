@@ -1,5 +1,3 @@
-import easyocr
-
 from .ocr_lines import Word, group_into_lines
 
 _READER = None
@@ -8,6 +6,10 @@ _READER = None
 def _get_reader():
     global _READER
     if _READER is None:
+        # Imported here, not at module level: easyocr pulls in torch, and
+        # OCR_FALLBACK_ENABLED is off by default, so most app starts never
+        # need it — importing it eagerly cost every start ~25s for nothing.
+        import easyocr
         _READER = easyocr.Reader(['ru', 'en'], gpu=False)
     return _READER
 
