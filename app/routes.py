@@ -1232,7 +1232,11 @@ def upload_cost_increase(slug):
         "сметы" if report.from_estimate else "столбца «было»",
     )
 
-    storage.cost_increase_path(root, slug).write_bytes(data)
+    dest = storage.cost_increase_path(root, slug)
+    dest.write_bytes(data)
+    # (path, mtime, size) само по себе могло бы в редком случае совпасть с
+    # только что заменённым файлом — сброс кэша убирает эту случайность.
+    workbook_cache.invalidate(dest)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1274,7 +1278,9 @@ def upload_predicted_increase(slug):
         "Проект «%s»: прогнозируемое удорожание %.2f руб.", slug, report.total.amount,
     )
 
-    storage.predicted_increase_path(root, slug).write_bytes(data)
+    dest = storage.predicted_increase_path(root, slug)
+    dest.write_bytes(data)
+    workbook_cache.invalidate(dest)
     return redirect(url_for("main.project_page", slug=slug))
 
 

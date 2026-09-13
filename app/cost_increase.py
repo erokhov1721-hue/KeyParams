@@ -33,7 +33,7 @@ from decimal import Decimal
 
 import openpyxl
 
-from . import estimate_sections, extractors
+from . import estimate_sections, extractors, workbook_cache
 from .passport import format_number
 
 logger = logging.getLogger(__name__)
@@ -300,14 +300,23 @@ def read_lines(source) -> list:
         # Not read_only: a streaming worksheet has no addressable cells, and
         # this reader looks columns up by number rather than walking rows in
         # order. The workbook is a page and a half long anyway.
-        wb = openpyxl.load_workbook(source, data_only=True)
-        # ``source`` is sometimes a path (reopening it is free) and sometimes
-        # an already-open stream (a BytesIO the upload was buffered into) —
-        # the first load consumed it, so it has to be rewound before the
-        # second one can read it again.
+        #
+        # A stream (upload validation, before anything is saved to disk) is
+        # loaded directly — there is no path to key a cache on yet, and it's
+        # a one-off read anyway. A path (the project's own saved file) goes
+        # through workbook_cache instead: the investor summary and the
+        # class-average comparison both read every project's file in one
+        # request, and without the cache that meant re-parsing this same
+        # file from disk on every single page load.
         if hasattr(source, "seek"):
+            wb = openpyxl.load_workbook(source, data_only=True)
+            # The first load consumed the stream; rewind before the second
+            # one reads it again.
             source.seek(0)
-        wb_formulas = openpyxl.load_workbook(source, data_only=False)
+            wb_formulas = openpyxl.load_workbook(source, data_only=False)
+        else:
+            wb = workbook_cache.get_or_load(source, data_only=True)
+            wb_formulas = workbook_cache.get_or_load(source, data_only=False)
     except Exception as e:
         raise CostIncreaseError(f"файл не читается как .xlsx: {e}") from e
 

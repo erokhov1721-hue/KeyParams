@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import openpyxl
 
-from . import estimate_sections, extractors
+from . import estimate_sections, extractors, workbook_cache
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,16 @@ def read_lines(source) -> list:
     without having overwritten the one that was already there.
     """
     try:
-        wb = openpyxl.load_workbook(source, data_only=True)
+        # Стрим (проверка при загрузке, до сохранения на диск) читается
+        # напрямую — кэшировать там нечего, путь появляется только после
+        # сохранения. Путь (уже сохранённый файл проекта) — через
+        # workbook_cache: сводка по всем объектам читает файл каждого
+        # проекта по разу за запрос, и без кэша это значило разбирать его с
+        # диска заново на каждый заход на страницу.
+        if hasattr(source, "seek"):
+            wb = openpyxl.load_workbook(source, data_only=True)
+        else:
+            wb = workbook_cache.get_or_load(source, data_only=True)
     except Exception as e:
         raise PredictedIncreaseError(f"файл не читается как .xlsx: {e}") from e
 
