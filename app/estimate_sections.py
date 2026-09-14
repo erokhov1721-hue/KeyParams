@@ -226,10 +226,13 @@ def _cell_text(ws, row, col):
     return str(value).strip().lower() if value is not None else ""
 
 
-def _is_total_marker(text):
+def is_total_marker(text):
     """Whether ``text`` is an estimate's own "ИТОГО" row rather than a
     section — the closing line of a priced block, in either shape of
-    estimate this module reads.
+    estimate this module reads. Public: ``master_import.py`` calls this too,
+    to keep its own row loops from ever handing a closing total to
+    ``classify`` (see the comment where it's used there for what goes wrong
+    otherwise).
     """
     return str(text or "").strip().lower().startswith("итого")
 
@@ -494,7 +497,7 @@ def _sections_from_levels(ws):
             # noisy) or, worse, count the whole estimate's total a second
             # time as if it were a section of its own. Nothing meaningful
             # follows it either way, so reading stops here.
-            if _is_total_marker(first):
+            if is_total_marker(first):
                 break
             key = classify(first)
             if key is None:
@@ -736,7 +739,7 @@ def _sections_from_offer(ws):
     # its own right; its unnumbered parts are already inside its total.
     past_total = False
     for row in range(header.row + 2, ws.max_row + 1):
-        if _is_total_marker(ws.cell(row=row, column=1).value):
+        if is_total_marker(ws.cell(row=row, column=1).value):
             if past_total:
                 break
             past_total = True

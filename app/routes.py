@@ -903,6 +903,12 @@ def _estimate_from_master_import(root, slug):
         return None
     rows = []
     for row in cost_table["rows"]:
+        # Excluded explicitly, not left to classify() returning None on its
+        # own — see estimate_sections_from_cost_table in master_import.py
+        # for the workbook line this let through before ("Итого СМР, в тч
+        # Отделка и Нулевой цикл..." reads as "SHELL & CORE").
+        if estimate_sections.is_total_marker(row["label"]):
+            continue
         if estimate_sections.classify(row["label"]) is None:
             continue
         amount = row["values"].get(master_import.ESTIMATE_COST_COLUMN_KEY)

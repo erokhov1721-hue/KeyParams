@@ -590,9 +590,21 @@ def estimate_sections_from_cost_table(cost_table):
     are, so a row this doesn't recognise (the bank-guarantee lines, the
     «Итого» row itself) is simply left out, the same as an unclassified
     смета row would be.
+
+    The «Итого» rows are excluded explicitly, before ``classify`` ever sees
+    them — not left to it returning ``None`` on its own. One workbook's
+    closing line, «Итого СМР, в тч Отделка и Нулевой цикл...», contains
+    «нулевой цикл» — one of ``shell_core``'s own match words — so without
+    this check it read as that section, and the whole project's total got
+    counted a second time as if it were «SHELL & CORE»'s own cost. Same
+    failure mode ``read_sections`` already guards against in a real смета
+    (see its own use of ``is_total_marker``), just reached from a different
+    row shape.
     """
     sections = []
     for row in cost_table["rows"]:
+        if estimate_sections.is_total_marker(row["label"]):
+            continue
         key = estimate_sections.classify(row["label"])
         if key is None:
             continue
@@ -613,6 +625,8 @@ def _volume_for_category(cost_table, category_key, label_hint):
     specific enough match.
     """
     for row in cost_table["rows"]:
+        if estimate_sections.is_total_marker(row["label"]):
+            continue
         if estimate_sections.classify(row["label"]) != category_key:
             continue
         if label_hint not in row["label"].lower():
@@ -632,8 +646,12 @@ def facade_area_from_cost_table(cost_table):
 
 
 def _amount_lines_from_cost_table(cost_table, column_key, line_cls):
+    """See ``estimate_sections_from_cost_table`` for why «Итого» rows are
+    excluded before ``classify`` runs, not left to it alone."""
     lines = []
     for row in cost_table["rows"]:
+        if estimate_sections.is_total_marker(row["label"]):
+            continue
         key = estimate_sections.classify(row["label"])
         if key is None:
             continue
