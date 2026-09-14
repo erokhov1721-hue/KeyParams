@@ -11,6 +11,7 @@
 могут — включая поправки на НДС и инфляцию, если они включены.
 """
 
+import os
 from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
@@ -31,8 +32,12 @@ from . import chart_render, cost_increase
 
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
-# text is drawn, or Cyrillic characters render as blank boxes.
-_FONT_DIR = Path(r"C:\Windows\Fonts")
+# text is drawn, or Cyrillic characters render as blank boxes. Windows has
+# real Arial at this path; the Linux Docker image has no such thing, so it
+# sets KEYPARAMS_FONT_DIR to a directory it stages itself with a
+# Cyrillic-capable substitute registered under these same two filenames
+# (see Dockerfile) — nothing here needs to know which font it actually got.
+_FONT_DIR = Path(os.environ.get("KEYPARAMS_FONT_DIR") or r"C:\Windows\Fonts")
 _FONTS_REGISTERED = False
 
 # Тот же знак, что в шапке страницы (``static/mr-logo.png``) — не отдельная

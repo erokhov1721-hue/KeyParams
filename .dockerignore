@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.superpowers
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+storage
+docs
+tests
+README.md
+docker-compose.yml
+Dockerfile
+.dockerignore
