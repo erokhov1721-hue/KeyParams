@@ -645,9 +645,29 @@ def _row_amount(row, column_key):
     return value
 
 
+def estimate_row_amount(row):
+    """The row's own «смета» figure — «ДГП» where the block has one, else
+    «Протокол ОУ».
+
+    A handful of freshly-imported blocks turned out to have no «ДГП» on a
+    single row of theirs — the amendment isn't agreed yet, only the
+    original tender price is — and without this fallback the whole
+    project showed no смета at all on the sводка по удорожанию, despite
+    «Протокол ОУ» sitting right there with a real number. «ДГП» stays
+    preferred wherever it does have a value, for the same reason the
+    module comment above gives: it is the amount actually built into the
+    current contract.
+    """
+    amount = _row_amount(row, ESTIMATE_COST_COLUMN_KEY)
+    if amount is not None:
+        return amount
+    return _row_amount(row, PRIMARY_VERSION_LABEL)
+
+
 def estimate_sections_from_cost_table(cost_table):
     """``[estimate_sections.Section, ...]`` from the table's own «ДГП»
-    column, one per row — classified into a вид работ by
+    column (falling back to «Протокол ОУ» per row — see
+    ``estimate_row_amount``), one per row — classified into a вид работ by
     ``estimate_sections.classify`` exactly the way a real смета's row names
     are, so a row this doesn't recognise (the bank-guarantee lines, the
     «Итого» row itself) is simply left out, the same as an unclassified
@@ -670,7 +690,7 @@ def estimate_sections_from_cost_table(cost_table):
         key = estimate_sections.classify(row["label"])
         if key is None:
             continue
-        amount = _row_amount(row, ESTIMATE_COST_COLUMN_KEY)
+        amount = estimate_row_amount(row)
         if amount is None:
             continue
         sections.append(estimate_sections.Section(

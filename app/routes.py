@@ -886,7 +886,8 @@ def _estimate_unmatched_sections(root, slug):
 
 def _estimate_from_master_import(root, slug):
     """``[{"label", "volume", "amount"}, ...]`` — вид работ, объём и сумма
-    из импорта сводного файла (колонки «Объем» и «ДГП»), одна строка на
+    из импорта сводного файла (колонки «Объем» и «ДГП», либо «Протокол ОУ»
+    построчно — см. ``master_import.estimate_row_amount``), одна строка на
     строку сводного файла, для показа в «Смете» там, где своего файла
     сметы нет, но данные импорта есть. None, если для проекта не было
     импорта или в нём нет ни одной подходящей строки.
@@ -911,8 +912,8 @@ def _estimate_from_master_import(root, slug):
             continue
         if estimate_sections.classify(row["label"]) is None:
             continue
-        amount = row["values"].get(master_import.ESTIMATE_COST_COLUMN_KEY)
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        amount = master_import.estimate_row_amount(row)
+        if amount is None:
             continue
         volume = row["values"].get(master_import.VOLUME_COLUMN_KEY)
         if isinstance(volume, bool) or not isinstance(volume, (int, float)):
