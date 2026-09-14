@@ -231,7 +231,7 @@ def _waterfall_groups(sections, area):
                     "deltaLabel": "Подписанное удорожание",
                     "cumulativeLabel": "с учётом подписанного удорожания",
                     "delta": section["signed"],
-                    "color": "mira",
+                    "color": "amber",
                 },
                 {
                     "deltaLabel": "Прогнозируемое удорожание",

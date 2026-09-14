@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Сводка по удорожанию{% endblock %}
-{% block main_extra_class %}container-wide{% endblock %}
+{% block main_extra_class %}container-wide investor-summary-page{% endblock %}
 {% block header_actions %}
 {% if has_projects %}
 <a class="btn btn-secondary" id="investor-summary-pdf-link"
@@ -256,7 +256,8 @@
      цвета — только тут. #}
   <div class="wf-legend" data-sections-panel="chart">
     <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-estimate"></i>Смета</span>
-    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-increase"></i>Удорожание</span>
+    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-signed"></i>Подписанное удорожание</span>
+    <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-increase"></i>Прогнозируемое удорожание</span>
     <span class="wf-legend-item"><i class="wf-legend-swatch wf-legend-swatch-total"></i>Итог</span>
   </div>
   <div class="wf-toggle-host" id="waterfall-toggle-{{ row.slug }}"></div>
