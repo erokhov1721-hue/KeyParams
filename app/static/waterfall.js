@@ -58,24 +58,36 @@
   }
 
   // "1 234 567 ₽" / "+45 000 ₽/м²" — та же типографика, что и у процентов,
-  // просто без десятичных.
+  // просто без десятичных. ``suffix`` необязателен: без него — просто
+  // число со знаком, без единицы на конце.
   function formatMoneyRu(value, signed, suffix) {
     var rounded = Math.round(Math.abs(value));
     var text = rounded.toString().replace(/(\d)(?=(\d{3})+$)/g, '$1' + THIN_SPACE);
     var sign = value < 0 ? MINUS : (signed ? '+' : '');
-    return sign + text + ' ' + suffix;
+    return sign + text + (suffix ? ' ' + suffix : '');
   }
 
   // Значение шага в единице, которую сейчас выбрал переключатель — «—» вместо
   // нуля или выдуманного числа там, где знаменателя (ДГП/площадь) нет.
-  function formatStepValue(step) {
+  //
+  // Без единицы на конце по умолчанию (``withUnit`` не передан) — это то,
+  // что рисуется в самой диаграмме, в общей колонке справа и в шапке
+  // раздела: единица там и так уже подписана один раз над графиком,
+  // капсулой-переключателем «%»/«тотал»/«на м²», а повторять «₽» на каждой
+  // из строк — не только лишнее, но и на объекте с суммами за пределы
+  // миллиарда именно та лишняя пара символов, из-за которой колонка со
+  // значениями переставала помещаться и вылезала за карточку. С единицей
+  // (``withUnit: true``) — только во всплывающей подсказке при наведении,
+  // где место не в обрез и повтор к месту.
+  function formatStepValue(step, withUnit) {
     if (step.na) return '—';
     if (step.isPercent) {
       return step.type === 'total' ? formatPercentRu(step.value, false) : formatPercentRu(step.delta, true);
     }
+    var suffix = withUnit ? step.unitSuffix : null;
     return step.type === 'total'
-      ? formatMoneyRu(step.value, false, step.unitSuffix)
-      : formatMoneyRu(step.delta, true, step.unitSuffix);
+      ? formatMoneyRu(step.value, false, suffix)
+      : formatMoneyRu(step.delta, true, suffix);
   }
 
   // Рубли — общий знаменатель между единицами: группа хранит свои значения
@@ -246,7 +258,7 @@
     }
     if (deltaStep) return formatStepValue(deltaStep);
     if (unit === 'percent') return formatPercentRu(0, true);
-    return group.dgpAmount == null ? '—' : formatMoneyRu(0, true, unit === 'total' ? '₽' : '₽/м²');
+    return group.dgpAmount == null ? '—' : formatMoneyRu(0, true);
   }
 
   function renderWaterfall(container, groups, unit) {
@@ -397,7 +409,11 @@
       // Полоса — итоговая (от нуля) или дельта (от предыдущего итога). Нет
       // знаменателя для выбранной единицы (na) — полосы просто нет, только
       // прочерк в колонке значения: выдумывать нулевую полосу нельзя.
+      // Короткая — на самой диаграмме (колонка справа, помещается всегда);
+      // полная, с единицей — только во всплывающих подсказках ниже, где
+      // место не поджимает.
       var titleValue = formatStepValue(step);
+      var titleValueFull = formatStepValue(step, true);
       var isZeroBase = step.type === 'total' && step.color === 'neutral' && step.value === 0;
       if (!step.na) {
         var barH = step.type === 'total' ? BAR_H_TOTAL : BAR_H_DELTA;
@@ -416,7 +432,7 @@
           style: reducedMotion ? '' : 'animation-delay:' + delay + 'ms',
         });
         var titleEl = document.createElementNS(NS, 'title');
-        titleEl.textContent = 'Слой: ' + step.label + ' — ' + titleValue;
+        titleEl.textContent = 'Слой: ' + step.label + ' — ' + titleValueFull;
         rect.appendChild(titleEl);
         svg.appendChild(rect);
 
@@ -446,7 +462,7 @@
       var share = (!step.na && groupTotal && !groupTotal.na)
         ? (step.type === 'total' ? step.value : step.delta) / groupTotal.value * 100
         : null;
-      var tip = '<b>' + step.label + '</b><br>' + group.name + '<br>' + titleValue
+      var tip = '<b>' + step.label + '</b><br>' + group.name + '<br>' + titleValueFull
         + (share != null ? '<br>доля от итога группы: ' + formatPercentRu(share, false) : '');
       svg.appendChild(el('rect', {
         x: 0, y: row.y, width: width, height: ROW_H, 'fill-opacity': 0,

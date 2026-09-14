@@ -53,6 +53,9 @@
           <th colspan="2" class="group-th group-signed">Подписанное удорожание</th>
           <th colspan="2" class="group-th group-forecast">Прогнозируемое удорожание</th>
           <th colspan="2" class="group-th group-total">Итоговая стоимость</th>
+          <th class="pct-th" rowspan="2">
+            <button type="button" class="sections-sort" data-sort-index="9" data-sort-type="number">% удорожания<span class="sections-arrow"></span></button>
+          </th>
         </tr>
         <tr>
           <th class="subgroup-th group-smeta">
@@ -119,6 +122,10 @@
               data-sort-value="{{ row.total_per_sqm if row.total_per_sqm is not none else -1 }}">
             <span class="sections-number">{{ row.total_per_sqm_display }}</span>
           </td>
+          <td class="sections-value{{ ' is-empty' if not row.estimate_vs_total }}"
+              data-sort-value="{{ row.estimate_vs_total.percent if row.estimate_vs_total else -999999 }}">
+            <span class="sections-number">{{ row.estimate_vs_total.percent_display if row.estimate_vs_total else '—' }}</span>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -145,6 +152,9 @@
             <span class="avg-count-note">{{ table.total.total_cost_count }} из {{ table.total.count }}</span>
           </td>
           <td class="sections-value"></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total.estimate_vs_total.percent_display if table.total.estimate_vs_total else '—' }}</span>
+          </td>
         </tr>
       </tfoot>
     </table>
@@ -197,7 +207,7 @@
           <th colspan="2" class="group-th group-signed">Подписанное удорожание</th>
           <th colspan="2" class="group-th group-forecast">Прогнозируемое удорожание</th>
           <th colspan="2" class="group-th group-total">Итоговая стоимость</th>
-          <th class="pct-th" rowspan="2">%</th>
+          <th class="pct-th" rowspan="2">% удорожания</th>
         </tr>
         <tr>
           <th class="subgroup-th group-smeta">Всего</th>

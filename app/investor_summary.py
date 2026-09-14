@@ -185,6 +185,7 @@ def _estimate_vs_total(estimate, total_cost):
         "estimate_display": _money(estimate),
         "total_cost_display": _money(total_cost),
         "overrun_display": _signed_money(overrun),
+        "percent": percent,
         "percent_display": cost_increase.format_percent(percent) or "—",
         "is_overrun": overrun > 0,
         "is_savings": overrun < 0,
@@ -309,6 +310,12 @@ def _total_row(rows):
         "signed_count": signed_count,
         "total_cost_display": _money(total_cost_total),
         "total_cost_count": total_cost_count,
+        # Портфельный % удорожания — по суммам всех объектов сразу, а не
+        # среднее их собственных процентов: у объекта без сметы или без
+        # итоговой стоимости свой процент попросту не посчитать, а тут он
+        # всё равно вносит вклад в обе суммы там, где известен хоть один из
+        # его составляющих.
+        "estimate_vs_total": _estimate_vs_total(estimate_total, total_cost_total),
     }
 
 

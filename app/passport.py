@@ -44,6 +44,9 @@ NUMERIC_FIELDS = AREA_FIELDS + ("contract_price_rub",)
 
 BUILDING_CLASS_OPTIONS = [
     "Эконом", "Комфорт", "Бизнес", "Бизнес - Премиум", "Премиум", "Делюкс", "Элит",
+    # Office real estate uses its own scale, not this residential one —
+    # "Prime"/"Класс А"/"Класс Б", not "Эконом"/"Комфорт"/etc.
+    "Prime", "Класс А", "Класс Б",
 ]
 
 # The "Паспорт договора" card — filled from a separately uploaded contract

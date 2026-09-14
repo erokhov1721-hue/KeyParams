@@ -26,7 +26,15 @@ from . import passport as passport_module
 from .extractors import BUSINESS_PREMIUM_TOKEN
 from .passport import BUILDING_CLASS_OPTIONS
 
-SHEET_NAME = "Проекты_НДС 20%"
+# The percentage in the sheet name is the workbook's VAT rate, not a fixed
+# label — a later export can just as well be "Проекты_НДС 22%". Matched by
+# prefix so the rate can change between uploads without the import starting
+# to reject the file; see ``_find_sheet_name``.
+SHEET_NAME_PREFIX = "Проекты_НДС"
+# One concrete, valid sheet name under that prefix — tests build fixture
+# workbooks against this rather than the prefix alone, same as any real
+# workbook would use one actual rate, not the bare prefix.
+SHEET_NAME = f"{SHEET_NAME_PREFIX} 20%"
 
 PROJECT_NAME_ROW = 4
 FIRST_PROJECT_COLUMN = 3
@@ -123,16 +131,19 @@ def _clean_text(value):
     return text or None
 
 
-_CLASS_KEYWORD_RE = re.compile(r"бизнес|премиум|комфорт|эконом|элит|делюкс", re.IGNORECASE)
+_CLASS_KEYWORD_RE = re.compile(
+    r"бизнес|премиум|комфорт|эконом|элит|делюкс|prime|класс а|класс б", re.IGNORECASE,
+)
 _BUSINESS_PREMIUM_RE = re.compile(BUSINESS_PREMIUM_TOKEN, re.IGNORECASE)
 _CLASS_CANONICAL = {option.lower(): option for option in BUILDING_CLASS_OPTIONS}
 
 
 def normalize_building_class(text):
-    """Best-effort match of free text like "Жилая недвижимость (Бизнес)"
-    onto one of ``BUILDING_CLASS_OPTIONS``. None if nothing recognisable is
-    in there — a class outside that vocabulary (e.g. "класс А" office
-    space) is left for manual entry rather than guessed at.
+    """Best-effort match of free text like "Жилая недвижимость (Бизнес)" or
+    "Офисная недвижимость (класс Prime)" onto one of
+    ``BUILDING_CLASS_OPTIONS``. None if nothing recognisable is in there —
+    a class outside that vocabulary is left for manual entry rather than
+    guessed at.
     """
     if not text:
         return None
@@ -396,6 +407,55 @@ def _covers_by_start(ws, starts):
     return covers
 
 
+def _find_sheet_name(wb):
+    """The one sheet whose name starts with ``SHEET_NAME_PREFIX``, or None.
+
+    Takes the first match in workbook order — a real file has exactly one
+    ("Проекты_НДС 20%", "Проекты_НДС 22%", ...) alongside sheets of
+    unrelated data (a sales summary, a raw GP export) that don't share the
+    prefix at all.
+    """
+    for name in wb.sheetnames:
+        if name.startswith(SHEET_NAME_PREFIX):
+            return name
+    return None
+
+
+def _detect_row_offset(grid):
+    """How many rows later than every ``ROW_*``/``*_ROW`` constant above
+    assumes the sheet's shared rows actually start — 0 for a workbook laid
+    out exactly like the one those constants were read off, negative if a
+    newer export has since dropped a row somewhere above them (the first
+    22%-VAT workbook received this way had its header at row 23, not the
+    row 24 every constant above assumes — one row lost somewhere in 1-22,
+    everything below shifted up with it).
+
+    Found by searching ``NUMBER_COLUMN`` for the header row's own "№"
+    marker — the one label that hasn't changed between the two layouts
+    seen so far even though its neighbour has (``LABEL_COLUMN`` on that
+    same row went from "Стоимость по видам работ/расход:" to "Наименование
+    разделов"): whatever that row's exact wording, "№" heads its number
+    column in both.
+    """
+    col = NUMBER_COLUMN - 1
+    for row_idx, line in enumerate(grid, start=1):
+        if col < len(line) and str(line[col] or "").strip() == "№":
+            return row_idx - ROW_VERSION_HEADER
+    return 0
+
+
+def _apply_row_offset(grid, offset):
+    """``grid``, reindexed so every fixed ``ROW_*`` constant keeps pointing
+    at the right sheet row despite ``offset`` (see ``_detect_row_offset``).
+    A no-op for the layout those constants already assume.
+    """
+    if offset > 0:
+        return grid[offset:]
+    if offset < 0:
+        return [()] * (-offset) + grid
+    return grid
+
+
 def parse_workbook(file) -> list:
     """Every project block on the portfolio sheet, in sheet order.
 
@@ -409,13 +469,15 @@ def parse_workbook(file) -> list:
         wb = openpyxl.load_workbook(file, data_only=True)
     except (InvalidFileException, BadZipFile, KeyError, OSError) as e:
         raise MasterImportError(f"Не удалось открыть файл как .xlsx: {e}") from e
-    if SHEET_NAME not in wb.sheetnames:
-        raise MasterImportError(f"В файле нет листа «{SHEET_NAME}»")
-    ws = wb[SHEET_NAME]
+    sheet_name = _find_sheet_name(wb)
+    if sheet_name is None:
+        raise MasterImportError(f"В файле нет листа, начинающегося с «{SHEET_NAME_PREFIX}»")
+    ws = wb[sheet_name]
     max_column = ws.max_column
     grid = list(ws.iter_rows(
         min_row=1, max_row=ws.max_row, max_col=max_column, values_only=True,
     ))
+    grid = _apply_row_offset(grid, _detect_row_offset(grid))
 
     starts = [
         col for col in range(FIRST_PROJECT_COLUMN, max_column + 1)

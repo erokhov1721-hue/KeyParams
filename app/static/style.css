@@ -2051,8 +2051,15 @@ select option {
 
 .grouped-bar-chart-wrap {
   position: relative;
-  width: 100%;
-  /* Пересчитывается в JS под число разделов (см. charts.js) — этот
+  /* Не width: 100% — этот блок ещё получает margin-inline: var(--table-edge)
+     от .investor-detail (по 20px слева и справа), а 100%-ширина в CSS не
+     вычитает собственные отступы блока: с обоими вместе диаграмма была на
+     40px шире, чем оставалось места, и вылезала за карточку с правого
+     края — там же, где у SVG строкой отрисован текст значений, поэтому
+     обрезанными оказывались именно они. width: auto (по умолчанию для
+     блочного элемента) сам заполняет то, что реально осталось после
+     отступов, ничего сверх.
+     Пересчитывается в JS под число разделов (см. charts.js) — этот
      запасной рост виден только на долю секунды до первой отрисовки. */
   height: 320px;
 }
@@ -2341,6 +2348,16 @@ select option {
    заголовки по одному. Подложка красит обе строки шапки (группу и «Всего»/
    «₽/м²» под ней) — только шапку: в теле таблицы цвет отвлекал бы от самих
    чисел. */
+
+/* auto, not the .sections-table default of fixed — same reasoning as
+   .investor-detail-table below (money here runs to the billions too, and a
+   fixed width can't guess a column wide enough for all of them at once),
+   and the point of sharing this class between the two tables in the first
+   place: the same money column should end up the same width in both, not
+   fixed in one and content-sized in the other. */
+.investor-summary-table {
+  table-layout: auto;
+}
 
 .investor-summary-table thead th.sections-label-col,
 .investor-summary-table thead th.pct-th {
@@ -3251,17 +3268,9 @@ select option {
   white-space: nowrap;
 }
 
-/* Разделы, которые дорожают — карточка деталей объекта на «Сводке по
-   удорожанию». Суммы здесь — сколько наберётся у объекта, вплоть до
-   миллиардов, и никакая фиксированная ширина колонки не угадывает их все
-   разом. table-layout: auto вместо унаследованного fixed — колонка сама
-   становится ровно такой ширины, какой требует самое длинное число внутри
-   (nowrap не даёт ему перенестись и обрезаться), а если всем вместе не
-   хватает места — везёт всю таблицу вбок .sections-table-wrap, а не режет
-   текст по границе. */
-.investor-detail-table {
-  table-layout: auto;
-}
+/* table-layout: auto уже задан выше, на общем .investor-summary-table —
+   обе таблицы сводки делят этот класс как раз для того, чтобы у одной и той
+   же денежной колонки была одна и та же ширина что там, что там. */
 
 /* Те же отступы ячеек, что и у верхней таблицы сводки (.sections-table th,
    td — var(--table-pad-y/x) — и var(--table-edge) по краю), только явно:
