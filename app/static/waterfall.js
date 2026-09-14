@@ -103,11 +103,20 @@
     return value / 100 * group.dgpAmount;
   }
 
+  // ``!group.dgpAmount``/``!group.areaSqm`` — falsy, не ``== null``:
+  // раздел без сметы (0, а не отсутствует — «новые работы» вроде MR Base)
+  // раньше проходил здесь как настоящий знаменатель. Деление на ноль в
+  // JS не бросает исключение, а даёт Infinity, и оно тихо утекало в
+  // maxValue, оттуда в шаг оси (niceAxisStep(Infinity) — тоже Infinity),
+  // и дальше в цикл отрисовки делений: ``for (tick = 0; tick <= Infinity;
+  // tick += Infinity)`` — Infinity + Infinity снова Infinity, условие
+  // остаётся истинным вечно. Не медленный рендер, а настоящий бесконечный
+  // цикл, вешающий вкладку намертво при переключении на «%» или «на м²».
   function fromRub(rub, unit, group) {
     if (rub == null) return null;
     if (unit === 'total') return rub;
-    if (unit === 'percent') return group.dgpAmount == null ? null : rub / group.dgpAmount * 100;
-    return group.areaSqm == null ? null : rub / group.areaSqm; // 'perSqm'
+    if (unit === 'percent') return !group.dgpAmount ? null : rub / group.dgpAmount * 100;
+    return !group.areaSqm ? null : rub / group.areaSqm; // 'perSqm'
   }
 
   // Пересчитывает уже построенные шаги группы в выбранную единицу измерения
@@ -336,7 +345,15 @@
     // вертикальные линии. Начинается под AXIS_H, а не с нуля: сама полоса
     // делений — своя собственная строка над графиком, в неё сетка не лезет.
     var axisLayer = el('g', { class: 'wf-axis' });
-    for (var tick = 0; tick <= maxValue + 1e-9; tick += axisStep) {
+    // MAX_TICKS — не расчёт, а страховка: niceAxisStep targets 3-4 деления,
+    // так что настоящий проход останавливается сам через считаные
+    // итерации задолго до этого предела. Он здесь на случай, если maxValue
+    // или axisStep когда-нибудь снова окажутся Infinity/NaN (как уже было
+    // — см. fromRub выше) — тогда `tick <= maxValue` остаётся истинным
+    // вечно, и без этого предела цикл вешает вкладку насмерть вместо того,
+    // чтобы просто нарисовать несколько лишних делений.
+    var MAX_TICKS = 1000;
+    for (var tick = 0, tickCount = 0; tick <= maxValue + 1e-9 && tickCount < MAX_TICKS; tick += axisStep, tickCount++) {
       var tx = xOf(tick);
       axisLayer.appendChild(el('line', {
         x1: tx, x2: tx, y1: AXIS_H, y2: totalHeight,
@@ -346,7 +363,7 @@
     // Подписи делений — только если соседним хватает расстояния (≥44px),
     // иначе цифры налезали бы друг на друга при узком холсте.
     var lastLabelX = -Infinity;
-    for (var t2 = 0; t2 <= maxValue + 1e-9; t2 += axisStep) {
+    for (var t2 = 0, labelCount = 0; t2 <= maxValue + 1e-9 && labelCount < MAX_TICKS; t2 += axisStep, labelCount++) {
       var lx = xOf(t2);
       if (lx - lastLabelX >= 44) {
         axisLayer.appendChild(text(lx, AXIS_H - 10, formatAxisTick(t2), {

@@ -7,16 +7,21 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {# Applies the saved theme before the page is painted. Doing this from the
      script at the bottom instead would show a flash of the dark theme on
-     every load for someone who picked the light one. #}
+     every load for someone who picked the light one.
+
+     Light is the default — not "no attribute" (which the CSS reads as
+     dark): anyone who hasn't touched the sun/moon toggle yet, including
+     every browser that opened this app before this default changed, gets
+     light on the very next load. Only an explicit 'dark' save (the toggle
+     clicked and persisted) keeps dark going forward. #}
   <script>
     (function () {
       var root = document.documentElement;
+      var saved = null;
       try {
-        var saved = localStorage.getItem('theme');
-        if (saved === 'light' || saved === 'dark') {
-          root.setAttribute('data-theme', saved);
-        }
+        saved = localStorage.getItem('theme');
       } catch (e) {}
+      root.setAttribute('data-theme', saved === 'dark' ? 'dark' : 'light');
       // Тема оформления (цветовая палитра, отдельно от светлого/тёмного
       // переключателя выше) — пока только «Изумруд», выбор делается в
       // «Настройках» в боковой панели. Атрибут проставляется уже сейчас,
