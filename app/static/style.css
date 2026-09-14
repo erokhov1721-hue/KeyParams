@@ -391,6 +391,15 @@ a {
   color: var(--text-600);
 }
 
+/* Кнопка выхода обёрнута в свою собственную <form> (нужен CSRF-токен,
+   разлогинивание — это POST), но в раскладке сайдбара должна вести себя
+   как ровно тот же самый .sidebar-toggle, что и «Настройки»/«Свернуть»
+   рядом — display: contents убирает саму форму из потока, оставляя
+   flex-элементом кнопку внутри неё. */
+.sidebar-logout-form {
+  display: contents;
+}
+
 .sidebar-toggle {
   display: flex;
   align-items: center;
@@ -920,6 +929,33 @@ h1 {
   padding: 28px;
 }
 
+/* Страница входа — единственная страница без сайдбара/app-shell вообще
+   (см. login.html, отдельный от base.html документ), поэтому и центрирует
+   себя сама, а не через .container/.app-main, которых тут нет. */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-900);
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-logo {
+  display: block;
+  margin: 0 auto 20px;
+}
+
+.login-title {
+  text-align: center;
+  margin: 0 0 20px;
+}
+
 .alert {
   border-radius: var(--radius-md);
   padding: 12px 16px;
@@ -952,7 +988,8 @@ h1 {
   margin-bottom: 8px;
 }
 
-.field input[type="text"] {
+.field input[type="text"],
+.field input[type="password"] {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -962,7 +999,8 @@ h1 {
   background: var(--bg-700);
 }
 
-.field input[type="text"]:focus {
+.field input[type="text"]:focus,
+.field input[type="password"]:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-dim);

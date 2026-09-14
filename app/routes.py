@@ -6,11 +6,11 @@ from urllib.parse import quote
 
 from flask import (
     Blueprint, Response, abort, current_app, redirect, render_template, request, send_file,
-    url_for,
+    session, url_for,
 )
 
 from . import (
-    chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
+    auth, chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
     extractors, investor_summary, master_import, passport as passport_module, pdf_export,
     pdf_reader, predicted_increase, project_filter, storage, upload_guard, workbook_cache,
 )
@@ -34,6 +34,34 @@ MAX_MASTER_IMPORT_SIZE = 50 * 1024 * 1024
 
 def _projects_root():
     return current_app.config["PROJECTS_ROOT"]
+
+
+@bp.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        if auth.verify_login(_projects_root(), username, password):
+            session.clear()
+            session["user"] = username.strip()
+            session.permanent = True
+            # Открытая страница, на которую метил до редиректа на /login —
+            # только свой собственный путь, не произвольный внешний адрес
+            # (иначе логин стал бы открытой пересылкой куда угодно).
+            next_path = request.form.get("next") or ""
+            if not next_path.startswith("/") or next_path.startswith("//"):
+                next_path = url_for("main.index")
+            return redirect(next_path)
+        return render_template(
+            "login.html", error="Неверный логин или пароль", next=request.form.get("next", ""),
+        )
+    return render_template("login.html", error=None, next=request.args.get("next", ""))
+
+
+@bp.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("main.login"))
 
 
 def _selected_compare_slugs(root):

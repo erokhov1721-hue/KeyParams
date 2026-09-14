@@ -1,10 +1,11 @@
 import logging
 import os
 import secrets
+from datetime import timedelta
 from logging.config import dictConfig
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, redirect, request, session, url_for
 from flask_wtf import CSRFProtect
 
 csrf = CSRFProtect()
@@ -116,6 +117,32 @@ def _secret_key(projects_root):
     return _persisted_secret_key(projects_root)
 
 
+# Эндпоинты, доступные без входа — сама страница логина (иначе зайти на неё
+# нечем не войдя) и статика, которую она подгружает (стили, лого): без
+# исключения статики браузер получил бы редирект на /login вместо css/js,
+# и форма входа осталась бы без оформления.
+_LOGIN_EXEMPT_ENDPOINTS = {"static", "main.login"}
+
+
+def _require_login():
+    """Редирект на /login для всего, что не в ``_LOGIN_EXEMPT_ENDPOINTS`` и
+    не пришло от уже вошедшего пользователя.
+
+    Выключено под pytest — тем же способом и по той же причине, что и CSRF
+    чуть выше: тестовый клиент не браузер, который можно обмануть, а сотни
+    существующих ``client.get/post(...)`` не должны понадобиться логиниться
+    первым делом, чтобы проверить совсем другую страницу. Отдельные тесты
+    самого входа включают его явно — см. ``tests/test_auth.py``.
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return None
+    if request.endpoint in _LOGIN_EXEMPT_ENDPOINTS:
+        return None
+    if session.get("user"):
+        return None
+    return redirect(url_for("main.login", next=request.full_path))
+
+
 def create_app(projects_root=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -125,6 +152,11 @@ def create_app(projects_root=None):
         or _default_projects_root()
     )
     app.config["SECRET_KEY"] = _secret_key(app.config["PROJECTS_ROOT"])
+    # Сессия входа переживает закрытие вкладки/браузера на месяц — при
+    # заходе раз в несколько дней это не отличить от «выхода никогда не
+    # было», а без этого cookie обычной (не постоянной) сессии живёт только
+    # до закрытия браузера, и приходится вводить пароль заново каждый раз.
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     # Eleven mutating POST routes were plain forms with no CSRF token — a
     # request forged from any other tab in the same browser (the slug is
     # just the project's own name, easy to guess) could delete a project or
@@ -146,5 +178,6 @@ def create_app(projects_root=None):
     from . import excel_report_routes, routes
     app.register_blueprint(routes.bp)
     app.register_blueprint(excel_report_routes.excel_report_bp)
+    app.before_request(_require_login)
 
     return app

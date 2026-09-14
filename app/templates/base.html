@@ -171,6 +171,19 @@
         <p class="sidebar-empty">Проектов пока нет</p>
         {% endif %}
       </nav>
+      {% if session.user %}
+      <form method="post" action="{{ url_for('main.logout') }}" class="sidebar-logout-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="sidebar-toggle" title="Выйти ({{ session.user }})">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <path d="M16 17l5-5-5-5"/>
+            <path d="M21 12H9"/>
+          </svg>
+          <span class="sidebar-toggle-text">{{ session.user }} · Выйти</span>
+        </button>
+      </form>
+      {% endif %}
       <button type="button" class="sidebar-toggle" id="sidebar-settings-btn" title="Настройки">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>

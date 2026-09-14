@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Паспорта объектов</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {# То же самое решение, что и в base.html: тема ставится ещё до отрисовки
+     страницы, иначе на «светлой по умолчанию» установке на долю секунды
+     мелькнёт тёмная. Своей формы входа это касается ровно так же, как и
+     остального приложения — просто не через тот же common-скрипт, у
+     страницы входа нет сайдбара/остального app-shell, который его тянет. #}
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var saved = null;
+      try {
+        saved = localStorage.getItem('theme');
+      } catch (e) {}
+      root.setAttribute('data-theme', saved === 'dark' ? 'dark' : 'light');
+      var uiTheme = 'emerald';
+      try {
+        uiTheme = localStorage.getItem('ui-theme') || uiTheme;
+      } catch (e) {}
+      root.setAttribute('data-ui-theme', uiTheme);
+    })();
+  </script>
+</head>
+<body>
+  <div class="login-page">
+    <div class="card form-card login-card">
+      <img class="login-logo" src="{{ url_for('static', filename='mr-logo.png') }}" alt="MR" width="49" height="32">
+      <h1 class="login-title">Вход</h1>
+      {% if error %}
+      <div class="alert alert-error">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="{{ url_for('main.login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ next or '' }}">
+        <div class="field">
+          <label for="username">Логин</label>
+          <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+        </div>
+        <div class="field">
+          <label for="password">Пароль</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Войти</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
