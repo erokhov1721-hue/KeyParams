@@ -217,6 +217,51 @@ def test_contract_price_is_none_without_an_итого_row(tmp_path):
     assert projects[0]["passport"]["contract_price_rub"] is None
 
 
+def test_contract_price_falls_back_to_дгп_when_протокол_оу_is_blank(tmp_path):
+    # Some blocks have no agreed «Протокол ОУ» amount yet (amendment still
+    # pending) but do have a «ДГП» figure — «Цена работ» should still come
+    # from there rather than showing nothing.
+    row = master_import.FIRST_COST_ROW
+    row_total = row + 1
+    shared_rows = [
+        (row, "1", "Разработка стадии \"Р\""),
+        (row_total, None, "Итого СМР, руб. с НДС 20%"),
+    ]
+    blocks = [(
+        "MIRA",
+        {},
+        ["Протокол ОУ", "ДГП"],
+        {row: [None, 900_000], row_total: [None, 1_000_000]},
+    )]
+    wb = _portfolio_workbook(shared_rows, blocks)
+    path = _save_and_reload(wb, tmp_path)
+
+    projects = master_import.parse_workbook(path)
+
+    assert projects[0]["passport"]["contract_price_rub"] == 1_000_000
+
+
+def test_contract_price_prefers_протокол_оу_over_дгп_when_both_present(tmp_path):
+    row = master_import.FIRST_COST_ROW
+    row_total = row + 1
+    shared_rows = [
+        (row, "1", "Разработка стадии \"Р\""),
+        (row_total, None, "Итого СМР, руб. с НДС 20%"),
+    ]
+    blocks = [(
+        "MIRA",
+        {},
+        ["Протокол ОУ", "ДГП"],
+        {row: [500_000, 900_000], row_total: [500_000, 1_000_000]},
+    )]
+    wb = _portfolio_workbook(shared_rows, blocks)
+    path = _save_and_reload(wb, tmp_path)
+
+    projects = master_import.parse_workbook(path)
+
+    assert projects[0]["passport"]["contract_price_rub"] == 500_000
+
+
 def _block_with_items_2(row1_extra=None, row21_volume=None, row22_volume=None, row2_volume="29 мес в тч ЗОС"):
     row1 = master_import.FIRST_COST_ROW
     row2 = row1 + 1

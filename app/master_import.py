@@ -223,8 +223,9 @@ def _parse_cost_table(grid, start, end):
 
 
 def _primary_version_total(cost_table):
-    """The primary version's (``Протокол ОУ``) total cost for the whole
-    object — «Цена работ» — or None if the block has no «Итого» row for it.
+    """The primary version's (``Протокол ОУ``, falling back to ``ДГП``) total
+    cost for the whole object — «Цена работ» — or None if the block has no
+    «Итого» row for either.
 
     Not a sum of the block's own line items: on the real sheet that sum
     disagrees with the sheet's own printed total (line items include a few
@@ -233,12 +234,19 @@ def _primary_version_total(cost_table):
     print more than one «Итого» row (a running subtotal, then a final one
     after a few more line items) — the last one is kept, since it's the
     most complete.
+
+    Some blocks have no agreed «Протокол ОУ» amount yet (the amendment is
+    still pending) but do have a «ДГП» figure on the same row — «ДГП» is
+    used there instead of leaving «Цена работ» blank, the same fallback
+    already applied to «смета» (see ``estimate_row_amount``).
     """
     total = None
     for row in cost_table["rows"]:
         if "итого" not in row["label"].lower():
             continue
         value = row["values"].get(cost_table["primary_version"])
+        if value is None or isinstance(value, bool):
+            value = row["values"].get(ESTIMATE_COST_COLUMN_KEY)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             total = value
     return total
