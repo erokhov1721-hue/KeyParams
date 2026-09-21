@@ -361,6 +361,7 @@ def test_save_and_load_passport_roundtrip(tmp_path):
     fields = passport.PASSPORT_FIELDS + passport.CONTRACT_FIELDS + [
         passport.REBAR_COEFFICIENT_FIELD, passport.FACADE_AREA_FIELD,
         passport.CONCRETE_VOLUME_FIELD, passport.MANUAL_COEFFICIENTS_UPDATED_AT_FIELD,
+        passport.COMPLETED_FIELD,
     ]
     data = {field: None for field in fields}
     data["project_name"] = "Проспект Мира"
@@ -392,6 +393,16 @@ def test_load_passport_backfills_missing_field_from_older_save(tmp_path):
     passport.save_passport({"project_name": "Старый проект"}, path)
     loaded = passport.load_passport(path)
     assert loaded["contract_price_rub"] is None
+
+
+def test_load_passport_backfills_completed_to_false(tmp_path):
+    # A passport saved before the "завершён" flag existed wasn't marked
+    # complete — backfill to False, not None, since this is a flag rather
+    # than an unknown value.
+    path = tmp_path / "passport.json"
+    passport.save_passport({"project_name": "Старый проект"}, path)
+    loaded = passport.load_passport(path)
+    assert loaded["completed"] is False
 
 
 # --- concurrent-edit protection (version) ---

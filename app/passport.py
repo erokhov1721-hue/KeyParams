@@ -79,6 +79,11 @@ FACADE_AREA_FIELD = "facade_area_manual"
 # вписывается вручную, поверх того, что нашлось в смете.
 CONCRETE_VOLUME_FIELD = "concrete_volume_manual"
 
+# Ручной флаг «проект завершён» — выставляется только руками (кнопкой на
+# странице проекта), никакой разбор его не трогает. Без даты: пользователю
+# нужен сам факт, а не когда именно он нажал кнопку.
+COMPLETED_FIELD = "completed"
+
 # Когда форма «Расчётных коэффициентов» в последний раз что-то сохранила —
 # нет входа для имени, у приложения нет входа с SSO, поэтому дата хотя бы
 # отвечает на вопрос «насколько свежее это ручное значение», раз уж на
@@ -771,6 +776,9 @@ def load_passport(path: Path) -> dict:
         MANUAL_COEFFICIENTS_UPDATED_AT_FIELD,
     ]:
         data.setdefault(field, None)
+    # A flag, not "unknown" text/number like the fields above — a passport
+    # saved before it existed was, definitionally, not yet marked complete.
+    data.setdefault(COMPLETED_FIELD, False)
     # An integer counter, not None like the rest above: save_passport_checked
     # compares it directly, and a passport saved before it existed is
     # unambiguously at the start of the count, not at an unknown version.

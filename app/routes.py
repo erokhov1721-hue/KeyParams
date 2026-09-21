@@ -113,6 +113,16 @@ def _project_field_map(root, slugs, field):
     return {slug: _safe_passport(root, slug).get(field) or "" for slug in slugs}
 
 
+def _project_completed_search_text(root, slugs):
+    """"завершен" for a completed project's sidebar row, "" otherwise — a
+    literal е, not ё, so typing the word without it (as most people do)
+    still matches via the plain substring search in base.html's sidebar."""
+    return {
+        slug: "завершен" if _safe_passport(root, slug).get("completed") else ""
+        for slug in slugs
+    }
+
+
 def _cover_problem(cover_file):
     """Why this photo can't be used, in words, or None if it can.
 
@@ -149,6 +159,7 @@ def inject_sidebar_projects():
         "sidebar_classes": _project_field_map(root, slugs, "building_class"),
         "sidebar_contractors": _project_field_map(root, slugs, "general_contractor"),
         "sidebar_years": _project_field_map(root, slugs, "year_signed"),
+        "sidebar_completed": _project_completed_search_text(root, slugs),
         "sidebar_covers": {slug: _cover_version(root, slug) for slug in slugs},
     }
 
@@ -556,6 +567,7 @@ def _investor_summary_table(root, slugs):
         _predicted_increase_totals(predicted_reports),
         predicted_reports,
         {slug: passports[slug].get("total_area_sqm") for slug in slugs},
+        {slug: bool(passports[slug].get("completed")) for slug in slugs},
     )
 
 
@@ -1730,6 +1742,19 @@ def rename_project(slug):
     data["project_name"] = new_name
     passport_module.save_passport_checked(data, path, expected_version)
     return _back_to()
+
+
+@bp.route("/projects/<slug>/completed", methods=["POST"])
+def toggle_project_completed(slug):
+    root = _projects_root()
+    if slug not in storage.list_project_slugs(root):
+        abort(404)
+    expected_version = _expected_version()
+    path = storage.passport_path(root, slug)
+    data = passport_module.load_passport(path)
+    data[passport_module.COMPLETED_FIELD] = not data.get(passport_module.COMPLETED_FIELD)
+    passport_module.save_passport_checked(data, path, expected_version)
+    return redirect(url_for("main.project_page", slug=slug))
 
 
 def _non_negative(value):

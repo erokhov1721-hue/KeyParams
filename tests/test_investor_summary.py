@@ -44,6 +44,29 @@ def test_missing_estimate_is_a_dash_not_zero():
     assert row["estimate_display"] == "—"
 
 
+def test_completed_flag_comes_from_completed_by_slug():
+    table = investor_summary.build_table(
+        ["a", "b"], {"a": "Объект А", "b": "Объект Б"},
+        estimate_totals_by_slug={"a": {}, "b": {}},
+        cost_increase_reports_by_slug={"a": None, "b": None},
+        predicted_increase_by_slug={},
+        completed_by_slug={"a": True},
+    )
+    rows_by_slug = {row["slug"]: row for row in table["rows"]}
+    assert rows_by_slug["a"]["completed"] is True
+    assert rows_by_slug["b"]["completed"] is False
+
+
+def test_completed_defaults_to_false_without_completed_by_slug():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+    assert table["rows"][0]["completed"] is False
+
+
 def test_predicted_overrun_comes_straight_from_the_predicted_increase_map():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},

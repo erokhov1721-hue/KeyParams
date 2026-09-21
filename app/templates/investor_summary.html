@@ -32,6 +32,7 @@
     <label class="object-picker-label" for="investor-summary-object-filter">Объект</label>
     <select id="investor-summary-object-filter" class="object-picker-select">
       <option value="">Все объекты</option>
+      <option value="__completed__">Завершённые</option>
       {% for row in table.rows %}
       <option value="{{ row.slug }}">{{ row.label }}</option>
       {% endfor %}
@@ -86,9 +87,12 @@
       </thead>
       <tbody>
         {% for row in table.rows %}
-        <tr data-slug="{{ row.slug }}">
+        <tr data-slug="{{ row.slug }}" data-completed="{{ '1' if row.completed else '0' }}">
           <td class="sections-label-col" data-sort-value="{{ row.label }}">
             <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+            {% if row.completed %}
+            <span class="badge badge-success" title="Проект завершён">Завершён</span>
+            {% endif %}
           </td>
           <td class="sections-value{{ ' is-empty' if row.estimate is none }}"
               data-sort-value="{{ row.estimate if row.estimate is not none else -1 }}">
@@ -320,28 +324,34 @@
 
     select.addEventListener('change', function () {
       var slug = select.value;
+      // «Завершённые» — не один конкретный объект, а группа: фильтруем по
+      // строкам с data-completed вместо сравнения со slug.
+      var completedOnly = slug === '__completed__';
       if (table && table.tBodies.length) {
         Array.from(table.tBodies[0].rows).forEach(function (row) {
-          row.hidden = Boolean(slug) && row.dataset.slug !== slug;
+          row.hidden = completedOnly
+            ? row.dataset.completed !== '1'
+            : Boolean(slug) && row.dataset.slug !== slug;
         });
       }
-      // Строка «Итого» суммирует все объекты — под один выбранный объект
-      // она не отвечает ни на какой вопрос.
+      // Строка «Итого» суммирует все объекты — под фильтром (один объект
+      // или только завершённые) она не отвечает ни на какой вопрос.
       if (table && table.tFoot) {
         Array.from(table.tFoot.rows).forEach(function (row) {
           row.hidden = Boolean(slug);
         });
       }
-      // Без выбранного объекта прячем все — карточка деталей имеет смысл
-      // только для одного конкретного объекта, а не для «Всех объектов».
+      // Карточка деталей имеет смысл только для одного конкретного объекта —
+      // не для «Всех объектов» и не для группы «Завершённые».
       details.forEach(function (detail) {
-        detail.hidden = detail.dataset.slug !== slug;
+        detail.hidden = completedOnly || detail.dataset.slug !== slug;
       });
       // PDF сохраняет то же, что сейчас на экране: с объектом в адресе —
-      // если он выбран, без — если на экране «Все объекты».
+      // если выбран один конкретный, без — для «Все объекты» и для
+      // «Завершённые» (выгрузка по группе объектов PDF не поддерживает).
       if (pdfLink) {
         pdfLink.setAttribute(
-          'href', slug ? pdfBaseHref + '?slug=' + encodeURIComponent(slug) : pdfBaseHref,
+          'href', (slug && !completedOnly) ? pdfBaseHref + '?slug=' + encodeURIComponent(slug) : pdfBaseHref,
         );
       }
     });

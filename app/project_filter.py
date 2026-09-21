@@ -25,13 +25,21 @@ GROUPS = [
     ("contractor", "general_contractor", "Генподрядчик", "alpha"),
     ("class", "building_class", "Класс объекта", "alpha"),
     ("year", "year_signed", "Год подписания договора", "desc"),
+    ("completed", "completed", "Статус", "yesno"),
 ]
 
 GROUP_KEYS = [key for key, _, _, _ in GROUPS]
 
+# «completed» — булево поле, а не текст: его варианты фильтра не «то, что
+# записано в паспорте», а фиксированные подписи, тех же двух, что и значок на
+# странице проекта.
+_COMPLETED_LABELS = {"yes": "Завершён", "no": "В работе"}
+
 
 def _value(passport, field):
     """Значение поля в том виде, в каком оно попадёт в фильтр."""
+    if field == "completed":
+        return "yes" if passport.get(field) else "no"
     raw = passport.get(field)
     text = str(raw).strip() if raw is not None else ""
     if not text:
@@ -44,11 +52,25 @@ def _value(passport, field):
     return text
 
 
+def display_label(key, value):
+    """Подпись варианта фильтра — как ``value`` из ``_value()``, только для
+    человека: «Не указано» вместо служебного ``NOT_SET``, «Завершён»/«В
+    работе» вместо ``yes``/``no`` для группы «completed», иначе само
+    значение."""
+    if value == NOT_SET:
+        return NOT_SET_LABEL
+    if key == "completed":
+        return _COMPLETED_LABELS.get(value, value)
+    return value
+
+
 def _sorted_values(values, order):
     """Варианты по порядку. «Не указано» всегда последним: это не значение, а
     его отсутствие, и оно не должно возглавлять список."""
     known = [value for value in values if value != NOT_SET]
-    if order == "desc":
+    if order == "yesno":
+        known.sort(key=lambda v: v != "yes")
+    elif order == "desc":
         known.sort(reverse=True)
     else:
         known.sort(key=str.casefold)
@@ -101,7 +123,7 @@ def build(passports, args):
             "options": [
                 {
                     "value": value,
-                    "label": NOT_SET_LABEL if value == NOT_SET else value,
+                    "label": display_label(key, value),
                     "count": counts[value],
                     "checked": value in chosen[key],
                 }
@@ -115,7 +137,7 @@ def build(passports, args):
             chips.append({
                 "group": key,
                 "group_label": label,
-                "label": NOT_SET_LABEL if value == NOT_SET else value,
+                "label": display_label(key, value),
                 "query": _query_without(chosen, key, value),
             })
 

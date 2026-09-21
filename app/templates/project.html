@@ -7,13 +7,25 @@
 <div class="page-head">
   <div>
     <a class="back-link" href="{{ url_for('main.index') }}">&larr; Все проекты</a>
-    <h1>{{ passport.project_name }}</h1>
+    <h1>
+      {{ passport.project_name }}
+      {% if passport.completed %}
+      <span class="badge badge-success" title="Проект завершён">Завершён</span>
+      {% endif %}
+    </h1>
     <p class="page-sub">
       Синий — распознано с картинки, стоит проверить.
       Фиолетовый — найдено через AI, стоит проверить.
       Жёлтый — заполните вручную.
     </p>
   </div>
+  <form method="post" action="{{ url_for('main.toggle_project_completed', slug=slug) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="version" value="{{ passport.version }}">
+    <button type="submit" class="btn {{ 'btn-secondary' if passport.completed else 'btn-primary' }}">
+      {{ 'Снять отметку "завершён"' if passport.completed else 'Проект завершён' }}
+    </button>
+  </form>
 </div>
 
 <div class="accordion-backdrop" hidden></div>

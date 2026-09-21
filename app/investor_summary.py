@@ -249,7 +249,7 @@ def _waterfall_groups(sections, area):
     ]
 
 
-def _row(slug, label, estimate_totals, report, predicted, predicted_report, area):
+def _row(slug, label, estimate_totals, report, predicted, predicted_report, area, completed=False):
     estimate = _estimate_total(estimate_totals)
     signed = _signed_overrun(report)
     # Прогноз приходит ``Decimal`` из отчёта по прогнозируемому удорожанию —
@@ -264,6 +264,7 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
     return {
         "slug": slug,
         "label": label,
+        "completed": completed,
         # Площадь объекта как есть — переключатель единиц «на м²» на
         # графике разделов делит на неё сам, тем же способом, что и
         # ``_per_sqm`` здесь, вместо того чтобы заново разбирать уже
@@ -321,7 +322,8 @@ def _total_row(rows):
 
 def build_table(slugs, project_names, estimate_totals_by_slug,
                  cost_increase_reports_by_slug, predicted_increase_by_slug,
-                 predicted_increase_reports_by_slug=None, area_by_slug=None):
+                 predicted_increase_reports_by_slug=None, area_by_slug=None,
+                 completed_by_slug=None):
     """Строки инвесторской сводки, отсортированные по названию объекта, и
     итоговая строка под ними.
 
@@ -333,16 +335,19 @@ def build_table(slugs, project_names, estimate_totals_by_slug,
     прогнозируемого удорожания. ``predicted_increase_reports_by_slug`` —
     ``{slug: predicted_increase.Report | None}``, тот же отчёт целиком, по
     разделам — для карточки объекта, какие разделы дорожают. ``area_by_slug``
-    — ``{slug: total_area_sqm | None}``, для ₽/м² там же.
+    — ``{slug: total_area_sqm | None}``, для ₽/м² там же. ``completed_by_slug``
+    — ``{slug: bool}``, отметка «проект завершён» с его паспорта.
     """
     predicted_increase_reports_by_slug = predicted_increase_reports_by_slug or {}
     area_by_slug = area_by_slug or {}
+    completed_by_slug = completed_by_slug or {}
     rows = [
         _row(
             slug, project_names.get(slug, slug),
             estimate_totals_by_slug.get(slug), cost_increase_reports_by_slug.get(slug),
             predicted_increase_by_slug.get(slug),
             predicted_increase_reports_by_slug.get(slug), area_by_slug.get(slug),
+            completed_by_slug.get(slug, False),
         )
         for slug in slugs
     ]

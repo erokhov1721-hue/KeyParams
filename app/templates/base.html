@@ -121,8 +121,8 @@
               <path d="m21 21-4.3-4.3"/>
             </svg>
             <input type="text" class="sidebar-search-input" id="sidebar-search-input"
-                   placeholder="Поиск по проектам, адресу, классу, генподрядчику, году…"
-                   aria-label="Поиск по проектам, адресу, классу, генподрядчику, году"
+                   placeholder="Поиск по проектам, адресу, классу, генподрядчику, году, статусу…"
+                   aria-label="Поиск по проектам, адресу, классу, генподрядчику, году, статусу"
                    autocomplete="off">
             <button type="button" class="sidebar-search-clear" id="sidebar-search-clear"
                     aria-label="Очистить поиск" hidden>
@@ -147,7 +147,7 @@
           {% for slug in sidebar_slugs %}
           <li class="sidebar-item" data-name="{{ sidebar_names[slug] }}" data-address="{{ sidebar_addresses[slug] }}"
               data-class="{{ sidebar_classes[slug] }}" data-contractor="{{ sidebar_contractors[slug] }}"
-              data-year="{{ sidebar_years[slug] }}">
+              data-year="{{ sidebar_years[slug] }}" data-completed="{{ sidebar_completed[slug] }}">
             <a class="sidebar-link {{ 'is-active' if slug == active_slug else '' }}"
                href="{{ url_for('main.project_page', slug=slug) }}"
                title="{{ sidebar_names[slug] }}">
@@ -313,7 +313,8 @@
             || (item.dataset.address || '').toLowerCase().indexOf(query) !== -1
             || (item.dataset.class || '').toLowerCase().indexOf(query) !== -1
             || (item.dataset.contractor || '').toLowerCase().indexOf(query) !== -1
-            || (item.dataset.year || '').toLowerCase().indexOf(query) !== -1;
+            || (item.dataset.year || '').toLowerCase().indexOf(query) !== -1
+            || (item.dataset.completed || '').toLowerCase().indexOf(query) !== -1;
           item.hidden = !matches;
           if (matches) visibleCount += 1;
         });

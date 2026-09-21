@@ -520,6 +520,23 @@ def test_rename_project_updates_name_and_redirects_to_index(tmp_path):
     assert saved["project_name"] == "Новое имя"
 
 
+def test_toggle_project_completed_flips_the_flag_and_redirects_back(tmp_path):
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    resp = client.post(f"/projects/{slug}/completed", data={"version": "0"}, follow_redirects=True)
+    assert resp.status_code == 200
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["completed"] is True
+
+    client.post(f"/projects/{slug}/completed", data={"version": saved["version"]})
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["completed"] is False
+
+
 def test_a_stale_rename_is_refused_too(tmp_path):
     from app import storage, passport as passport_module
 
@@ -941,6 +958,18 @@ def test_compare_select_page_narrows_the_list_by_filter(tmp_path):
     assert 'value="Старый"' not in body
 
 
+def test_compare_select_page_narrows_the_list_by_completed_filter(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Готовый", completed=True)
+    _make_project_with_passport(tmp_path, "Строится", completed=False)
+
+    body = client.get("/compare/select?completed=yes").data.decode("utf-8")
+
+    assert "Готовый" in body
+    assert 'value="Строится"' not in body
+
+
 def test_index_page_leaves_comparison_to_its_own_page(tmp_path):
     # Две задачи — заведение проектов и их сравнение — разведены по разным
     # страницам. Галочки и кнопка сравнения на общем списке означали бы, что
@@ -985,6 +1014,18 @@ def test_sidebar_search_data_covers_class_contractor_and_year(tmp_path):
     assert 'data-class="Бизнес"' in body
     assert 'data-contractor="ООО «Ромашка»"' in body
     assert 'data-year="2024"' in body
+
+
+def test_sidebar_search_data_covers_completed_status(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Готовый", completed=True)
+    _make_project_with_passport(tmp_path, "Строится", completed=False)
+
+    body = client.get("/").data.decode("utf-8")
+
+    assert 'data-completed="завершен"' in body
+    assert 'data-completed=""' in body
 
 
 def test_compare_select_page_offers_renaming_and_deleting(tmp_path):
@@ -3295,6 +3336,19 @@ def test_investor_summary_page_offers_to_save_the_pdf(tmp_path):
 
     assert "Сохранить в PDF" in body
     assert "/investors/pdf" in body
+
+
+def test_investor_summary_page_marks_completed_projects(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Готовый", completed=True)
+    _make_project_with_passport(tmp_path, "Строится", completed=False)
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    assert "Завершённые" in body
+    assert 'data-completed="1"' in body
+    assert 'data-completed="0"' in body
 
 
 def test_investor_summary_pdf_returns_a_pdf_file(tmp_path):

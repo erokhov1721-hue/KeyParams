@@ -1103,7 +1103,7 @@ def _grouped_slugs(slugs, passports, group_by):
 
     return [
         (
-            project_filter.NOT_SET_LABEL if value == project_filter.NOT_SET else value,
+            project_filter.display_label(group_by, value),
             by_value[value],
         )
         for value in project_filter._sorted_values(by_value, order)
