@@ -352,4 +352,12 @@ def build_table(slugs, project_names, estimate_totals_by_slug,
         for slug in slugs
     ]
     rows.sort(key=lambda row: row["label"])
-    return {"rows": rows, "total": _total_row(rows)}
+    return {
+        "rows": rows,
+        "total": _total_row(rows),
+        # Тот же «Итого», только по завершённым объектам — для строки под
+        # таблицей, когда на странице выбран фильтр «Завершённые», той же
+        # формой, что и «Итого» по всем объектам, а не средним чужих
+        # процентов (см. комментарий у _total_row про портфельный %).
+        "total_completed": _total_row([row for row in rows if row["completed"]]),
+    }

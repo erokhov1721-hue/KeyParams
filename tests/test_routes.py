@@ -3374,6 +3374,21 @@ def test_investor_summary_page_marks_completed_projects(tmp_path):
     assert 'data-completed="0"' in body
 
 
+def test_investor_summary_page_has_a_totals_row_for_completed_projects_too(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Готовый", completed=True)
+    _make_project_with_passport(tmp_path, "Строится", completed=False)
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    assert 'data-total-for="all"' in body
+    assert 'data-total-for="completed"' in body
+    # The completed-only totals row starts hidden — only "Все объекты" is
+    # shown until the picker is switched to "Завершённые".
+    assert re.search(r'<tr data-total-for="completed" hidden>', body)
+
+
 def test_investor_summary_pdf_returns_a_pdf_file(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

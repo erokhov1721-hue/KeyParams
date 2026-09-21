@@ -67,6 +67,31 @@ def test_completed_defaults_to_false_without_completed_by_slug():
     assert table["rows"][0]["completed"] is False
 
 
+def test_total_completed_sums_only_the_completed_rows():
+    table = investor_summary.build_table(
+        ["a", "b"], {"a": "Объект А", "b": "Объект Б"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}, "b": {"roof": 300.0}},
+        cost_increase_reports_by_slug={"a": None, "b": None},
+        predicted_increase_by_slug={},
+        completed_by_slug={"a": True, "b": False},
+    )
+    assert table["total"]["estimate_display"] == "400 ₽"
+    assert table["total"]["count"] == 2
+    assert table["total_completed"]["estimate_display"] == "100 ₽"
+    assert table["total_completed"]["count"] == 1
+
+
+def test_total_completed_is_empty_without_any_completed_projects():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+    assert table["total_completed"]["count"] == 0
+    assert table["total_completed"]["estimate_display"] == "—"
+
+
 def test_predicted_overrun_comes_straight_from_the_predicted_increase_map():
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},

@@ -134,7 +134,7 @@
         {% endfor %}
       </tbody>
       <tfoot>
-        <tr>
+        <tr data-total-for="all">
           <td class="sections-label-col">{{ table.total.label }}</td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total.estimate_display }}</span>
@@ -158,6 +158,32 @@
           <td class="sections-value"></td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total.estimate_vs_total.percent_display if table.total.estimate_vs_total else '—' }}</span>
+          </td>
+        </tr>
+        <tr data-total-for="completed" hidden>
+          <td class="sections-label-col">{{ table.total_completed.label }}</td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.estimate_display }}</span>
+            <span class="avg-count-note">{{ table.total_completed.estimate_count }} из {{ table.total_completed.count }}</span>
+          </td>
+          <td class="sections-value"></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.signed_display }}</span>
+            <span class="avg-count-note">{{ table.total_completed.signed_count }} из {{ table.total_completed.count }}</span>
+          </td>
+          <td class="sections-value"></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.predicted_display }}</span>
+            <span class="avg-count-note">{{ table.total_completed.predicted_count }} из {{ table.total_completed.count }}</span>
+          </td>
+          <td class="sections-value"></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.total_cost_display }}</span>
+            <span class="avg-count-note">{{ table.total_completed.total_cost_count }} из {{ table.total_completed.count }}</span>
+          </td>
+          <td class="sections-value"></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.estimate_vs_total.percent_display if table.total_completed.estimate_vs_total else '—' }}</span>
           </td>
         </tr>
       </tfoot>
@@ -334,11 +360,15 @@
             : Boolean(slug) && row.dataset.slug !== slug;
         });
       }
-      // Строка «Итого» суммирует все объекты — под фильтром (один объект
-      // или только завершённые) она не отвечает ни на какой вопрос.
+      // «Итого» по всем объектам не отвечает ни на какой вопрос под одним
+      // конкретным объектом — там она прячется совсем. Под «Завершённые»
+      // её место занимает «Итого» по тем же завершённым объектам, той же
+      // строкой снизу, что и на вкладке «Все объекты».
       if (table && table.tFoot) {
         Array.from(table.tFoot.rows).forEach(function (row) {
-          row.hidden = Boolean(slug);
+          row.hidden = completedOnly
+            ? row.dataset.totalFor !== 'completed'
+            : Boolean(slug) || row.dataset.totalFor !== 'all';
         });
       }
       // Карточка деталей имеет смысл только для одного конкретного объекта —
