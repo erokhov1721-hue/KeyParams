@@ -241,6 +241,31 @@ def test_contract_price_falls_back_to_дгп_when_протокол_оу_is_blank
     assert projects[0]["passport"]["contract_price_rub"] == 1_000_000
 
 
+def test_contract_price_falls_back_to_дгп_when_протокол_оу_is_zero(tmp_path):
+    # Real case (City_bay_1 and others): a block with no agreement at all
+    # prints "Протокол ОУ" as a literal 0 rather than leaving the cell
+    # empty — treat that the same as blank, since a real contract price is
+    # never actually zero.
+    row = master_import.FIRST_COST_ROW
+    row_total = row + 1
+    shared_rows = [
+        (row, "1", "Разработка стадии \"Р\""),
+        (row_total, None, "Итого СМР, руб. с НДС 20%"),
+    ]
+    blocks = [(
+        "MIRA",
+        {},
+        ["Протокол ОУ", "ДГП"],
+        {row: [0, 900_000], row_total: [0, 1_000_000]},
+    )]
+    wb = _portfolio_workbook(shared_rows, blocks)
+    path = _save_and_reload(wb, tmp_path)
+
+    projects = master_import.parse_workbook(path)
+
+    assert projects[0]["passport"]["contract_price_rub"] == 1_000_000
+
+
 def test_contract_price_prefers_протокол_оу_over_дгп_when_both_present(tmp_path):
     row = master_import.FIRST_COST_ROW
     row_total = row + 1

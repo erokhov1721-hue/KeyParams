@@ -238,14 +238,17 @@ def _primary_version_total(cost_table):
     Some blocks have no agreed «Протокол ОУ» amount yet (the amendment is
     still pending) but do have a «ДГП» figure on the same row — «ДГП» is
     used there instead of leaving «Цена работ» blank, the same fallback
-    already applied to «смета» (see ``estimate_row_amount``).
+    already applied to «смета» (see ``estimate_row_amount``). A block with
+    no agreement at all prints its «Протокол ОУ» cell as a literal 0 rather
+    than leaving it empty, so 0 is treated the same as "missing" here —
+    a real contract is never actually priced at zero.
     """
     total = None
     for row in cost_table["rows"]:
         if "итого" not in row["label"].lower():
             continue
         value = row["values"].get(cost_table["primary_version"])
-        if value is None or isinstance(value, bool):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value == 0:
             value = row["values"].get(ESTIMATE_COST_COLUMN_KEY)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             total = value
