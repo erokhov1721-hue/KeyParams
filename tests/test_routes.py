@@ -527,14 +527,37 @@ def test_toggle_project_completed_flips_the_flag_and_redirects_back(tmp_path):
     client = app.test_client()
     slug = _make_project_with_passport(tmp_path, "ПроектА")
 
-    resp = client.post(f"/projects/{slug}/completed", data={"version": "0"}, follow_redirects=True)
+    resp = client.post(f"/projects/{slug}/completed", follow_redirects=True)
     assert resp.status_code == 200
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["completed"] is True
 
-    client.post(f"/projects/{slug}/completed", data={"version": saved["version"]})
+    client.post(f"/projects/{slug}/completed")
     saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["completed"] is False
+
+
+def test_toggle_project_completed_ignores_a_stale_version_in_the_form(tmp_path):
+    # Unlike every other passport edit, this toggle must never be refused
+    # for a version mismatch: it flips whatever is on disk right now, not
+    # something built from the page's own (possibly stale) form data — a
+    # double-click, a second open tab, or someone else's unrelated edit
+    # landing in between shouldn't make the button silently do nothing.
+    from app import storage, passport as passport_module
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "ПроектА")
+
+    # Move the on-disk version ahead of what a freshly rendered page would
+    # have submitted, simulating an edit that landed in between.
+    client.post(f"/projects/{slug}/rename", data={"project_name": "Переименован"})
+
+    resp = client.post(f"/projects/{slug}/completed", data={"version": "0"}, follow_redirects=True)
+    assert resp.status_code == 200
+    assert "conflict=1" not in resp.request.path
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["completed"] is True
 
 
 def test_a_stale_rename_is_refused_too(tmp_path):

@@ -1746,14 +1746,26 @@ def rename_project(slug):
 
 @bp.route("/projects/<slug>/completed", methods=["POST"])
 def toggle_project_completed(slug):
+    """Flips the flag on whatever is on disk right now — not on the version
+    the page happened to be rendered with, unlike every other passport edit.
+
+    Every other edit here goes through ``save_passport_checked`` with the
+    *page's own* version so a save built from stale form data can't clobber
+    a newer one — that protection matters when the save carries unsaved
+    typed-in field values. This toggle carries none: it only flips one
+    boolean read fresh from disk, so there's nothing stale to protect
+    against, and requiring the page's version bought nothing but a
+    confusing silent refusal — a double-click, a second open tab, or simply
+    someone else's unrelated edit landing in between would make this button
+    quietly do nothing instead of the one thing it's for.
+    """
     root = _projects_root()
     if slug not in storage.list_project_slugs(root):
         abort(404)
-    expected_version = _expected_version()
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
     data[passport_module.COMPLETED_FIELD] = not data.get(passport_module.COMPLETED_FIELD)
-    passport_module.save_passport_checked(data, path, expected_version)
+    passport_module.save_passport_checked(data, path, expected_version=data["version"])
     return redirect(url_for("main.project_page", slug=slug))
 
 

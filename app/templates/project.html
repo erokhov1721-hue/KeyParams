@@ -21,7 +21,6 @@
   </div>
   <form method="post" action="{{ url_for('main.toggle_project_completed', slug=slug) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="version" value="{{ passport.version }}">
     <button type="submit" class="btn {{ 'btn-secondary' if passport.completed else 'btn-primary' }}">
       {{ 'Снять отметку "завершён"' if passport.completed else 'Проект завершён' }}
     </button>
