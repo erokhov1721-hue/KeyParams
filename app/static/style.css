@@ -4353,3 +4353,16 @@ select option {
   font-weight: 400;
   color: var(--text-500);
 }
+
+.kp-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.kp-form-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}

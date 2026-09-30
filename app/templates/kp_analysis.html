@@ -75,7 +75,17 @@
                placeholder="например, 45 000">
       </div>
     </div>
-    <button type="submit" class="btn btn-primary">Проанализировать</button>
+    <div class="kp-form-actions">
+      <button type="submit" class="btn btn-primary">Проанализировать</button>
+      {# Активна только после анализа: до него скачивать нечего. #}
+      {% if token %}
+      <a class="btn btn-secondary" id="kp-download-xlsx"
+         href="{{ url_for('main.download_kp_analysis', token=token) }}">Скачать отработанный файл</a>
+      {% else %}
+      <button type="button" class="btn btn-secondary" id="kp-download-xlsx" disabled
+              title="Сначала загрузите файл и нажмите «Проанализировать»">Скачать отработанный файл</button>
+      {% endif %}
+    </div>
   </form>
 </div>
 
@@ -84,9 +94,6 @@
   <div class="kp-download">
     <a class="btn btn-secondary" href="{{ url_for('main.download_kp_ranking_pdf', token=token) }}" download>
       Сохранить рейтинг в PDF
-    </a>
-    <a class="btn btn-primary" href="{{ url_for('main.download_kp_analysis', token=token) }}">
-      Скачать отработанный файл
     </a>
   </div>
   <p class="kp-note">
@@ -222,6 +229,19 @@
     input.addEventListener('change', function () {
       var textEl = input.closest('.field').querySelector('.file-drop-text');
       textEl.textContent = input.files[0] ? input.files[0].name : textEl.dataset.placeholder;
+      // Выбран другой файл — готовый результат относится к прежнему, и
+      // скачать его под видом нового нельзя, пока не нажат «Проанализировать».
+      var download = document.getElementById('kp-download-xlsx');
+      if (download && download.tagName === 'A') {
+        var off = document.createElement('button');
+        off.type = 'button';
+        off.className = download.className;
+        off.id = download.id;
+        off.disabled = true;
+        off.title = 'Нажмите «Проанализировать» для нового файла';
+        off.textContent = download.textContent;
+        download.replaceWith(off);
+      }
     });
   });
 </script>

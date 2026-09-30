@@ -167,3 +167,12 @@ def test_kp_analysis_shows_the_contractors_objects_with_us(tmp_path, monkeypatch
     assert "в классе «Бизнес» — 1 на 2,0 млрд ₽" in body
     assert "у нас объектов нет" in body  # АО «Бета»
     assert "К лучшему" not in body
+
+
+def test_kp_download_button_is_disabled_until_an_analysis_is_run(tmp_path):
+    client = create_app(tmp_path).test_client()
+
+    body = client.get("/kp-analysis").get_data(as_text=True)
+
+    assert re.search(r'<button[^>]*id="kp-download-xlsx"[^>]*disabled', body)
+    assert "/kp-analysis/download/" not in body
