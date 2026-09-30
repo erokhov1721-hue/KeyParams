@@ -75,6 +75,9 @@
 {% if analysis %}
 <div class="card form-card">
   <div class="kp-download">
+    <a class="btn btn-secondary" href="{{ url_for('main.download_kp_ranking_pdf', token=token) }}" download>
+      Сохранить рейтинг в PDF
+    </a>
     <a class="btn btn-primary" href="{{ url_for('main.download_kp_analysis', token=token) }}">
       Скачать отработанный файл
     </a>
@@ -125,7 +128,7 @@
   <div class="kp-section">
     <h3 class="kp-section-title">
       {{ section.name }}
-      {% if section.label %}<span class="kp-section-kind">{{ section.label }}</span>{% endif %}
+      {% if section.label and section.label | lower != section.name | lower %}<span class="kp-section-kind">{{ section.label }}</span>{% endif %}
     </h3>
     <p class="kp-note">
       {% if section.avg_per_sqm is none %}

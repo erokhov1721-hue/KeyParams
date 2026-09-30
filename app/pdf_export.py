@@ -1498,6 +1498,152 @@ def build_investor_summary_pdf(table, detail_row=None) -> bytes:
     return buffer.getvalue()
 
 
+# --- рейтинг предложений (Анализ КП) ----------------------------------------
+
+
+def _kp_money(value):
+    return cost_increase.format_number(round(value)) if value is not None else "—"
+
+
+def _kp_deviation_paragraph(pct, styles):
+    """Отклонение от средней по классу — тем же цветом, что и на экране:
+    до 30% выше средней янтарным, больше — красным."""
+    if pct is None:
+        return Paragraph("—", styles["cell_muted_right"])
+    text = cost_increase.format_percent(pct)
+    if pct > 30:
+        return Paragraph(f'<font color="{_hex(RED)}"><b>{text}</b></font>', styles["cell_right"])
+    if pct > 0:
+        return Paragraph(f'<font color="{_hex(AMBER)}"><b>{text}</b></font>', styles["cell_right"])
+    return Paragraph(text, styles["cell_right"])
+
+
+def _kp_rank_table(rows, styles, page_width, overall):
+    """Подрядчики от лучшего к худшему: место, имя, стоимость, ₽/м², разница
+    с лучшим и со средней; в общем рейтинге ещё — сколько разделов не
+    расценено."""
+    headers = ["№", "Подрядчик", "Итого, ₽" if overall else "Стоимость, ₽",
+               "₽/м²", "К лучшему", "К средней по классу"]
+    ratios = [0.05, 0.37, 0.16, 0.11, 0.1, 0.11]
+    if overall:
+        headers.append("Не расценено разделов")
+        ratios.append(0.1)
+    scale = page_width / sum(ratios)
+    col_widths = [r * scale for r in ratios]
+
+    data = [[
+        Paragraph(h, styles["head"] if i < 2 else styles["subhead_right"])
+        for i, h in enumerate(headers)
+    ]]
+    unpriced_rows = []
+    for row in rows:
+        line = [
+            Paragraph(str(row.place) if row.place else "—", styles["cell_muted"]),
+            Paragraph(_esc(row.name), styles["cell_label"]),
+        ]
+        if row.total is None:
+            unpriced_rows.append(len(data))
+            line += [Paragraph("не расценено", styles["cell_muted"]), "", "", ""]
+        else:
+            line += [
+                Paragraph(_kp_money(row.total), styles["cell_right_bold"]),
+                Paragraph(_kp_money(row.per_sqm), styles["cell_muted_right"]),
+                Paragraph(
+                    "лучшее" if row.place == 1 else cost_increase.format_percent(row.vs_best_pct),
+                    styles["cell_right"],
+                ),
+                _kp_deviation_paragraph(row.deviation_pct, styles),
+            ]
+        if overall:
+            line.append(Paragraph(str(row.unpriced) if row.unpriced else "—", styles["cell_right"]))
+        data.append(line)
+
+    tbl = Table(data, colWidths=col_widths, repeatRows=1)
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+        ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),
+        ("VALIGN", (0, 1), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    # Лучшее предложение — подложкой акцентного цвета, как «лучшее» на экране.
+    if rows and rows[0].place == 1:
+        style.append(("BACKGROUND", (0, 1), (-1, 1), _fade(ACCENT, 0.9)))
+    for index in unpriced_rows:
+        style.append(("SPAN", (2, index), (5, index)))
+    tbl.setStyle(TableStyle(style))
+    return tbl
+
+
+def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
+                         file_name=None) -> bytes:
+    """«Анализ КП» — рейтинг предложений от лучшего к худшему, в целом и по
+    каждому виду работ, тем же оформлением, что и остальные файлы программы.
+
+    ``ranking`` — то, что вернул ``kp_analysis.rank``; ``considered`` и
+    ``excluded`` — сколько объектов класса вошло в среднюю и какие выпали.
+    """
+    _ensure_fonts()
+    styles = _styles()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=PAGE_SIZE, title="Анализ КП — рейтинг предложений",
+        leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
+    )
+    page_width = PAGE_SIZE[0] - doc.leftMargin - doc.rightMargin
+
+    intro = (
+        f"Класс «{_esc(building_class)}», общая площадь "
+        f"{cost_increase.format_number(area)} м². Средняя ₽/м² — по {considered} "
+        "объект(ам) этого класса: смета плюс подписанные и планируемые "
+        "удорожания, при НДС 22%."
+    )
+    if file_name:
+        intro = f"Файл: {_esc(file_name)}. " + intro
+    story = [
+        Paragraph("Анализ КП — рейтинг предложений", styles["title"]),
+        Paragraph(intro, styles["sub"]),
+    ]
+    if excluded:
+        story.append(Paragraph(
+            "Не вошли в среднюю — не известна ставка НДС: " + _esc(", ".join(excluded)) + ".",
+            styles["sub"],
+        ))
+
+    story.append(Paragraph("Рейтинг предложений — от лучшего к худшему", styles["heading"]))
+    note = "Итог — сумма разделов, которые подрядчик расценил."
+    if ranking.expected_total:
+        note += f" Ожидаемая стоимость по средней класса: {_kp_money(ranking.expected_total)} ₽."
+    note += " Кто не расценил часть разделов, выглядит дешевле, чем есть, — см. последнюю колонку."
+    story.append(Paragraph(note, styles["sub"]))
+    story.append(_kp_rank_table(ranking.overall, styles, page_width, overall=True))
+
+    story.append(Paragraph("По видам работ", styles["heading"]))
+    for item in ranking.sections:
+        section = item.section
+        title = _esc(section.name)
+        if section.label and section.label.lower() != section.name.lower():
+            title += f' <font color="{_hex(MUTED)}" size="8">{_esc(section.label)}</font>'
+        if section.avg_per_sqm is None:
+            sub = ("Средней по классу нет — ни у одного объекта класса нет такого "
+                   "раздела, сравниваются только подрядчики между собой.")
+        else:
+            sub = (f"Средняя по классу: {_kp_money(section.avg_per_sqm)} ₽/м² "
+                   f"(объектов: {section.count}), ожидаемая стоимость "
+                   f"{_kp_money(section.expected)} ₽.")
+        story.append(KeepTogether([
+            Paragraph(title, styles["subheading"]),
+            Paragraph(sub, styles["sub"]),
+            _kp_rank_table(item.rows, styles, page_width, overall=False),
+        ]))
+
+    doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
+    return buffer.getvalue()
+
+
 # --- справка по одному объекту ----------------------------------------------
 #
 # Тот же набор карточек, что на странице проекта, минус сама смета: там,

@@ -116,3 +116,31 @@ def test_kp_analysis_download_of_an_unknown_token_is_not_found(tmp_path):
 
     assert client.get("/kp-analysis/download/" + "0" * 32).status_code == 404
     assert client.get("/kp-analysis/download/..%2Fsecret_key").status_code == 404
+
+
+def test_kp_analysis_offers_the_ranking_as_a_pdf(tmp_path, monkeypatch):
+    import pdfplumber
+
+    client = create_app(tmp_path).test_client()
+    _make_project(tmp_path, "Бизнес-объект", "Бизнес", 10)
+    monkeypatch.setattr(routes, "_estimate_totals", lambda root, slug: {"facade": Decimal("1000")})
+
+    body = _post(client, _offer_workbook(FACADE_ROWS)).get_data(as_text=True)
+    [link] = re.findall(r'href="(/kp-analysis/download/[0-9a-f]{32}/pdf)"', body)
+    resp = client.get(link)
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/pdf"
+    with pdfplumber.open(io.BytesIO(resp.data)) as pdf:
+        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    assert "рейтинг предложений" in text.lower()
+    assert "ООО «Альфа»" in text
+    assert "лучшее" in text
+    assert "+40,0 %" in text
+    assert "Фасадные работы" in text
+
+
+def test_kp_ranking_pdf_of_an_unknown_token_is_not_found(tmp_path):
+    client = create_app(tmp_path).test_client()
+
+    assert client.get("/kp-analysis/download/" + "0" * 32 + "/pdf").status_code == 404

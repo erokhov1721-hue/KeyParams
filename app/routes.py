@@ -643,6 +643,7 @@ def _drop_stale_kp_results(folder):
             if now - path.stat().st_mtime > KP_ANALYSIS_KEEP_SECONDS:
                 path.unlink()
                 path.with_suffix(".name").unlink(missing_ok=True)
+                path.with_suffix(".pdf").unlink(missing_ok=True)
         except OSError:
             pass  # занят или уже удалён — уберётся при следующем анализе
 
@@ -696,6 +697,10 @@ def run_kp_analysis():
     (folder / f"{token}.xlsx").write_bytes(kp_analysis.write_remarks(data, analysis.remarks))
     file_name = f"{Path(offer_file.filename).stem} — анализ.xlsx"
     (folder / f"{token}.name").write_text(file_name, encoding="utf-8")
+    (folder / f"{token}.pdf").write_bytes(pdf_export.build_kp_ranking_pdf(
+        kp_analysis.rank(analysis, area), building_class, area,
+        averages.considered, averages.excluded, offer_file.filename,
+    ))
     current_app.logger.info(
         "Анализ КП: %d подрядчиков, %d разделов, класс %s, %s м²",
         len(analysis.contractors), len(analysis.sections), building_class, area_text,
@@ -721,6 +726,29 @@ def download_kp_analysis(token):
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
         download_name=file_name,
+    )
+
+
+@bp.route("/kp-analysis/download/<token>/pdf", methods=["GET"])
+def download_kp_ranking_pdf(token):
+    """Рейтинг предложений того же анализа — PDF, собранный вместе с
+    отработанным файлом, чтобы не разбирать таблицу и объекты второй раз."""
+    if not _KP_TOKEN_RE.match(token):
+        abort(404)
+    folder = storage.kp_analysis_dir(_projects_root())
+    path = folder / f"{token}.pdf"
+    if not path.exists():
+        abort(404)
+    name_path = folder / f"{token}.name"
+    stem = (
+        name_path.read_text(encoding="utf-8").removesuffix(" — анализ.xlsx")
+        if name_path.exists() else "КП"
+    )
+    return send_file(
+        io.BytesIO(path.read_bytes()),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{stem} — рейтинг предложений.pdf",
     )
 
 

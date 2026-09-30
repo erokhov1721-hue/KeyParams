@@ -4280,6 +4280,8 @@ select option {
 
 .kp-download {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   justify-content: flex-end;
   margin-bottom: 12px;
 }
