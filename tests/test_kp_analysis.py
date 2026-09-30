@@ -307,3 +307,49 @@ def test_write_remarks_fills_empty_cells_and_keeps_existing_text():
     assert ws.cell(15, 10).value == "Завышена стоимость за раздел"
     assert ws.cell(15, 16).value == "уже написано вручную"
     assert ws.cell(15, 11).value == 1000.0
+
+
+def test_rank_orders_offers_from_cheapest_to_most_expensive():
+    offer = kp_analysis.parse_offer(io.BytesIO(_offer_workbook(FACADE_ROWS)))
+    analysis = kp_analysis.analyze(offer, _averages({"facade": 100.0}), 10)
+
+    ranking = kp_analysis.rank(analysis, 10)
+
+    assert [(r.place, r.name) for r in ranking.overall] == [
+        (1, "ООО «Альфа»"), (2, "АО «Бета»"),
+    ]
+    alpha, beta = ranking.overall
+    assert alpha.vs_best_pct == pytest.approx(0.0)
+    assert beta.vs_best_pct == pytest.approx(1400 / 1100 * 100 - 100)
+    assert alpha.deviation_pct == pytest.approx(10.0)
+    assert ranking.expected_total == pytest.approx(1000.0)
+    [facade] = ranking.sections
+    assert [r.name for r in facade.rows] == ["ООО «Альфа»", "АО «Бета»"]
+
+
+def test_rank_puts_an_unpriced_offer_last_without_a_place():
+    rows = [
+        ("6", "6. Фасадные работы", {"ООО «Альфа»": (70000, 30000, 100000), "АО «Бета»": (0, 0, 0)}),
+    ]
+    offer = kp_analysis.parse_offer(io.BytesIO(_offer_workbook(rows)))
+    analysis = kp_analysis.analyze(offer, _averages({}), 10)
+
+    ranking = kp_analysis.rank(analysis, 10)
+
+    [section] = ranking.sections
+    assert [(r.place, r.name) for r in section.rows] == [(1, "ООО «Альфа»"), (None, "АО «Бета»")]
+    assert ranking.overall[-1].name == "АО «Бета»"
+    assert ranking.overall[-1].unpriced == 1
+
+
+def test_rank_counts_sections_a_contractor_left_unpriced():
+    rows = [
+        ("6", "6. Фасадные работы", {"ООО «Альфа»": (7000, 3000, 10000), "АО «Бета»": (7000, 3000, 12000)}),
+        ("7", "7. Кровля", {"ООО «Альфа»": (0, 0, 0), "АО «Бета»": (7000, 3000, 10000)}),
+    ]
+    offer = kp_analysis.parse_offer(io.BytesIO(_offer_workbook(rows)))
+    ranking = kp_analysis.rank(kp_analysis.analyze(offer, _averages({}), 10), 10)
+
+    alpha = next(r for r in ranking.overall if r.name == "ООО «Альфа»")
+    assert alpha.unpriced == 1
+    assert alpha.total == Decimal("10000")

@@ -427,6 +427,86 @@ def analyze(offer, averages, area) -> Analysis:
     )
 
 
+# Одна строка рейтинга: место (None — не расценено), подрядчик, стоимость,
+# ₽/м², на сколько % дороже лучшего, отклонение от средней по классу,
+# замечание по разделу, сколько разделов не расценено (для общего рейтинга).
+RankRow = namedtuple(
+    "RankRow",
+    "place name total per_sqm vs_best_pct deviation_pct remark unpriced",
+)
+SectionRanking = namedtuple("SectionRanking", "section rows")
+Ranking = namedtuple("Ranking", "overall expected_total sections")
+
+
+def _pct(value, base):
+    if value is None or not base:
+        return None
+    return (float(value) / float(base) - 1.0) * 100.0
+
+
+def _ranked(rows):
+    """Расценённые — от дешёвого к дорогому, с местами и разницей с лучшим;
+    нерасценённые — в конце, без места."""
+    priced = sorted((r for r in rows if r.total is not None), key=lambda r: r.total)
+    unpriced = [r for r in rows if r.total is None]
+    best = priced[0].total if priced else None
+    return [
+        r._replace(place=i + 1, vs_best_pct=_pct(r.total, best))
+        for i, r in enumerate(priced)
+    ] + unpriced
+
+
+def rank(analysis, area) -> Ranking:
+    """Предложения от лучшего к худшему по стоимости — всего и по каждому
+    разделу.
+
+    Общий итог — сумма разделов, которые подрядчик расценил; отклонение от
+    средней по классу считается только по разделам, где средняя есть, чтобы
+    подрядчик и ожидаемая стоимость складывались из одного и того же. Кто
+    не расценил часть разделов, выглядит дешевле, чем есть, — поэтому рядом
+    с ним стоит, сколько разделов не расценено.
+    """
+    area = float(area)
+    expected_total = sum(s.expected for s in analysis.sections if s.expected) or None
+    overall = []
+    for index, name in enumerate(analysis.contractors):
+        total = Decimal("0")
+        comparable = Decimal("0")
+        unpriced = 0
+        for section in analysis.sections:
+            cell = section.cells[index]
+            if cell.remark == REMARK_PRICE_SECTION:
+                unpriced += 1
+                continue
+            total += cell.total
+            if section.expected:
+                comparable += cell.total
+        priced_any = unpriced < len(analysis.sections)
+        overall.append(RankRow(
+            place=None, name=name,
+            total=total if priced_any else None,
+            per_sqm=float(total) / area if priced_any else None,
+            vs_best_pct=None,
+            deviation_pct=_pct(comparable, expected_total) if priced_any and not unpriced else None,
+            remark=None, unpriced=unpriced,
+        ))
+
+    sections = []
+    for section in analysis.sections:
+        rows = []
+        for name, cell in zip(analysis.contractors, section.cells):
+            priced = cell.remark != REMARK_PRICE_SECTION
+            rows.append(RankRow(
+                place=None, name=name,
+                total=cell.total if priced else None,
+                per_sqm=cell.per_sqm if priced else None,
+                vs_best_pct=None, deviation_pct=cell.deviation_pct,
+                remark=cell.remark, unpriced=0 if priced else 1,
+            ))
+        sections.append(SectionRanking(section=section, rows=_ranked(rows)))
+    return Ranking(overall=_ranked(overall), expected_total=expected_total, sections=sections)
+
+
 def write_remarks(source_bytes, remarks) -> bytes:
     """Исходный файл с вписанными ``remarks``, байтами .xlsx.
 

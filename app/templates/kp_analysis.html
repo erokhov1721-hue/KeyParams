@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Анализ КП{% endblock %}
+{% macro rank_row(row, overall) %}
+{% set state = 'is-unpriced' if row.total is none
+               else ('is-heavily-over' if row.deviation_pct is not none and row.deviation_pct > 30
+               else ('is-over' if row.deviation_pct is not none and row.deviation_pct > 0 else '')) %}
+<tr class="kp-cell {{ state }}">
+  <td class="kp-place">{{ row.place or '—' }}</td>
+  <td class="kp-name">{{ row.name }}</td>
+  {% if row.total is none %}
+  <td colspan="4" class="kp-deviation">не расценено</td>
+  {% else %}
+  <td>{{ format_number(row.total | round) }}</td>
+  <td>{{ format_number(row.per_sqm | round) }}</td>
+  <td>{{ 'лучшее' if row.place == 1 else format_percent(row.vs_best_pct) }}</td>
+  <td><span class="kp-deviation">{{ format_percent(row.deviation_pct) if row.deviation_pct is not none else '—' }}</span></td>
+  {% endif %}
+  {% if overall %}
+  <td>{{ row.unpriced or '—' }}</td>
+  {% endif %}
+</tr>
+{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -53,8 +73,8 @@
 </div>
 
 {% if analysis %}
-<div class="card">
-  <div class="btn-wrap">
+<div class="card form-card">
+  <div class="kp-download">
     <a class="btn btn-primary" href="{{ url_for('main.download_kp_analysis', token=token) }}">
       Скачать отработанный файл
     </a>
@@ -70,52 +90,72 @@
   {% if not analysis.sections %}
   <p class="kp-note">В файле нет ни одного раздела, который расценил хотя бы один подрядчик.</p>
   {% else %}
-  <div class="sections-table-wrap">
-    <table class="sections-table">
+  <h2 class="kp-heading">Рейтинг предложений — от лучшего к худшему</h2>
+  <p class="kp-note">
+    Итог — сумма разделов, которые подрядчик расценил.
+    {% if ranking.expected_total %}
+    Ожидаемая стоимость по средней класса: {{ format_number(ranking.expected_total | round) }} ₽.
+    {% endif %}
+    Кто не расценил часть разделов, выглядит дешевле, чем есть, — смотрите последнюю колонку.
+  </p>
+  <div class="kp-table-wrap">
+    <table class="kp-rank-table">
       <thead>
         <tr>
-          <th class="sections-label-col">Раздел</th>
-          <th>Средняя по классу, ₽/м²</th>
-          {% for name in analysis.contractors %}
-          <th>{{ name }}, ₽/м²</th>
-          {% endfor %}
+          <th class="kp-place">№</th>
+          <th class="kp-name">Подрядчик</th>
+          <th>Итого, ₽</th>
+          <th>₽/м²</th>
+          <th>К лучшему</th>
+          <th>К средней</th>
+          <th>Не расценено разделов</th>
         </tr>
       </thead>
       <tbody>
-        {% for section in analysis.sections %}
-        <tr>
-          <td class="sections-label-col">
-            {{ section.name }}
-            {% if section.label %}<span class="avg-count-note">{{ section.label }}</span>{% endif %}
-          </td>
-          <td class="sections-value {{ 'is-empty' if section.avg_per_sqm is none else '' }}">
-            {% if section.avg_per_sqm is none %}
-            <span class="sections-number">нет данных</span>
-            {% else %}
-            <span class="sections-number">{{ format_number(section.avg_per_sqm | round) }}</span>
-            <span class="avg-count-note">объектов: {{ section.count }}</span>
-            {% endif %}
-          </td>
-          {% for cell in section.cells %}
-          {% set state = 'is-unpriced' if cell.remark == remark_price_section
-                         else ('is-heavily-over' if cell.remark == remark_heavily
-                         else ('is-over' if cell.remark else '')) %}
-          <td class="sections-value kp-cell {{ state }}">
-            {% if cell.remark == remark_price_section %}
-            <span class="kp-deviation">не расценено</span>
-            {% else %}
-            <span class="sections-number">{{ format_number(cell.per_sqm | round) }}</span>
-            {% if cell.deviation_pct is not none %}
-            <span class="kp-deviation">{{ format_percent(cell.deviation_pct) }}</span>
-            {% endif %}
-            {% endif %}
-          </td>
-          {% endfor %}
-        </tr>
+        {% for row in ranking.overall %}
+        {{ rank_row(row, true) }}
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  <h2 class="kp-heading">По видам работ</h2>
+  {% for item in ranking.sections %}
+  {% set section = item.section %}
+  <div class="kp-section">
+    <h3 class="kp-section-title">
+      {{ section.name }}
+      {% if section.label %}<span class="kp-section-kind">{{ section.label }}</span>{% endif %}
+    </h3>
+    <p class="kp-note">
+      {% if section.avg_per_sqm is none %}
+      Средней по классу нет — ни у одного объекта класса нет такого раздела, сравниваем только подрядчиков между собой.
+      {% else %}
+      Средняя по классу: {{ format_number(section.avg_per_sqm | round) }} ₽/м² (объектов: {{ section.count }}),
+      ожидаемая стоимость {{ format_number(section.expected | round) }} ₽.
+      {% endif %}
+    </p>
+    <div class="kp-table-wrap">
+      <table class="kp-rank-table">
+        <thead>
+          <tr>
+            <th class="kp-place">№</th>
+            <th class="kp-name">Подрядчик</th>
+            <th>Стоимость, ₽</th>
+            <th>₽/м²</th>
+            <th>К лучшему</th>
+            <th>К средней</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in item.rows %}
+          {{ rank_row(row, false) }}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
   {% endif %}
 </div>
 {% endif %}

@@ -603,14 +603,16 @@ def _kp_form(error=None, status=200, **values):
         building_class=values.get("building_class"),
         area_text=values.get("area_text", ""),
         analysis=values.get("analysis"),
+        ranking=(
+            kp_analysis.rank(values["analysis"], values["area"])
+            if values.get("analysis") else None
+        ),
         averages=values.get("averages"),
         area=values.get("area"),
         token=values.get("token"),
         file_name=values.get("file_name"),
         format_number=passport_module.format_number,
         format_percent=cost_increase.format_percent,
-        remark_price_section=kp_analysis.REMARK_PRICE_SECTION,
-        remark_heavily=kp_analysis.REMARK_HEAVILY_OVERPRICED,
     ), status
 
 

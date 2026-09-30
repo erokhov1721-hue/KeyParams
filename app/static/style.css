@@ -4204,3 +4204,82 @@ select option {
   color: var(--text-500);
   margin: 0 0 12px;
 }
+
+/* Рейтинг предложений: подрядчики строками, а не колонками — с семью и
+   больше подрядчиками колонки сжимались до ширины буквы. */
+.kp-heading {
+  font-size: 18px;
+  margin: 24px 0 8px;
+}
+
+.kp-section {
+  margin-top: 20px;
+}
+
+.kp-section-title {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.kp-section-kind {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-600);
+}
+
+.kp-table-wrap {
+  overflow-x: auto;
+}
+
+.kp-rank-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kp-rank-table th,
+.kp-rank-table td {
+  padding: 8px 10px;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-100);
+}
+
+.kp-rank-table thead th {
+  white-space: normal;
+  vertical-align: bottom;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-500);
+  border-bottom: 1px solid var(--border);
+}
+
+.kp-rank-table tbody tr + tr td {
+  border-top: 1px solid var(--border-soft);
+}
+
+.kp-rank-table .kp-place {
+  width: 1%;
+  text-align: center;
+  color: var(--text-500);
+}
+
+.kp-rank-table .kp-name {
+  text-align: left;
+}
+
+.kp-rank-table .kp-name {
+  font-weight: 600;
+}
+
+.kp-rank-table td.kp-deviation {
+  text-align: left;
+}
+
+.kp-download {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
