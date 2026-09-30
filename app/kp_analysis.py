@@ -428,12 +428,81 @@ def analyze(offer, averages, area) -> Analysis:
 
 
 # Одна строка рейтинга: место (None — не расценено), подрядчик, стоимость,
-# ₽/м², на сколько % дороже лучшего, отклонение от средней по классу,
-# замечание по разделу, сколько разделов не расценено (для общего рейтинга).
+# ₽/м², отклонение от средней по классу, замечание по разделу, сколько
+# разделов не расценено (для общего рейтинга).
 RankRow = namedtuple(
     "RankRow",
-    "place name total per_sqm vs_best_pct deviation_pct remark unpriced",
+    "place name total per_sqm deviation_pct remark unpriced",
 )
+
+# Организационно-правовая форма перед названием — в КП и в паспортах одна и
+# та же компания пишется то с ней, то без («АО "ФОДД"» / «ФОДД»).
+_LEGAL_FORM_RE = re.compile(
+    r"\b(ооо|оао|зао|пао|ао|ип|гк|ук|нао)\b", re.IGNORECASE,
+)
+_NON_WORD_RE = re.compile(r"[^\w]+")
+
+# Объект подрядчика из базы: название, класс, цена по договору (или None),
+# того ли он класса, что выбран для анализа.
+HistoryObject = namedtuple("HistoryObject", "name building_class price in_class")
+# Сколько наших объектов у подрядчика и на какую сумму — всего и в классе.
+ContractorHistory = namedtuple(
+    "ContractorHistory", "count total class_count class_total objects",
+)
+
+
+def format_big_money(value):
+    """«32,2 млрд ₽» / «850,0 млн ₽» — сумма договоров, которой в колонке
+    рейтинга не нужна точность до рубля; «—», если суммы нет."""
+    if not value:
+        return "—"
+    if value >= 1e9:
+        return f"{value / 1e9:.1f}".replace(".", ",") + " млрд ₽"
+    return f"{value / 1e6:.1f}".replace(".", ",") + " млн ₽"
+
+
+def normalize_contractor(name):
+    """Название подрядчика без формы собственности, кавычек, регистра и
+    знаков — чтобы «АО "ФОДД"» из КП и «АО ФОДД» из паспорта были одним."""
+    text = str(name or "").lower().replace("ё", "е")
+    text = _LEGAL_FORM_RE.sub(" ", text)
+    return " ".join(_NON_WORD_RE.sub(" ", text).split())
+
+
+def contractor_history(names, passports, building_class):
+    """{имя подрядчика из КП: ContractorHistory} — объекты, где он у нас
+    генподрядчик (поле паспорта ``general_contractor``), с суммой цен по
+    договору; отдельно — те же цифры по выбранному классу.
+
+    ``passports`` — список паспортов всех объектов базы.
+    """
+    by_key = {}
+    for passport in passports:
+        key = normalize_contractor(passport.get("general_contractor"))
+        if key:
+            by_key.setdefault(key, []).append(passport)
+
+    result = {}
+    for name in names:
+        objects = []
+        for passport in by_key.get(normalize_contractor(name), []):
+            price = passport.get("contract_price_rub")
+            objects.append(HistoryObject(
+                name=passport.get("project_name") or "—",
+                building_class=passport.get("building_class"),
+                price=float(price) if isinstance(price, (int, float, Decimal)) else None,
+                in_class=passport.get("building_class") == building_class,
+            ))
+        objects.sort(key=lambda o: (not o.in_class, -(o.price or 0.0)))
+        in_class = [o for o in objects if o.in_class]
+        result[name] = ContractorHistory(
+            count=len(objects),
+            total=sum(o.price for o in objects if o.price is not None),
+            class_count=len(in_class),
+            class_total=sum(o.price for o in in_class if o.price is not None),
+            objects=objects,
+        )
+    return result
 SectionRanking = namedtuple("SectionRanking", "section rows")
 Ranking = namedtuple("Ranking", "overall expected_total sections")
 
@@ -445,15 +514,11 @@ def _pct(value, base):
 
 
 def _ranked(rows):
-    """Расценённые — от дешёвого к дорогому, с местами и разницей с лучшим;
-    нерасценённые — в конце, без места."""
+    """Расценённые — от дешёвого к дорогому, с местами; нерасценённые — в
+    конце, без места."""
     priced = sorted((r for r in rows if r.total is not None), key=lambda r: r.total)
     unpriced = [r for r in rows if r.total is None]
-    best = priced[0].total if priced else None
-    return [
-        r._replace(place=i + 1, vs_best_pct=_pct(r.total, best))
-        for i, r in enumerate(priced)
-    ] + unpriced
+    return [r._replace(place=i + 1) for i, r in enumerate(priced)] + unpriced
 
 
 def rank(analysis, area) -> Ranking:
@@ -486,7 +551,6 @@ def rank(analysis, area) -> Ranking:
             place=None, name=name,
             total=total if priced_any else None,
             per_sqm=float(total) / area if priced_any else None,
-            vs_best_pct=None,
             deviation_pct=_pct(comparable, expected_total) if priced_any and not unpriced else None,
             remark=None, unpriced=unpriced,
         ))
@@ -500,7 +564,7 @@ def rank(analysis, area) -> Ranking:
                 place=None, name=name,
                 total=cell.total if priced else None,
                 per_sqm=cell.per_sqm if priced else None,
-                vs_best_pct=None, deviation_pct=cell.deviation_pct,
+                deviation_pct=cell.deviation_pct,
                 remark=cell.remark, unpriced=0 if priced else 1,
             ))
         sections.append(SectionRanking(section=section, rows=_ranked(rows)))

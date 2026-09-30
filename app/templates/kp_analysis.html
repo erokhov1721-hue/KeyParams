@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Анализ КП{% endblock %}
-{% macro rank_row(row, overall) %}
+{% macro history_cell(count, total) %}
+<td class="kp-history">{% if count %}{{ count }} шт.<span class="kp-sub">{{ format_big_money(total) }}</span>{% else %}—{% endif %}</td>
+{% endmacro %}
+{% macro rank_row(row, overall, record=none) %}
 {% set state = 'is-unpriced' if row.total is none
                else ('is-heavily-over' if row.deviation_pct is not none and row.deviation_pct > 30
                else ('is-over' if row.deviation_pct is not none and row.deviation_pct > 0 else '')) %}
@@ -8,15 +11,19 @@
   <td class="kp-place">{{ row.place or '—' }}</td>
   <td class="kp-name">{{ row.name }}</td>
   {% if row.total is none %}
-  <td colspan="4" class="kp-deviation">не расценено</td>
+  <td colspan="{{ 2 if overall else 3 }}" class="kp-deviation">не расценено</td>
+  {% elif overall %}
+  <td><b>{{ format_number(row.total | round) }}</b><span class="kp-sub">{{ format_number(row.per_sqm | round) }} ₽/м²</span></td>
+  <td><span class="kp-deviation">{{ format_percent(row.deviation_pct) if row.deviation_pct is not none else '—' }}</span></td>
   {% else %}
   <td>{{ format_number(row.total | round) }}</td>
   <td>{{ format_number(row.per_sqm | round) }}</td>
-  <td>{{ 'лучшее' if row.place == 1 else format_percent(row.vs_best_pct) }}</td>
   <td><span class="kp-deviation">{{ format_percent(row.deviation_pct) if row.deviation_pct is not none else '—' }}</span></td>
   {% endif %}
   {% if overall %}
   <td>{{ row.unpriced or '—' }}</td>
+  {{ history_cell(record.count if record else 0, record.total if record else 0) }}
+  {{ history_cell(record.class_count if record else 0, record.class_total if record else 0) }}
   {% endif %}
 </tr>
 {% endmacro %}
@@ -108,19 +115,67 @@
           <th class="kp-place">№</th>
           <th class="kp-name">Подрядчик</th>
           <th>Итого, ₽</th>
-          <th>₽/м²</th>
-          <th>К лучшему</th>
           <th>К средней</th>
           <th>Не расценено разделов</th>
+          <th>Наших объектов</th>
+          <th>Из них «{{ building_class }}»</th>
         </tr>
       </thead>
       <tbody>
         {% for row in ranking.overall %}
-        {{ rank_row(row, true) }}
+        {{ rank_row(row, true, history.get(row.name)) }}
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  <h2 class="kp-heading">Объекты подрядчиков у нас</h2>
+  <p class="kp-note">
+    Объекты базы, где подрядчик — генподрядчик (по паспорту объекта), и цены
+    работ по их договорам. Нажмите на подрядчика, чтобы увидеть список.
+  </p>
+  {% for row in ranking.overall %}
+  {% set record = history.get(row.name) %}
+  {% if record and record.count %}
+  <details class="kp-history-item">
+    <summary>
+      <span class="kp-name">{{ row.name }}</span>
+      <span class="kp-history-summary">
+        {{ record.count }} объект(ов) на {{ format_big_money(record.total) }},
+        в классе «{{ building_class }}» — {{ record.class_count }}{% if record.class_count %} на {{ format_big_money(record.class_total) }}{% endif %}
+      </span>
+    </summary>
+    <div class="kp-table-wrap">
+      <table class="kp-rank-table">
+        <thead>
+          <tr>
+            <th class="kp-name">Объект</th>
+            <th class="kp-name">Класс</th>
+            <th>Цена работ по договору, ₽</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for obj in record.objects %}
+          <tr class="{{ 'is-in-class' if obj.in_class else '' }}">
+            <td class="kp-name">{{ obj.name }}</td>
+            <td class="kp-name kp-muted">{{ obj.building_class or '—' }}</td>
+            <td>{{ format_number(obj.price | round) if obj.price is not none else 'не указана' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td class="kp-name" colspan="2">Итого</td>
+            <td>{{ format_number(record.total | round) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </details>
+  {% else %}
+  <p class="kp-history-empty"><span class="kp-name">{{ row.name }}</span> — у нас объектов нет.</p>
+  {% endif %}
+  {% endfor %}
 
   <h2 class="kp-heading">По видам работ</h2>
   {% for item in ranking.sections %}
@@ -146,8 +201,7 @@
             <th class="kp-name">Подрядчик</th>
             <th>Стоимость, ₽</th>
             <th>₽/м²</th>
-            <th>К лучшему</th>
-            <th>К средней</th>
+              <th>К средней</th>
           </tr>
         </thead>
         <tbody>

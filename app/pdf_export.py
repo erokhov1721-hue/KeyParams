@@ -28,7 +28,7 @@ from reportlab.platypus import (
 )
 from PIL import Image as PILImage
 
-from . import chart_render, cost_increase
+from . import chart_render, cost_increase, kp_analysis
 
 # ReportLab's built-in fonts only cover Latin-1 — every label here is
 # Russian, so a system Cyrillic-capable TTF must be registered before any
@@ -1518,16 +1518,20 @@ def _kp_deviation_paragraph(pct, styles):
     return Paragraph(text, styles["cell_right"])
 
 
-def _kp_rank_table(rows, styles, page_width, overall):
-    """Подрядчики от лучшего к худшему: место, имя, стоимость, ₽/м², разница
-    с лучшим и со средней; в общем рейтинге ещё — сколько разделов не
-    расценено."""
+def _kp_rank_table(rows, styles, page_width, overall, history=None, building_class=None):
+    """Подрядчики от лучшего к худшему: место, имя, стоимость, ₽/м²,
+    отклонение от средней; в общем рейтинге ещё — сколько разделов не
+    расценено и сколько наших объектов у подрядчика, всего и в классе."""
     headers = ["№", "Подрядчик", "Итого, ₽" if overall else "Стоимость, ₽",
-               "₽/м²", "К лучшему", "К средней по классу"]
-    ratios = [0.05, 0.37, 0.16, 0.11, 0.1, 0.11]
+               "₽/м²", "К средней по классу"]
+    ratios = [0.05, 0.3, 0.14, 0.09, 0.1]
     if overall:
-        headers.append("Не расценено разделов")
-        ratios.append(0.1)
+        headers += [
+            "Не расценено разделов", "Наших объектов, сумма договоров",
+            f"Из них класса «{_esc(building_class)}»",
+        ]
+        ratios += [0.08, 0.13, 0.13]
+    history = history or {}
     scale = page_width / sum(ratios)
     col_widths = [r * scale for r in ratios]
 
@@ -1543,19 +1547,22 @@ def _kp_rank_table(rows, styles, page_width, overall):
         ]
         if row.total is None:
             unpriced_rows.append(len(data))
-            line += [Paragraph("не расценено", styles["cell_muted"]), "", "", ""]
+            line += [Paragraph("не расценено", styles["cell_muted"]), "", ""]
         else:
             line += [
                 Paragraph(_kp_money(row.total), styles["cell_right_bold"]),
                 Paragraph(_kp_money(row.per_sqm), styles["cell_muted_right"]),
-                Paragraph(
-                    "лучшее" if row.place == 1 else cost_increase.format_percent(row.vs_best_pct),
-                    styles["cell_right"],
-                ),
                 _kp_deviation_paragraph(row.deviation_pct, styles),
             ]
         if overall:
+            record = history.get(row.name)
             line.append(Paragraph(str(row.unpriced) if row.unpriced else "—", styles["cell_right"]))
+            for count, total in (
+                (record.count, record.total) if record else (0, 0),
+                (record.class_count, record.class_total) if record else (0, 0),
+            ):
+                text = f"{count} · {kp_analysis.format_big_money(total)}" if count else "—"
+                line.append(Paragraph(text, styles["cell_muted_right"]))
         data.append(line)
 
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
@@ -1573,13 +1580,78 @@ def _kp_rank_table(rows, styles, page_width, overall):
     if rows and rows[0].place == 1:
         style.append(("BACKGROUND", (0, 1), (-1, 1), _fade(ACCENT, 0.9)))
     for index in unpriced_rows:
-        style.append(("SPAN", (2, index), (5, index)))
+        style.append(("SPAN", (2, index), (4, index)))
     tbl.setStyle(TableStyle(style))
     return tbl
 
 
+def _kp_history_block(ranking, history, building_class, styles, page_width):
+    """Объекты каждого подрядчика у нас — тот же список, что раскрывается
+    на экране, по подрядчику на таблицу, в порядке рейтинга."""
+    story = [
+        Paragraph("Объекты подрядчиков у нас", styles["heading"]),
+        Paragraph(
+            "Объекты базы, где подрядчик — генподрядчик (по паспорту объекта), и "
+            f"цены работ по их договорам. Объекты класса «{_esc(building_class)}» выделены.",
+            styles["sub"],
+        ),
+    ]
+    col_widths = [page_width * 0.5, page_width * 0.25, page_width * 0.25]
+    for row in ranking.overall:
+        record = history.get(row.name)
+        if not record or not record.count:
+            story.append(Paragraph(f"<b>{_esc(row.name)}</b> — у нас объектов нет.", styles["body"]))
+            story.append(Spacer(1, 4))
+            continue
+        data = [[
+            Paragraph("Объект", styles["head"]),
+            Paragraph("Класс", styles["head"]),
+            Paragraph("Цена работ по договору, ₽", styles["subhead_right"]),
+        ]]
+        highlighted = []
+        for obj in record.objects:
+            if obj.in_class:
+                highlighted.append(len(data))
+            data.append([
+                Paragraph(_esc(obj.name), styles["cell"]),
+                Paragraph(_esc(obj.building_class or "—"), styles["cell_muted"]),
+                Paragraph(_kp_money(obj.price) if obj.price is not None else "не указана",
+                          styles["cell_right"]),
+            ])
+        data.append([
+            Paragraph("Итого", styles["cell_label"]), "",
+            Paragraph(_kp_money(record.total), styles["cell_right_bold"]),
+        ])
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
+        style = [
+            ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+            ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
+            ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
+            ("SPAN", (0, -1), (1, -1)),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]
+        for index in highlighted:
+            style.append(("BACKGROUND", (0, index), (-1, index), _fade(ACCENT, 0.9)))
+        tbl.setStyle(TableStyle(style))
+        summary = (
+            f"{record.count} объект(ов) на {kp_analysis.format_big_money(record.total)}, "
+            f"в классе «{_esc(building_class)}» — {record.class_count}"
+        )
+        if record.class_count:
+            summary += f" на {kp_analysis.format_big_money(record.class_total)}"
+        story.append(KeepTogether([
+            Paragraph(_esc(row.name), styles["subheading"]),
+            Paragraph(summary, styles["sub"]),
+            tbl,
+        ]))
+    return story
+
+
 def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
-                         file_name=None) -> bytes:
+                         file_name=None, history=None) -> bytes:
     """«Анализ КП» — рейтинг предложений от лучшего к худшему, в целом и по
     каждому виду работ, тем же оформлением, что и остальные файлы программы.
 
@@ -1619,7 +1691,10 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
         note += f" Ожидаемая стоимость по средней класса: {_kp_money(ranking.expected_total)} ₽."
     note += " Кто не расценил часть разделов, выглядит дешевле, чем есть, — см. последнюю колонку."
     story.append(Paragraph(note, styles["sub"]))
-    story.append(_kp_rank_table(ranking.overall, styles, page_width, overall=True))
+    story.append(_kp_rank_table(
+        ranking.overall, styles, page_width, overall=True,
+        history=history, building_class=building_class,
+    ))
 
     story.append(Paragraph("По видам работ", styles["heading"]))
     for item in ranking.sections:
@@ -1639,6 +1714,9 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
             Paragraph(sub, styles["sub"]),
             _kp_rank_table(item.rows, styles, page_width, overall=False),
         ]))
+
+    if history is not None:
+        story += _kp_history_block(ranking, history, building_class, styles, page_width)
 
     doc.build(story, onFirstPage=_draw_logo, onLaterPages=_draw_logo)
     return buffer.getvalue()

@@ -603,26 +603,25 @@ def _kp_form(error=None, status=200, **values):
         building_class=values.get("building_class"),
         area_text=values.get("area_text", ""),
         analysis=values.get("analysis"),
-        ranking=(
-            kp_analysis.rank(values["analysis"], values["area"])
-            if values.get("analysis") else None
-        ),
+        ranking=values.get("ranking"),
+        history=values.get("history") or {},
         averages=values.get("averages"),
         area=values.get("area"),
         token=values.get("token"),
         file_name=values.get("file_name"),
         format_number=passport_module.format_number,
         format_percent=cost_increase.format_percent,
+        format_big_money=kp_analysis.format_big_money,
     ), status
 
 
-def _kp_class_projects(root, building_class):
+def _kp_class_projects(root, passports, building_class):
     """Объекты выбранного класса со сметой и обоими отчётами по удорожанию —
     теми же функциями, что у «Сводки по удорожанию», чтобы средняя здесь и
-    цифры там считались из одного и того же."""
+    цифры там считались из одного и того же. ``passports`` — {slug: паспорт}
+    всех объектов базы."""
     projects = []
-    for slug in storage.list_project_slugs(root):
-        passport = _safe_passport(root, slug)
+    for slug, passport in passports.items():
         if passport.get("building_class") != building_class:
             continue
         estimate_totals = _estimate_totals(root, slug)
@@ -685,10 +684,15 @@ def run_kp_analysis():
         current_app.logger.warning("Анализ КП отклонён: %s", e)
         return _kp_form(str(e), 400, **values)
 
+    passports = {slug: _safe_passport(root, slug) for slug in storage.list_project_slugs(root)}
     averages = kp_analysis.class_averages(
-        _kp_class_projects(root, building_class), building_class,
+        _kp_class_projects(root, passports, building_class), building_class,
     )
     analysis = kp_analysis.analyze(offer, averages, area)
+    ranking = kp_analysis.rank(analysis, area)
+    history = kp_analysis.contractor_history(
+        analysis.contractors, list(passports.values()), building_class,
+    )
 
     folder = storage.kp_analysis_dir(root)
     folder.mkdir(parents=True, exist_ok=True)
@@ -698,16 +702,16 @@ def run_kp_analysis():
     file_name = f"{Path(offer_file.filename).stem} — анализ.xlsx"
     (folder / f"{token}.name").write_text(file_name, encoding="utf-8")
     (folder / f"{token}.pdf").write_bytes(pdf_export.build_kp_ranking_pdf(
-        kp_analysis.rank(analysis, area), building_class, area,
-        averages.considered, averages.excluded, offer_file.filename,
+        ranking, building_class, area, averages.considered, averages.excluded,
+        offer_file.filename, history,
     ))
     current_app.logger.info(
         "Анализ КП: %d подрядчиков, %d разделов, класс %s, %s м²",
         len(analysis.contractors), len(analysis.sections), building_class, area_text,
     )
     return _kp_form(
-        analysis=analysis, averages=averages, area=area, token=token,
-        file_name=file_name, **values,
+        analysis=analysis, ranking=ranking, history=history, averages=averages,
+        area=area, token=token, file_name=file_name, **values,
     )
 
 

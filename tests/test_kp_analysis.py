@@ -319,8 +319,6 @@ def test_rank_orders_offers_from_cheapest_to_most_expensive():
         (1, "ООО «Альфа»"), (2, "АО «Бета»"),
     ]
     alpha, beta = ranking.overall
-    assert alpha.vs_best_pct == pytest.approx(0.0)
-    assert beta.vs_best_pct == pytest.approx(1400 / 1100 * 100 - 100)
     assert alpha.deviation_pct == pytest.approx(10.0)
     assert ranking.expected_total == pytest.approx(1000.0)
     [facade] = ranking.sections
@@ -353,3 +351,30 @@ def test_rank_counts_sections_a_contractor_left_unpriced():
     alpha = next(r for r in ranking.overall if r.name == "ООО «Альфа»")
     assert alpha.unpriced == 1
     assert alpha.total == Decimal("10000")
+
+
+def test_normalize_contractor_ignores_legal_form_quotes_and_case():
+    assert kp_analysis.normalize_contractor('АО "ФОДД"') == kp_analysis.normalize_contractor("ФОДД")
+    assert kp_analysis.normalize_contractor("ООО «Бюро Констракшн»") == "бюро констракшн"
+    assert kp_analysis.normalize_contractor(None) == ""
+
+
+def test_contractor_history_counts_our_objects_overall_and_in_the_class():
+    passports = [
+        {"project_name": "Никель 1", "general_contractor": "АО ФОДД",
+         "building_class": "Делюкс", "contract_price_rub": 300.0},
+        {"project_name": "Никель 2", "general_contractor": "ФОДД",
+         "building_class": "Бизнес", "contract_price_rub": 100.0},
+        {"project_name": "Без цены", "general_contractor": "фодд",
+         "building_class": "Делюкс", "contract_price_rub": None},
+        {"project_name": "Чужой", "general_contractor": "АНТТЕК",
+         "building_class": "Делюкс", "contract_price_rub": 999.0},
+    ]
+
+    history = kp_analysis.contractor_history(['АО "ФОДД"', "ООО «Новичок»"], passports, "Делюкс")
+
+    fodd = history['АО "ФОДД"']
+    assert (fodd.count, fodd.total) == (3, 400.0)
+    assert (fodd.class_count, fodd.class_total) == (2, 300.0)
+    assert [o.name for o in fodd.objects] == ["Никель 1", "Без цены", "Никель 2"]
+    assert history["ООО «Новичок»"].count == 0

@@ -4272,6 +4272,8 @@ select option {
 
 .kp-rank-table .kp-name {
   font-weight: 600;
+  white-space: normal;
+  min-width: 140px;
 }
 
 .kp-rank-table td.kp-deviation {
@@ -4284,4 +4286,70 @@ select option {
   gap: 10px;
   justify-content: flex-end;
   margin-bottom: 12px;
+}
+
+/* Объекты подрядчика у нас — раскрывающийся список под рейтингом. */
+.kp-rank-table .kp-history {
+  color: var(--text-500);
+}
+
+.kp-history-item {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+
+.kp-history-item summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.kp-history-item summary .kp-name {
+  font-weight: 600;
+  color: var(--text-100);
+}
+
+.kp-history-summary,
+.kp-history-empty {
+  font-size: 13px;
+  color: var(--text-500);
+}
+
+.kp-history-empty {
+  margin: 0 0 8px;
+  padding: 0 15px;
+}
+
+.kp-history-empty .kp-name {
+  font-weight: 600;
+  color: var(--text-100);
+}
+
+.kp-history-item .kp-table-wrap {
+  margin-top: 10px;
+}
+
+.kp-rank-table .kp-muted {
+  font-weight: 400;
+  color: var(--text-500);
+}
+
+.kp-rank-table tr.is-in-class td {
+  background: var(--accent-dim);
+}
+
+.kp-rank-table tfoot td {
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+}
+
+.kp-rank-table .kp-sub {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-500);
 }

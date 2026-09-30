@@ -135,7 +135,6 @@ def test_kp_analysis_offers_the_ranking_as_a_pdf(tmp_path, monkeypatch):
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     assert "рейтинг предложений" in text.lower()
     assert "ООО «Альфа»" in text
-    assert "лучшее" in text
     assert "+40,0 %" in text
     assert "Фасадные работы" in text
 
@@ -144,3 +143,27 @@ def test_kp_ranking_pdf_of_an_unknown_token_is_not_found(tmp_path):
     client = create_app(tmp_path).test_client()
 
     assert client.get("/kp-analysis/download/" + "0" * 32 + "/pdf").status_code == 404
+
+
+def test_kp_analysis_shows_the_contractors_objects_with_us(tmp_path, monkeypatch):
+    client = create_app(tmp_path).test_client()
+    for name, gc, cls, price in (
+        ("Наш объект 1", "Альфа", "Бизнес", 2_000_000_000.0),
+        ("Наш объект 2", "ООО Альфа", "Комфорт", 500_000_000.0),
+    ):
+        slug = storage.create_project(tmp_path, name)
+        passport_module.save_passport(
+            {"project_name": name, "general_contractor": gc, "building_class": cls,
+             "contract_price_rub": price, "ocr_fields": []},
+            storage.passport_path(tmp_path, slug),
+        )
+    monkeypatch.setattr(routes, "_estimate_totals", lambda root, slug: {})
+
+    body = _post(client, _offer_workbook(FACADE_ROWS)).get_data(as_text=True)
+
+    assert "Объекты подрядчиков у нас" in body
+    assert "Наш объект 1" in body and "Наш объект 2" in body
+    assert "2 объект(ов) на 2,5 млрд ₽" in body
+    assert "в классе «Бизнес» — 1 на 2,0 млрд ₽" in body
+    assert "у нас объектов нет" in body  # АО «Бета»
+    assert "К лучшему" not in body
