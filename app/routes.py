@@ -583,6 +583,14 @@ def investor_summary_page():
     return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
 
 
+@bp.route("/kp-analysis", methods=["GET"])
+def kp_analysis_page():
+    """Заглушка: раздел ещё не спроектирован, ссылка в боковой панели
+    уже нужна, чтобы её было видно и можно было перейти по мере готовности.
+    """
+    return render_template("kp_analysis.html")
+
+
 @bp.route("/investors/pdf", methods=["GET"])
 def investor_summary_pdf():
     """PDF повторяет то, что сейчас на экране: без ``?slug=`` — вся сводка,

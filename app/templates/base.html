@@ -112,6 +112,20 @@
               <span class="sidebar-link-text">Импорт из сводного файла</span>
             </a>
           </li>
+          <li class="sidebar-item">
+            <a class="sidebar-link {{ 'is-active' if request.endpoint == 'main.kp_analysis_page' else '' }}"
+               href="{{ url_for('main.kp_analysis_page') }}">
+              <span class="sidebar-link-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V9l-3-6Z"/>
+                  <path d="M14 3v6h3"/>
+                  <circle cx="10.5" cy="14.5" r="2.5"/>
+                  <path d="m14 18-2-2"/>
+                </svg>
+              </span>
+              <span class="sidebar-link-text">Анализ КП</span>
+            </a>
+          </li>
         </ul>
         {% if sidebar_slugs %}
         <div class="sidebar-search">
