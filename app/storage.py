@@ -52,6 +52,13 @@ def master_import_path(root: Path, slug: str) -> Path:
     return project_dir(root, slug) / "master_import.json"
 
 
+def kp_analysis_dir(root: Path) -> Path:
+    """Where finished KP-analysis workbooks wait to be downloaded — next to
+    the projects folder, not inside it: they belong to no project, and a
+    folder among the projects is exactly what the project list scans."""
+    return root.parent / "kp_analysis"
+
+
 def estimate_path(root: Path, slug: str) -> Path:
     return raw_dir(root, slug) / "smeta.xlsx"
 

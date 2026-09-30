@@ -1,4 +1,7 @@
 import io
+import re
+import secrets
+import time
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -11,8 +14,9 @@ from flask import (
 
 from . import (
     auth, chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
-    extractors, investor_summary, master_import, passport as passport_module, pdf_export,
-    pdf_reader, predicted_increase, project_filter, storage, upload_guard, workbook_cache,
+    extractors, investor_summary, kp_analysis, master_import, passport as passport_module,
+    pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard,
+    workbook_cache,
 )
 from .document_reader import DocxReadError
 
@@ -583,12 +587,139 @@ def investor_summary_page():
     return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
 
 
+# Сводная тендерная таблица — тот же порядок размера, что и портфельный файл
+# импорта (сотни колонок оформления на тысячу с лишним строк).
+MAX_KP_ANALYSIS_SIZE = 50 * 1024 * 1024
+# Сколько готовый файл анализа ждёт, пока его скачают.
+KP_ANALYSIS_KEEP_SECONDS = 24 * 60 * 60
+_KP_TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _kp_form(error=None, status=200, **values):
+    return render_template(
+        "kp_analysis.html",
+        building_classes=passport_module.BUILDING_CLASS_OPTIONS,
+        error=error,
+        building_class=values.get("building_class"),
+        area_text=values.get("area_text", ""),
+        analysis=values.get("analysis"),
+        averages=values.get("averages"),
+        area=values.get("area"),
+        token=values.get("token"),
+        file_name=values.get("file_name"),
+        format_number=passport_module.format_number,
+        format_percent=cost_increase.format_percent,
+        remark_price_section=kp_analysis.REMARK_PRICE_SECTION,
+        remark_heavily=kp_analysis.REMARK_HEAVILY_OVERPRICED,
+    ), status
+
+
+def _kp_class_projects(root, building_class):
+    """Объекты выбранного класса со сметой и обоими отчётами по удорожанию —
+    теми же функциями, что у «Сводки по удорожанию», чтобы средняя здесь и
+    цифры там считались из одного и того же."""
+    projects = []
+    for slug in storage.list_project_slugs(root):
+        passport = _safe_passport(root, slug)
+        if passport.get("building_class") != building_class:
+            continue
+        estimate_totals = _estimate_totals(root, slug)
+        projects.append(kp_analysis.Project(
+            name=passport.get("project_name") or slug,
+            passport=passport,
+            estimate=estimate_totals,
+            signed_report=_cost_increase_report(root, slug, estimate_totals),
+            predicted_report=_predicted_increase_report(root, slug),
+        ))
+    return projects
+
+
+def _drop_stale_kp_results(folder):
+    now = time.time()
+    for path in folder.glob("*.xlsx"):
+        try:
+            if now - path.stat().st_mtime > KP_ANALYSIS_KEEP_SECONDS:
+                path.unlink()
+                path.with_suffix(".name").unlink(missing_ok=True)
+        except OSError:
+            pass  # занят или уже удалён — уберётся при следующем анализе
+
+
 @bp.route("/kp-analysis", methods=["GET"])
 def kp_analysis_page():
-    """Заглушка: раздел ещё не спроектирован, ссылка в боковой панели
-    уже нужна, чтобы её было видно и можно было перейти по мере готовности.
-    """
-    return render_template("kp_analysis.html")
+    return _kp_form()
+
+
+@bp.route("/kp-analysis", methods=["POST"])
+def run_kp_analysis():
+    """Сводная тендерная таблица против средней по классу: страница с
+    результатом и тот же файл с заполненными «Комментариями» и «Ожидаемой
+    стоимостью» на скачивание."""
+    root = _projects_root()
+    building_class = request.form.get("building_class") or ""
+    area_text = (request.form.get("area") or "").strip()
+    values = {"building_class": building_class, "area_text": area_text}
+
+    offer_file = request.files.get("offer_file")
+    if not offer_file or not offer_file.filename:
+        return _kp_form("Выберите файл .xlsx со сводной таблицей предложений", 400, **values)
+    if not offer_file.filename.lower().endswith(ALLOWED_KP_EXTENSION):
+        return _kp_form("Файл должен быть в формате .xlsx", 400, **values)
+    if building_class not in passport_module.BUILDING_CLASS_OPTIONS:
+        return _kp_form("Выберите класс жилья", 400, **values)
+    area = extractors.parse_number(area_text)
+    if area is None or area <= 0:
+        return _kp_form("Укажите общую площадь объекта числом, в м²", 400, **values)
+
+    data = offer_file.read()
+    if len(data) > MAX_KP_ANALYSIS_SIZE:
+        return _kp_form("Файл слишком большой — до 50 МБ", 400, **values)
+    if not upload_guard.is_office_zip(io.BytesIO(data)):
+        return _kp_form("Файл повреждён или не является настоящим .xlsx", 400, **values)
+    try:
+        offer = kp_analysis.parse_offer(io.BytesIO(data))
+    except kp_analysis.OfferError as e:
+        current_app.logger.warning("Анализ КП отклонён: %s", e)
+        return _kp_form(str(e), 400, **values)
+
+    averages = kp_analysis.class_averages(
+        _kp_class_projects(root, building_class), building_class,
+    )
+    analysis = kp_analysis.analyze(offer, averages, area)
+
+    folder = storage.kp_analysis_dir(root)
+    folder.mkdir(parents=True, exist_ok=True)
+    _drop_stale_kp_results(folder)
+    token = secrets.token_hex(16)
+    (folder / f"{token}.xlsx").write_bytes(kp_analysis.write_remarks(data, analysis.remarks))
+    file_name = f"{Path(offer_file.filename).stem} — анализ.xlsx"
+    (folder / f"{token}.name").write_text(file_name, encoding="utf-8")
+    current_app.logger.info(
+        "Анализ КП: %d подрядчиков, %d разделов, класс %s, %s м²",
+        len(analysis.contractors), len(analysis.sections), building_class, area_text,
+    )
+    return _kp_form(
+        analysis=analysis, averages=averages, area=area, token=token,
+        file_name=file_name, **values,
+    )
+
+
+@bp.route("/kp-analysis/download/<token>", methods=["GET"])
+def download_kp_analysis(token):
+    if not _KP_TOKEN_RE.match(token):
+        abort(404)
+    folder = storage.kp_analysis_dir(_projects_root())
+    path = folder / f"{token}.xlsx"
+    if not path.exists():
+        abort(404)
+    name_path = folder / f"{token}.name"
+    file_name = name_path.read_text(encoding="utf-8") if name_path.exists() else "анализ КП.xlsx"
+    return send_file(
+        io.BytesIO(path.read_bytes()),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=file_name,
+    )
 
 
 @bp.route("/investors/pdf", methods=["GET"])

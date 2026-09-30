@@ -989,7 +989,8 @@ h1 {
 }
 
 .field input[type="text"],
-.field input[type="password"] {
+.field input[type="password"],
+.field select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -1000,7 +1001,8 @@ h1 {
 }
 
 .field input[type="text"]:focus,
-.field input[type="password"]:focus {
+.field input[type="password"]:focus,
+.field select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-dim);
@@ -4170,4 +4172,35 @@ select option {
 
 :root[data-ui-theme="opal"] .btn-primary:active {
   transform: scale(0.99);
+}
+
+/* Анализ КП: клетка «подрядчик × раздел» — ₽/м² и отклонение от средней по
+   классу под ним; завышенное подсвечено так же, как ухудшение в сравнении. */
+.kp-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 20px;
+}
+
+.kp-deviation {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-500);
+}
+
+.kp-cell.is-over .kp-deviation {
+  color: var(--amber);
+}
+
+.kp-cell.is-heavily-over .kp-deviation,
+.kp-cell.is-unpriced .kp-deviation {
+  color: var(--red);
+}
+
+.kp-note {
+  font-size: 13px;
+  color: var(--text-500);
+  margin: 0 0 12px;
 }

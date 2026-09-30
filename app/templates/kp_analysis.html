@@ -4,11 +4,128 @@
 <div class="page-head">
   <div>
     <h1>Анализ КП</h1>
+    <p class="page-sub">
+      Загрузите сводную тендерную таблицу с предложениями подрядчиков, выберите
+      класс жилья и укажите общую площадь объекта. Программа сравнит стоимость
+      каждого раздела у каждого подрядчика со средней ₽/м² по загруженным
+      объектам того же класса — смета плюс подписанные и планируемые
+      удорожания, при НДС 22% — и заполнит в файле колонки «Комментарии» и
+      «Ожидаемая стоимость».
+    </p>
   </div>
 </div>
 
-<div class="card empty-state">
-  <p class="empty-title">Раздел в разработке</p>
-  <p class="empty-sub">Содержимое появится позже.</p>
+<div class="card form-card">
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('main.run_kp_analysis') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="field">
+      <label for="offer_file">Сводная таблица предложений, .xlsx</label>
+      <label class="file-drop" for="offer_file">
+        <svg class="file-drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        <span class="file-drop-text" data-placeholder="Выберите файл .xlsx">Выберите файл .xlsx</span>
+      </label>
+      <input class="file-input" type="file" id="offer_file" name="offer_file" accept=".xlsx">
+    </div>
+    <div class="kp-form-row">
+      <div class="field">
+        <label for="building_class">Класс жилья</label>
+        <select id="building_class" name="building_class">
+          <option value="">— выберите —</option>
+          {% for option in building_classes %}
+          <option value="{{ option }}" {{ 'selected' if option == building_class else '' }}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="area">Общая площадь, м²</label>
+        <input type="text" id="area" name="area" value="{{ area_text }}" inputmode="decimal"
+               placeholder="например, 45 000">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Проанализировать</button>
+  </form>
 </div>
+
+{% if analysis %}
+<div class="card">
+  <div class="btn-wrap">
+    <a class="btn btn-primary" href="{{ url_for('main.download_kp_analysis', token=token) }}">
+      Скачать отработанный файл
+    </a>
+  </div>
+  <p class="kp-note">
+    Класс «{{ building_class }}», {{ format_number(area) }} м².
+    Средняя посчитана по {{ averages.considered }} объект(ам) этого класса со сметой и площадью.
+    {% if averages.excluded %}
+    Не вошли — не известна ставка НДС: {{ averages.excluded | join(', ') }}.
+    {% endif %}
+    Файл хранится сутки — скачайте его, пока открыта эта страница.
+  </p>
+  {% if not analysis.sections %}
+  <p class="kp-note">В файле нет ни одного раздела, который расценил хотя бы один подрядчик.</p>
+  {% else %}
+  <div class="sections-table-wrap">
+    <table class="sections-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Раздел</th>
+          <th>Средняя по классу, ₽/м²</th>
+          {% for name in analysis.contractors %}
+          <th>{{ name }}, ₽/м²</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for section in analysis.sections %}
+        <tr>
+          <td class="sections-label-col">
+            {{ section.name }}
+            {% if section.label %}<span class="avg-count-note">{{ section.label }}</span>{% endif %}
+          </td>
+          <td class="sections-value {{ 'is-empty' if section.avg_per_sqm is none else '' }}">
+            {% if section.avg_per_sqm is none %}
+            <span class="sections-number">нет данных</span>
+            {% else %}
+            <span class="sections-number">{{ format_number(section.avg_per_sqm | round) }}</span>
+            <span class="avg-count-note">объектов: {{ section.count }}</span>
+            {% endif %}
+          </td>
+          {% for cell in section.cells %}
+          {% set state = 'is-unpriced' if cell.remark == remark_price_section
+                         else ('is-heavily-over' if cell.remark == remark_heavily
+                         else ('is-over' if cell.remark else '')) %}
+          <td class="sections-value kp-cell {{ state }}">
+            {% if cell.remark == remark_price_section %}
+            <span class="kp-deviation">не расценено</span>
+            {% else %}
+            <span class="sections-number">{{ format_number(cell.per_sqm | round) }}</span>
+            {% if cell.deviation_pct is not none %}
+            <span class="kp-deviation">{{ format_percent(cell.deviation_pct) }}</span>
+            {% endif %}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+  document.querySelectorAll('.file-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var textEl = input.closest('.field').querySelector('.file-drop-text');
+      textEl.textContent = input.files[0] ? input.files[0].name : textEl.dataset.placeholder;
+    });
+  });
+</script>
 {% endblock %}

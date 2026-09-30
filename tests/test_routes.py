@@ -3350,14 +3350,16 @@ def test_investor_summary_shows_estimate_signed_and_predicted_from_master_import
     assert passport_module.format_number(12_000_000.0) in body   # прогнозируемое
 
 
-def test_kp_analysis_page_is_a_placeholder(tmp_path):
+def test_kp_analysis_page_offers_the_upload_form(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
 
     body = client.get("/kp-analysis").get_data(as_text=True)
 
     assert "Анализ КП" in body
-    assert "в разработке" in body.lower()
+    assert 'name="offer_file"' in body
+    assert 'name="building_class"' in body
+    assert 'name="area"' in body
 
 
 def test_kp_analysis_link_is_in_the_sidebar(tmp_path):
