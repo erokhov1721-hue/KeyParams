@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Анализ КП{% endblock %}
+{% block main_extra_class %}container-wide kp-analysis-page{% endblock %}
 {% macro history_cell(count, total) %}
 <td class="kp-history">{% if count %}{{ count }} шт.<span class="kp-sub">{{ format_big_money(total) }}</span>{% else %}—{% endif %}</td>
 {% endmacro %}
@@ -42,7 +43,7 @@
   </div>
 </div>
 
-<div class="card form-card">
+<div class="card form-card kp-form-card">
   {% if error %}
   <div class="alert alert-error">{{ error }}</div>
   {% endif %}

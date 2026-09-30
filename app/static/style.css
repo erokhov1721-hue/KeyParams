@@ -542,7 +542,8 @@ a {
    восемь-девять денежных колонок сразу, 1440px им тесно. Своя ширина, а не
    правка .container-wide самого по себе, — у него ещё сравнение и сравнение
    со средним по классу, и там та ширина уже подобрана под их таблицы. */
-.container-wide.investor-summary-page {
+.container-wide.investor-summary-page,
+.container-wide.kp-analysis-page {
   max-width: 1728px;
 }
 
@@ -4365,4 +4366,11 @@ select option {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* Форма анализа КП — прежней ширины: на всю ширину страницы (она здесь
+   такая же, как у сводки по удорожанию, ради таблиц рейтинга) поля класса
+   и площади растянулись бы без всякой пользы. */
+.kp-analysis-page > .kp-form-card {
+  max-width: 760px;
 }
