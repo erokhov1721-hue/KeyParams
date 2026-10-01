@@ -26,6 +26,7 @@
 
 import copy
 import io
+import math
 import re
 from collections import namedtuple
 from decimal import Decimal
@@ -34,7 +35,7 @@ import openpyxl
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
-from . import comparison, cost_increase, estimate_sections
+from . import comparison, estimate_sections, xlsx_columns
 
 # НДС, при котором подрядчики дают цены в тендерной таблице («с учетом НДС
 # 22%»). Цены загруженных объектов приводятся к нему же, иначе сравнение
@@ -64,7 +65,15 @@ REMARK_UNJUSTIFIED_SMR = "необоснована стоимость СМР"
 COMMENTS_TITLE = "Комментарии"
 # Ширина колонки замечаний, которую программа заводит сама: в таблице на
 # этом месте узкий разделитель между блоками подрядчиков.
-CREATED_COMMENT_WIDTH = 42
+CREATED_COMMENT_WIDTH = 55
+# Разделитель, который встаёт за этой колонкой вместо занятого ею, — той
+# же ширины, что был в таблице.
+SPACER_WIDTH = 2.43
+# Сколько знаков замечания помещается в строку колонки такой ширины: ширина
+# колонки Excel меряется в цифрах «0», а русские буквы и заглавные шире.
+CHARS_PER_LINE = 45
+# Высота строки текста — во столько раз больше кегля шрифта ячейки.
+LINE_SPACING = 1.45
 
 LEVEL_SECTION = "section"
 LEVEL_SUBSECTION = "subsection"
@@ -94,11 +103,12 @@ class OfferError(Exception):
 
 # Колонки одного блока (номера с единицы, как в openpyxl). ``comment_col`` —
 # куда писать замечания (None — писать некуда), ``comment_created`` — этой
-# колонки в файле не было, её заголовок ставит программа в ``header_row``.
+# колонки в файле не было, её заголовок ставит программа в ``header_row``,
+# а рамку тянет от ``top_row`` (строка с названиями подрядчиков) вниз.
 Contractor = namedtuple(
     "Contractor",
     "name materials_col smr_col total_col comment_col expected_col "
-    "header_row comment_created",
+    "header_row comment_created top_row",
 )
 
 # Строка раздела или подраздела. ``amounts`` — по подрядчику, в порядке
@@ -306,7 +316,7 @@ def _parse_sheet(ws) -> Offer:
                 reference = Contractor(
                     name="Расчётная стоимость MR Group", materials_col=materials,
                     smr_col=smr, total_col=total, comment_col=None, expected_col=None,
-                    header_row=header_row, comment_created=False,
+                    header_row=header_row, comment_created=False, top_row=name_row,
                 )
             continue
 
@@ -318,7 +328,7 @@ def _parse_sheet(ws) -> Offer:
         contractors.append(Contractor(
             name=title, materials_col=materials, smr_col=smr, total_col=total,
             comment_col=comment, expected_col=expected,
-            header_row=header_row, comment_created=created,
+            header_row=header_row, comment_created=created, top_row=name_row,
         ))
     if not contractors:
         raise OfferError(
@@ -475,9 +485,9 @@ def _verdict(deviation_pct, section):
 
 
 def _against_reference(verdict, deviation_pct):
-    """«Завышена стоимость (+18,4 % к расчётной)» — по расчётной стоимости
-    видно не только что, но и насколько."""
-    return f"{verdict} ({cost_increase.format_percent(deviation_pct)} к расчётной)"
+    """«Завышена стоимость за раздел, ожидаем снижение на 16,7%» — по
+    расчётной стоимости видно не только что, но и насколько."""
+    return f"{verdict}, ожидаем снижение на {deviation_pct:.1f}%".replace(".", ",")
 
 
 def _reference_total(line):
@@ -594,7 +604,8 @@ def analyze(offer, averages, area) -> Analysis:
         work_groups = [section for section, _children in groups]
 
     new_columns = [
-        (c.header_row, c.comment_col) for c in offer.contractors if c.comment_created
+        (c.top_row, c.header_row, c.comment_col)
+        for c in offer.contractors if c.comment_created
     ]
     return Analysis(
         contractors=[c.name for c in offer.contractors], sections=sections,
@@ -755,31 +766,55 @@ def rank(analysis, area) -> Ranking:
     )
 
 
+def _frame_created_column(ws, top_row, header_row, col):
+    """Колонка «Комментарии», которой в файле не было, — в рамке и заливке
+    таблицы: каждая клетка оформлена как соседняя слева на той же строке,
+    заголовок занимает обе строки шапки, как подписи у соседей."""
+    for row in range(top_row, ws.max_row + 1):
+        cell = ws.cell(row, col)
+        if not hasattr(cell, "column_letter"):
+            continue
+        neighbour = ws.cell(row, col - 1)
+        if neighbour.has_style:
+            cell._style = copy.copy(neighbour._style)
+    header = ws.cell(header_row, col)
+    header.value = COMMENTS_TITLE
+    header.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.merge_cells(start_row=header_row, start_column=col, end_row=header_row + 1, end_column=col)
+    ws.column_dimensions[get_column_letter(col)].width = CREATED_COMMENT_WIDTH
+
+
+def _fit_row(ws, cell, text):
+    """Строка таблицы выше, если перенесённый текст замечания в неё не
+    помещается — иначе Excel показал бы его обрезанным."""
+    lines = math.ceil(len(text) / CHARS_PER_LINE)
+    if lines <= 1:
+        return
+    row = cell.row
+    needed = lines * (cell.font.sz or 11) * LINE_SPACING
+    current = ws.row_dimensions[row].height
+    if current is None or current < needed:
+        ws.row_dimensions[row].height = needed
+
+
 def write_remarks(source_bytes, remarks, new_columns=()) -> bytes:
     """Исходный файл с вписанными ``remarks``, байтами .xlsx.
 
     Ячейка, где уже что-то есть (замечание, вписанное вручную), не
-    перезаписывается. ``new_columns`` — ``(строка шапки, колонка)`` колонок
-    «Комментарии», которых в файле не было: им ставится заголовок в том же
-    оформлении, что у соседней колонки, и ширина под текст. openpyxl не
-    хранит посчитанные значения формул, поэтому книга помечается на полный
-    пересчёт при открытии — иначе Excel показал бы в ней пустые итоги до
-    первой правки.
+    перезаписывается. ``new_columns`` — ``(первая строка таблицы, строка
+    шапки, колонка)`` колонок «Комментарии», которых в файле не было: они
+    встают на место узкого разделителя за блоком подрядчика, получают
+    рамку таблицы, заголовок и ширину под текст, а за ними вставляется новый
+    разделитель, чтобы следующая компания не прилипала к замечаниям.
+    openpyxl не хранит посчитанные значения формул, поэтому книга
+    помечается на полный пересчёт при открытии — иначе Excel показал бы в
+    ней пустые итоги до первой правки.
     """
     wb = openpyxl.load_workbook(io.BytesIO(source_bytes))
     ws = wb.worksheets[0]
-    created = {col for _row, col in new_columns}
-    for header_row, col in new_columns:
-        cell = ws.cell(header_row, col)
-        if not hasattr(cell, "column_letter") or cell.value not in (None, ""):
-            continue
-        neighbour = ws.cell(header_row, col - 1)
-        cell.value = COMMENTS_TITLE
-        if neighbour.has_style:
-            cell._style = copy.copy(neighbour._style)
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        ws.column_dimensions[get_column_letter(col)].width = CREATED_COMMENT_WIDTH
-    wrap = Alignment(vertical="top", wrap_text=True)
+    created = {col for _top, _header, col in new_columns}
+    for top_row, header_row, col in new_columns:
+        _frame_created_column(ws, top_row, header_row, col)
     for remark in remarks:
         cell = ws.cell(remark.row, remark.col)
         if not hasattr(cell, "column_letter"):
@@ -788,7 +823,11 @@ def write_remarks(source_bytes, remarks, new_columns=()) -> bytes:
             continue
         cell.value = remark.value
         if remark.col in created:
-            cell.alignment = wrap
+            cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+            _fit_row(ws, cell, str(remark.value))
+    xlsx_columns.insert_blank_columns(
+        ws, [col + 1 for col in created], width=SPACER_WIDTH,
+    )
     wb.calculation.fullCalcOnLoad = True
     buf = io.BytesIO()
     wb.save(buf)

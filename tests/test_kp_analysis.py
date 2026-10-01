@@ -4,6 +4,7 @@ from decimal import Decimal
 import openpyxl
 import pytest
 from openpyxl import Workbook
+from openpyxl.styles import Border, Side
 
 from app import cost_increase, kp_analysis, predicted_increase
 
@@ -468,19 +469,19 @@ def test_analyze_against_the_reference_marks_sections_and_subsections():
     analysis = kp_analysis.analyze(offer, _averages({}), 10)
     remarks = _remarks_by_cell(analysis)
 
-    assert remarks[(17, 18)] == "Завышена стоимость за раздел (+10,0 % к расчётной)"
+    assert remarks[(17, 18)] == "Завышена стоимость за раздел, ожидаем снижение на 10,0%"
     assert remarks[(17, 23)] == (
-        "Существенно завышена стоимость за раздел (+40,0 % к расчётной)"
+        "Существенно завышена стоимость за раздел, ожидаем снижение на 40,0%"
     )
     # 1.1: Гамма ровно по расчётной — молчим; Дельта +40% и СМР 30 000 к 40 000 материалов.
     assert (18, 18) not in remarks
     assert remarks[(18, 23)] == (
-        "Существенно завышена стоимость (+40,0 % к расчётной), необоснована стоимость СМР"
+        "Существенно завышена стоимость, ожидаем снижение на 40,0%, необоснована стоимость СМР"
     )
-    assert remarks[(19, 18)] == "Завышена стоимость (+20,0 % к расчётной)"
+    assert remarks[(19, 18)] == "Завышена стоимость, ожидаем снижение на 20,0%"
     assert remarks[(19, 23)] == kp_analysis.REMARK_PRICE_SUBSECTION
     assert analysis.has_reference
-    assert analysis.new_columns == [(14, 18), (14, 23)]
+    assert analysis.new_columns == [(9, 14, 18), (9, 14, 23)]
 
 
 def test_a_single_section_with_a_reference_is_ranked_by_its_subsections():
@@ -499,15 +500,30 @@ def test_a_single_section_with_a_reference_is_ranked_by_its_subsections():
     assert [(r.place, r.name) for r in heating.rows] == [(1, "ООО «Гамма»"), (None, "ООО «Дельта»")]
 
 
-def test_write_remarks_titles_and_widens_a_comment_column_it_created():
+def test_write_remarks_frames_a_created_comment_column_and_adds_a_spacer_after_it():
     source = _reference_workbook(REFERENCE_ROWS)
+    wb = openpyxl.load_workbook(io.BytesIO(source))
+    ws = wb.active
+    thin = Side(style="thin")
+    ws.cell(17, 17).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ws.cell(17, 22, "=V17")  # формула в блоке «Дельта», правее новой колонки
+    buf = io.BytesIO()
+    wb.save(buf)
+    source = buf.getvalue()
     offer = kp_analysis.parse_offer(io.BytesIO(source))
     analysis = kp_analysis.analyze(offer, _averages({}), 10)
 
     result = kp_analysis.write_remarks(source, analysis.remarks, analysis.new_columns)
 
     ws = openpyxl.load_workbook(io.BytesIO(result)).active
+    # «Гамма»: комментарии в R, за ними новый разделитель S; «Дельта» —
+    # на колонку правее, чем была: её комментарии в X, а не в W.
     assert ws.cell(14, 18).value == "Комментарии"
-    assert ws.cell(14, 23).value == "Комментарии"
+    assert "R14:R15" in {str(r) for r in ws.merged_cells.ranges}
     assert ws.column_dimensions["R"].width == kp_analysis.CREATED_COMMENT_WIDTH
-    assert ws.cell(17, 18).value == "Завышена стоимость за раздел (+10,0 % к расчётной)"
+    assert ws.column_dimensions["S"].width == kp_analysis.SPACER_WIDTH
+    assert ws.cell(17, 18).value == "Завышена стоимость за раздел, ожидаем снижение на 10,0%"
+    assert ws.cell(17, 18).border.left.style == "thin"
+    assert ws.cell(17, 19).value is None
+    assert ws.cell(14, 24).value == "Комментарии"
+    assert ws.cell(17, 23).value == "=W17"

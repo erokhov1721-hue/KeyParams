@@ -193,7 +193,7 @@ def test_kp_analysis_with_a_reference_adds_comment_columns_and_compares_to_it(tm
     [xlsx] = re.findall(r'href="(/kp-analysis/download/[0-9a-f]{32})"', body)
     ws = openpyxl.load_workbook(io.BytesIO(client.get(xlsx).data)).active
     assert ws.cell(14, 18).value == "Комментарии"
-    assert ws.cell(17, 18).value == "Завышена стоимость за раздел (+10,0 % к расчётной)"
+    assert ws.cell(17, 18).value == "Завышена стоимость за раздел, ожидаем снижение на 10,0%"
 
     pdf = client.get(xlsx + "/pdf")
     with pdfplumber.open(io.BytesIO(pdf.data)) as doc:
