@@ -161,7 +161,7 @@ def test_kp_analysis_shows_the_contractors_objects_with_us(tmp_path, monkeypatch
 
     body = _post(client, _offer_workbook(FACADE_ROWS)).get_data(as_text=True)
 
-    assert "Объекты подрядчиков у нас" in body
+    assert "Объекты MR Group" in body
     assert "Наш объект 1" in body and "Наш объект 2" in body
     assert "2 объект(ов) на 2,5 млрд ₽" in body
     assert "в классе «Бизнес» — 1 на 2,0 млрд ₽" in body

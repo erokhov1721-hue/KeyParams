@@ -1527,7 +1527,7 @@ def _kp_rank_table(rows, styles, page_width, overall, history=None, building_cla
     ratios = [0.05, 0.3, 0.14, 0.09, 0.1]
     if overall:
         headers += [
-            "Не расценено разделов", "Наших объектов, сумма договоров",
+            "Не расценено разделов", "Объекты MR Group, сумма договоров",
             f"Из них класса «{_esc(building_class)}»",
         ]
         ratios += [0.08, 0.13, 0.13]
@@ -1589,7 +1589,7 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
     """Объекты каждого подрядчика у нас — тот же список, что раскрывается
     на экране, по подрядчику на таблицу, в порядке рейтинга."""
     story = [
-        Paragraph("Объекты подрядчиков у нас", styles["heading"]),
+        Paragraph("Объекты MR Group", styles["heading"]),
         Paragraph(
             "Объекты базы, где подрядчик — генподрядчик (по паспорту объекта), и "
             f"цены работ по их договорам. Объекты класса «{_esc(building_class)}» выделены.",
@@ -1685,7 +1685,7 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
             styles["sub"],
         ))
 
-    story.append(Paragraph("Рейтинг предложений — от лучшего к худшему", styles["heading"]))
+    story.append(Paragraph("Рейтинг предложений", styles["heading"]))
     note = "Итог — сумма разделов, которые подрядчик расценил."
     if ranking.expected_total:
         note += f" Ожидаемая стоимость по средней класса: {_kp_money(ranking.expected_total)} ₽."
