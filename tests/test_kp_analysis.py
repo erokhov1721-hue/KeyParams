@@ -378,3 +378,136 @@ def test_contractor_history_counts_our_objects_overall_and_in_the_class():
     assert (fodd.class_count, fodd.class_total) == (2, 300.0)
     assert [o.name for o in fodd.objects] == ["Никель 1", "Без цены", "Никель 2"]
     assert history["ООО «Новичок»"].count == 0
+
+
+# --- второй сценарий: заполнена расчётная стоимость MR Group, колонок
+# «Комментарии» в файле нет (форма «838-ТУ»): шапка расчётной стоимости на
+# строку выше, чем у подрядчиков, между блоками — пустые колонки.
+REF_START = 8
+REF_BLOCKS = {"ООО «Гамма»": 14, "ООО «Дельта»": 19}
+
+
+def _reference_workbook(rows):
+    """``rows`` — ``(номер, название, (мат, смр, всего) MR, {подрядчик: (мат, смр, всего)})``."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(9, 5, "Наименование контрагента")
+    ws.cell(9, REF_START, "Расчетная стоимость ")
+    ws.cell(13, REF_START, "Стоимость всего, RUB, с учетом НДС")
+    for offset, label in enumerate(("Материалы", "СМР", "Косвенные расходы", "Всего")):
+        ws.cell(14, REF_START + offset, label)
+    ws.cell(14, NUMBER_COL, "№ раздела")
+    ws.cell(14, ARTICLE_COL, "Статья СМР")
+    ws.cell(14, NAME_COL, "Наименование работ")
+    for name, start in REF_BLOCKS.items():
+        ws.cell(9, start, name)
+        ws.cell(14, start, "Стоимость всего, RUB, ОСН, с учетом НДС 22%")
+        for offset, label in enumerate(("Материалы", "СМР", "Косвенные расходы", "Всего")):
+            ws.cell(15, start + offset, label)
+    ws.cell(16, NUMBER_COL, "1")
+    ws.cell(16, NAME_COL, "Лот №1 — ВИС")
+    for index, (number, name, reference, amounts) in enumerate(rows):
+        row = 17 + index
+        ws.cell(row, NUMBER_COL, number)
+        ws.cell(row, ARTICLE_COL, name)
+        materials, smr, total = reference
+        ws.cell(row, REF_START, materials)
+        ws.cell(row, REF_START + 1, smr)
+        ws.cell(row, REF_START + 3, total)
+        for contractor, (materials, smr, total) in amounts.items():
+            start = REF_BLOCKS[contractor]
+            ws.cell(row, start, materials)
+            ws.cell(row, start + 1, smr)
+            ws.cell(row, start + 3, total)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+REFERENCE_ROWS = [
+    ("1", "10. ВИС - механические системы", (80000, 20000, 100000), {
+        "ООО «Гамма»": (90000, 20000, 110000), "ООО «Дельта»": (100000, 40000, 140000),
+    }),
+    ("1.1", "10.1. Водоснабжение", (40000, 10000, 50000), {
+        "ООО «Гамма»": (40000, 10000, 50000), "ООО «Дельта»": (40000, 30000, 70000),
+    }),
+    ("1.2", "10.2. Отопление", (40000, 10000, 50000), {
+        "ООО «Гамма»": (50000, 10000, 60000), "ООО «Дельта»": (0, 0, 0),
+    }),
+    (57, "Отвод прямоугольный — число в колонке номера", (1, 1, 1), {}),
+]
+
+
+def test_parse_offer_reads_the_reference_and_places_missing_comment_columns():
+    offer = kp_analysis.parse_offer(io.BytesIO(_reference_workbook(REFERENCE_ROWS)))
+
+    assert offer.has_reference
+    assert offer.reference.total_col == REF_START + 3
+    gamma, delta = offer.contractors
+    assert (gamma.name, gamma.total_col, gamma.comment_col) == ("ООО «Гамма»", 17, 18)
+    assert gamma.comment_created and gamma.header_row == 14
+    assert delta.comment_col == 23
+
+
+def test_parse_offer_ignores_a_number_that_is_not_a_section_number():
+    offer = kp_analysis.parse_offer(io.BytesIO(_reference_workbook(REFERENCE_ROWS)))
+
+    assert [line.number for line in offer.lines] == ["1", "1.1", "1.2"]
+    assert offer.lines[0].reference == (Decimal("80000"), Decimal("20000"), Decimal("100000"))
+
+
+def test_without_a_filled_reference_the_first_scenario_is_used():
+    offer = kp_analysis.parse_offer(io.BytesIO(_offer_workbook(FACADE_ROWS)))
+
+    assert not offer.has_reference
+
+
+def test_analyze_against_the_reference_marks_sections_and_subsections():
+    offer = kp_analysis.parse_offer(io.BytesIO(_reference_workbook(REFERENCE_ROWS)))
+
+    analysis = kp_analysis.analyze(offer, _averages({}), 10)
+    remarks = _remarks_by_cell(analysis)
+
+    assert remarks[(17, 18)] == "Завышена стоимость за раздел (+10,0 % к расчётной)"
+    assert remarks[(17, 23)] == (
+        "Существенно завышена стоимость за раздел (+40,0 % к расчётной)"
+    )
+    # 1.1: Гамма ровно по расчётной — молчим; Дельта +40% и СМР 30 000 к 40 000 материалов.
+    assert (18, 18) not in remarks
+    assert remarks[(18, 23)] == (
+        "Существенно завышена стоимость (+40,0 % к расчётной), необоснована стоимость СМР"
+    )
+    assert remarks[(19, 18)] == "Завышена стоимость (+20,0 % к расчётной)"
+    assert remarks[(19, 23)] == kp_analysis.REMARK_PRICE_SUBSECTION
+    assert analysis.has_reference
+    assert analysis.new_columns == [(14, 18), (14, 23)]
+
+
+def test_a_single_section_with_a_reference_is_ranked_by_its_subsections():
+    offer = kp_analysis.parse_offer(io.BytesIO(_reference_workbook(REFERENCE_ROWS)))
+    analysis = kp_analysis.analyze(offer, _averages({}), 10)
+
+    ranking = kp_analysis.rank(analysis, 10)
+
+    assert [g.section.number for g in ranking.sections] == ["1.1", "1.2"]
+    assert ranking.reference_total == Decimal("100000")
+    gamma = ranking.overall[0]
+    assert gamma.name == "ООО «Гамма»"
+    assert gamma.ref_deviation_pct == pytest.approx(10.0)
+    heating = ranking.sections[1]
+    assert heating.section.reference == Decimal("50000")
+    assert [(r.place, r.name) for r in heating.rows] == [(1, "ООО «Гамма»"), (None, "ООО «Дельта»")]
+
+
+def test_write_remarks_titles_and_widens_a_comment_column_it_created():
+    source = _reference_workbook(REFERENCE_ROWS)
+    offer = kp_analysis.parse_offer(io.BytesIO(source))
+    analysis = kp_analysis.analyze(offer, _averages({}), 10)
+
+    result = kp_analysis.write_remarks(source, analysis.remarks, analysis.new_columns)
+
+    ws = openpyxl.load_workbook(io.BytesIO(result)).active
+    assert ws.cell(14, 18).value == "Комментарии"
+    assert ws.cell(14, 23).value == "Комментарии"
+    assert ws.column_dimensions["R"].width == kp_analysis.CREATED_COMMENT_WIDTH
+    assert ws.cell(17, 18).value == "Завышена стоимость за раздел (+10,0 % к расчётной)"

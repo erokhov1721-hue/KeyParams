@@ -4374,3 +4374,9 @@ select option {
 .kp-analysis-page > .kp-form-card {
   max-width: 760px;
 }
+
+/* Строка-эталон «Расчётная стоимость MR Group» над подрядчиками. */
+.kp-rank-table tr.kp-reference td {
+  background: var(--bg-700);
+  font-style: italic;
+}

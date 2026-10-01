@@ -176,3 +176,28 @@ def test_kp_download_button_is_disabled_until_an_analysis_is_run(tmp_path):
 
     assert re.search(r'<button[^>]*id="kp-download-xlsx"[^>]*disabled', body)
     assert "/kp-analysis/download/" not in body
+
+
+def test_kp_analysis_with_a_reference_adds_comment_columns_and_compares_to_it(tmp_path):
+    import pdfplumber
+
+    from tests.test_kp_analysis import REFERENCE_ROWS, _reference_workbook
+
+    client = create_app(tmp_path).test_client()
+
+    body = _post(client, _reference_workbook(REFERENCE_ROWS)).get_data(as_text=True)
+
+    assert "Расчётная стоимость MR Group" in body
+    assert "К расчётной MR" in body
+    assert "10.1. Водоснабжение" in body  # один раздел — рейтинг по подразделам
+    [xlsx] = re.findall(r'href="(/kp-analysis/download/[0-9a-f]{32})"', body)
+    ws = openpyxl.load_workbook(io.BytesIO(client.get(xlsx).data)).active
+    assert ws.cell(14, 18).value == "Комментарии"
+    assert ws.cell(17, 18).value == "Завышена стоимость за раздел (+10,0 % к расчётной)"
+
+    pdf = client.get(xlsx + "/pdf")
+    with pdfplumber.open(io.BytesIO(pdf.data)) as doc:
+        text = "\n".join(page.extract_text() or "" for page in doc.pages)
+    assert "Расчётная стоимость MR Group" in text
+    assert "К расчётной MR" in text
+    assert "эталон" in text

@@ -698,7 +698,9 @@ def run_kp_analysis():
     folder.mkdir(parents=True, exist_ok=True)
     _drop_stale_kp_results(folder)
     token = secrets.token_hex(16)
-    (folder / f"{token}.xlsx").write_bytes(kp_analysis.write_remarks(data, analysis.remarks))
+    (folder / f"{token}.xlsx").write_bytes(
+        kp_analysis.write_remarks(data, analysis.remarks, analysis.new_columns),
+    )
     file_name = f"{Path(offer_file.filename).stem} — анализ.xlsx"
     (folder / f"{token}.name").write_text(file_name, encoding="utf-8")
     (folder / f"{token}.pdf").write_bytes(pdf_export.build_kp_ranking_pdf(

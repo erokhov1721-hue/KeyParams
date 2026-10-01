@@ -1,38 +1,48 @@
-"""Анализ КП: сводная тендерная таблица подрядчиков против средней ₽/м² по
-загруженным объектам того же класса.
+"""Анализ КП: сводная тендерная таблица подрядчиков против расчётной
+стоимости MR Group и средней ₽/м² по загруженным объектам того же класса.
 
 Файл — сводная оценочная таблица тендера: слева номер раздела, статья и
-наименование работ, правее — по блоку колонок на каждого подрядчика
-(стоимость всего: материалы / СМР / косвенные / всего, «Комментарии»,
-«Ожидаемая стоимость»). Этот модуль:
+наименование работ, правее — блок «Расчетная стоимость» (стоимость MR Group)
+и по блоку колонок на каждого подрядчика (стоимость всего: материалы / СМР /
+косвенные / всего; иногда ещё «Комментарии» и «Ожидаемая стоимость»). Этот
+модуль:
 
-- ``parse_offer`` читает из неё блоки подрядчиков и строки разделов и
-  подразделов (позиции внутри подразделов не нужны — оценка идёт не по ним);
+- ``parse_offer`` читает из неё блоки подрядчиков, блок расчётной стоимости
+  и строки разделов и подразделов (позиции внутри подразделов не нужны —
+  оценка идёт не по ним);
 - ``class_averages`` считает среднюю ₽/м² по виду работ по объектам класса —
   смета плюс подписанное и прогнозируемое удорожание, всё при НДС 22%;
 - ``analyze`` сопоставляет одно с другим и решает, что написать в
-  «Комментарии» и «Ожидаемую стоимость» каждого подрядчика;
+  «Комментарии» (и «Ожидаемую стоимость», если такая колонка есть) каждого
+  подрядчика. Заполнена расчётная стоимость — она эталон, и сравнение идёт
+  с ней на каждом разделе и подразделе; пуста — со средней по классу;
 - ``write_remarks`` вписывает это в исходный файл, не трогая остального.
+  Колонки «Комментарии» нет — замечания пишутся в пустую колонку сразу за
+  блоком подрядчика, с тем же заголовком.
 
 Ничего здесь не знает про Flask и не читает файлы проектов: объекты
 собирает ``app.routes`` теми же функциями, что и «Сводка по удорожанию».
 """
 
+import copy
 import io
 import re
 from collections import namedtuple
 from decimal import Decimal
 
 import openpyxl
+from openpyxl.styles import Alignment
+from openpyxl.utils import get_column_letter
 
-from . import comparison, estimate_sections
+from . import comparison, cost_increase, estimate_sections
 
 # НДС, при котором подрядчики дают цены в тендерной таблице («с учетом НДС
 # 22%»). Цены загруженных объектов приводятся к нему же, иначе сравнение
 # шло бы между разными налоговыми базами.
 OFFER_VAT_RATE = 22.0
 
-# Пороги оценки раздела — отклонение предложения от ожидаемой стоимости.
+# Пороги оценки — отклонение предложения от эталона (расчётной стоимости
+# или ожидаемой по средней класса).
 HEAVILY_OVERPRICED_PCT = 30.0
 
 # СМР больше этой доли от стоимости материалов — «необоснована стоимость СМР».
@@ -45,20 +55,30 @@ NOMINAL_PRICE_LIMIT = Decimal("1000")
 
 REMARK_OVERPRICED = "Завышена стоимость за раздел"
 REMARK_HEAVILY_OVERPRICED = "Существенно завышена стоимость за раздел"
+REMARK_SUB_OVERPRICED = "Завышена стоимость"
+REMARK_SUB_HEAVILY_OVERPRICED = "Существенно завышена стоимость"
 REMARK_PRICE_SECTION = "расценить раздел."
 REMARK_PRICE_SUBSECTION = "расценить подраздел."
 REMARK_UNJUSTIFIED_SMR = "необоснована стоимость СМР"
+
+COMMENTS_TITLE = "Комментарии"
+# Ширина колонки замечаний, которую программа заводит сама: в таблице на
+# этом месте узкий разделитель между блоками подрядчиков.
+CREATED_COMMENT_WIDTH = 42
 
 LEVEL_SECTION = "section"
 LEVEL_SUBSECTION = "subsection"
 
 HEADER_SEARCH_ROWS = 40
+# Сколько строк ниже «Наименование контрагента» может занимать шапка.
+HEADER_DEPTH = 10
 
 COMMENTS_HEADER = "комментарии"
 EXPECTED_HEADER = "ожидаем"
 COST_HEADER = "стоимость всего"
 CUSTOMER_VOLUMES_HEADER = "заказчик"
 NAME_ROW_HEADER = "наименование контрагента"
+REFERENCE_HEADER = "расчетная стоимость"
 NUMBER_HEADER = "№ раздела"
 ARTICLE_HEADER = "статья"
 WORK_NAME_HEADER = "наименование работ"
@@ -72,16 +92,23 @@ class OfferError(Exception):
     """Файл — не сводная тендерная таблица, или в нём нечего сравнивать."""
 
 
-# Колонки одного подрядчика (номера с единицы, как в openpyxl).
+# Колонки одного блока (номера с единицы, как в openpyxl). ``comment_col`` —
+# куда писать замечания (None — писать некуда), ``comment_created`` — этой
+# колонки в файле не было, её заголовок ставит программа в ``header_row``.
 Contractor = namedtuple(
-    "Contractor", "name materials_col smr_col total_col comment_col expected_col",
+    "Contractor",
+    "name materials_col smr_col total_col comment_col expected_col "
+    "header_row comment_created",
 )
 
 # Строка раздела или подраздела. ``amounts`` — по подрядчику, в порядке
-# ``Offer.contractors``: ``(материалы, смр, всего)``, каждое Decimal или None.
-Line = namedtuple("Line", "row number name level key amounts")
+# ``Offer.contractors``: ``(материалы, смр, всего)``, каждое Decimal или None;
+# ``reference`` — то же по расчётной стоимости (или None, если её блока нет).
+Line = namedtuple("Line", "row number name level key amounts reference")
 
-Offer = namedtuple("Offer", "contractors lines")
+# ``reference`` — блок расчётной стоимости MR Group или None;
+# ``has_reference`` — заполнена ли она хоть по одному разделу.
+Offer = namedtuple("Offer", "contractors lines reference has_reference")
 
 # Объект из базы: паспорт, смета по видам работ и два отчёта по удорожанию
 # (любой может быть None) — в том виде, в каком их отдают ``app.routes``.
@@ -95,10 +122,20 @@ ClassAverages = namedtuple("ClassAverages", "per_sqm counts considered excluded"
 # Что вписать в какую ячейку: текст замечания или ожидаемую стоимость.
 Remark = namedtuple("Remark", "row col value")
 
-# Одна клетка таблицы на странице: подрядчик × раздел.
-Cell = namedtuple("Cell", "total per_sqm deviation_pct remark")
-Section = namedtuple("Section", "row number name key label avg_per_sqm count expected cells")
-Analysis = namedtuple("Analysis", "contractors sections remarks")
+# Одна клетка таблицы на странице: подрядчик × раздел. ``deviation_pct`` —
+# от средней по классу, ``ref_deviation_pct`` — от расчётной стоимости.
+Cell = namedtuple("Cell", "total per_sqm deviation_pct ref_deviation_pct remark")
+Section = namedtuple(
+    "Section",
+    "row number name key label avg_per_sqm count expected reference cells",
+)
+# ``sections`` — разделы верхнего уровня (из них складывается общий итог),
+# ``groups`` — то, по чему строится рейтинг «по видам работ»: те же разделы
+# или, если раздел в файле всего один, его подразделы первого уровня.
+# ``new_columns`` — колонки «Комментарии», которые программа заводит сама.
+Analysis = namedtuple(
+    "Analysis", "contractors sections groups remarks has_reference new_columns",
+)
 
 
 def _text(value):
@@ -115,66 +152,74 @@ def _amount(value):
     return None
 
 
-def _find_header_row(ws):
-    for row in ws.iter_rows(min_row=1, max_row=HEADER_SEARCH_ROWS):
-        if any(_text(cell.value) == COMMENTS_HEADER for cell in row):
-            return row[0].row
-    raise OfferError(
-        "Не похоже на сводную тендерную таблицу: не нашлось колонки «Комментарии» "
-        "у подрядчиков."
-    )
-
-
 def _find_col(ws, row, predicate, start=1, end=None):
-    end = end or ws.max_column
+    end = min(end or ws.max_column, ws.max_column)
     for col in range(start, end + 1):
         if predicate(_text(ws.cell(row, col).value)):
             return col
     return None
 
 
-def _find_name_row(ws, header_row):
-    for row in range(1, header_row):
-        if _find_col(ws, row, lambda t: t == NAME_ROW_HEADER):
-            return row
+def _find_name_row(ws):
+    for row in range(1, min(HEADER_SEARCH_ROWS, ws.max_row) + 1):
+        col = _find_col(ws, row, lambda t: t == NAME_ROW_HEADER)
+        if col:
+            return row, col
+    raise OfferError(
+        "Не похоже на сводную тендерную таблицу: не нашлось строки "
+        "«Наименование контрагента» с названиями подрядчиков."
+    )
+
+
+def _block_starts(ws, name_row, label_col):
+    """``[(колонка, название)]`` — где в строке названий начинается каждый
+    блок: расчётная стоимость и подрядчики."""
+    starts = []
+    for col in range(label_col + 1, ws.max_column + 1):
+        value = ws.cell(name_row, col).value
+        if value is not None and str(value).strip():
+            starts.append((col, " ".join(str(value).split())))
+    return starts
+
+
+def _header_rows(ws, name_row):
+    return range(name_row, min(name_row + HEADER_DEPTH, ws.max_row) + 1)
+
+
+def _block_columns(ws, name_row, start, end):
+    """``(материалы, смр, всего, строка шапки)`` блока, или None.
+
+    «Стоимость всего» ищется в любой строке шапки — у расчётной стоимости и
+    у подрядчиков она бывает на разных строках, — а подписи «Материалы» /
+    «СМР» / «Всего» — строкой ниже, в пределах четырёх колонок.
+    """
+    for row in _header_rows(ws, name_row):
+        for col in range(start, end + 1):
+            text = _text(ws.cell(row, col).value)
+            if not text.startswith(COST_HEADER) or CUSTOMER_VOLUMES_HEADER in text:
+                continue
+            sub_row = row + 1
+            last = min(col + 4, end)
+
+            def sub(label, col=col, last=last, sub_row=sub_row):
+                return _find_col(ws, sub_row, lambda t: t == label, col, last)
+
+            materials, smr, total = sub("материалы"), sub("смр"), sub("всего")
+            if materials and smr and total:
+                return materials, smr, total, row
     return None
 
 
-def _contractor(ws, header_row, name_row, start, comment_col, index):
-    cost_cols = [
-        col for col in range(start, comment_col)
-        if _text(ws.cell(header_row, col).value).startswith(COST_HEADER)
-        and CUSTOMER_VOLUMES_HEADER not in _text(ws.cell(header_row, col).value)
-    ]
-    if not cost_cols:
-        return None
-    # Первым в блоке может стоять ещё и «Расчетная стоимость» заказчика —
-    # подрядчику принадлежит последняя такая колонка перед его комментариями.
-    cost_col = cost_cols[-1]
-    sub_row = header_row + 1
-    within = cost_col + 4
+def _column_is_empty(ws, col):
+    return all(ws.cell(row, col).value in (None, "") for row in range(1, ws.max_row + 1))
 
-    def sub(label):
-        return _find_col(ws, sub_row, lambda t: t == label, cost_col, within)
 
-    materials, smr, total = sub("материалы"), sub("смр"), sub("всего")
-    if materials is None or smr is None or total is None:
-        return None
-    expected = comment_col + 1
-    if EXPECTED_HEADER not in _text(ws.cell(header_row, expected).value):
-        expected = None
-
-    name = None
-    if name_row is not None:
-        for col in range(start, comment_col + 1):
-            value = ws.cell(name_row, col).value
-            if value is not None and str(value).strip() and _text(value) != NAME_ROW_HEADER:
-                name = str(value).strip()
-    return Contractor(
-        name=name or f"Подрядчик {index}",
-        materials_col=materials, smr_col=smr, total_col=total,
-        comment_col=comment_col, expected_col=expected,
-    )
+def _labelled_col(ws, name_row, start, end, predicate):
+    for row in _header_rows(ws, name_row):
+        col = _find_col(ws, row, predicate, start, end)
+        if col:
+            return col
+    return None
 
 
 def _level(number):
@@ -186,7 +231,8 @@ def _level(number):
 
 
 def parse_offer(source) -> Offer:
-    """Блоки подрядчиков и строки разделов/подразделов первого листа.
+    """Блоки подрядчиков, расчётная стоимость и строки разделов/подразделов
+    первого листа.
 
     Суммы берутся такими, какими их последний раз посчитал Excel: формулы
     таблицы здесь не пересчитываются.
@@ -196,10 +242,7 @@ def parse_offer(source) -> Offer:
     except Exception as e:  # noqa: BLE001 — любой нечитаемый файл это одна и та же ошибка
         raise OfferError("Не удалось открыть файл как таблицу Excel.") from e
     try:
-        ws = wb.worksheets[0]
-        # read_only-лист не умеет ws.cell() за разумное время — нужные
-        # строки шапки и данные читаются одним проходом в словарь.
-        return _parse_sheet(_SheetView(ws))
+        return _parse_sheet(_SheetView(wb.worksheets[0]))
     finally:
         wb.close()
 
@@ -207,7 +250,16 @@ def parse_offer(source) -> Offer:
 class _SheetView:
     """Лист, прочитанный целиком в память: ``cell(row, col).value``, как у
     обычного листа openpyxl, но без его медленного доступа по ячейке в
-    режиме read_only."""
+    режиме read_only.
+
+    Ширина берётся по шапке, а не по ``max_column`` листа: в настоящих файлах
+    оформление тянется до колонки XFD, и читать шестнадцать тысяч пустых
+    колонок на каждой из двух тысяч строк — это сотни мегабайт впустую.
+    """
+
+    # Запас справа от последней непустой колонки шапки — колонка-разделитель
+    # за последним подрядчиком, куда могут лечь замечания.
+    _MARGIN = 3
 
     class _Cell:
         __slots__ = ("value", "row")
@@ -217,52 +269,87 @@ class _SheetView:
             self.row = row
 
     def __init__(self, ws):
-        self._rows = [list(row) for row in ws.iter_rows(values_only=True)]
+        head = [list(r) for r in ws.iter_rows(max_row=HEADER_SEARCH_ROWS, values_only=True)]
+        width = max(
+            (i for r in head for i, v in enumerate(r, 1) if v is not None and str(v).strip()),
+            default=0,
+        ) + self._MARGIN
+        self._rows = [list(r) for r in ws.iter_rows(max_col=width, values_only=True)]
         self.max_row = len(self._rows)
-        self.max_column = max((len(r) for r in self._rows), default=0)
+        self.max_column = width
 
     def cell(self, row, col):
         values = self._rows[row - 1] if 0 < row <= self.max_row else []
         value = values[col - 1] if 0 < col <= len(values) else None
         return self._Cell(value, row)
 
-    def iter_rows(self, min_row, max_row):
-        for row in range(min_row, min(max_row, self.max_row) + 1):
-            yield [self.cell(row, col) for col in range(1, self.max_column + 1)]
-
 
 def _parse_sheet(ws) -> Offer:
-    header_row = _find_header_row(ws)
-    name_row = _find_name_row(ws, header_row)
+    name_row, label_col = _find_name_row(ws)
+    starts = _block_starts(ws, name_row, label_col)
 
-    comment_cols = [
-        col for col in range(1, ws.max_column + 1)
-        if _text(ws.cell(header_row, col).value) == COMMENTS_HEADER
-    ]
+    reference = None
     contractors = []
-    start = 1
-    for comment_col in comment_cols:
-        contractor = _contractor(
-            ws, header_row, name_row, start, comment_col, len(contractors) + 1,
-        )
-        if contractor is not None:
-            contractors.append(contractor)
-        start = comment_col + 1
+    last_header_row = name_row
+    for index, (start, title) in enumerate(starts):
+        end = starts[index + 1][0] - 1 if index + 1 < len(starts) else ws.max_column
+        columns = _block_columns(ws, name_row, start, end)
+        if columns is None:
+            continue
+        materials, smr, total, header_row = columns
+        last_header_row = max(last_header_row, header_row + 1)
+        is_reference = _text(title).startswith(REFERENCE_HEADER)
+        if is_reference:
+            # Второй блок «Расчетная стоимость» (например, «на 3-ем этапе»)
+            # — не эталон, а его вариант: эталон — первый.
+            if reference is None:
+                reference = Contractor(
+                    name="Расчётная стоимость MR Group", materials_col=materials,
+                    smr_col=smr, total_col=total, comment_col=None, expected_col=None,
+                    header_row=header_row, comment_created=False,
+                )
+            continue
+
+        comment = _labelled_col(ws, name_row, start, end, lambda t: t == COMMENTS_HEADER)
+        expected = _labelled_col(ws, name_row, start, end, lambda t: EXPECTED_HEADER in t)
+        created = False
+        if comment is None and total + 1 <= ws.max_column and _column_is_empty(ws, total + 1):
+            comment, created = total + 1, True
+        contractors.append(Contractor(
+            name=title, materials_col=materials, smr_col=smr, total_col=total,
+            comment_col=comment, expected_col=expected,
+            header_row=header_row, comment_created=created,
+        ))
     if not contractors:
         raise OfferError(
-            "Не нашлось ни одного блока подрядчика: у колонки «Комментарии» нет "
-            "колонок «Стоимость всего» с подписями «Материалы», «СМР», «Всего»."
+            "Не нашлось ни одного блока подрядчика: под названиями в строке "
+            "«Наименование контрагента» нет колонок «Стоимость всего» с подписями "
+            "«Материалы», «СМР», «Всего»."
         )
 
-    number_col = _find_col(ws, header_row, lambda t: t == NUMBER_HEADER) or 2
-    article_col = _find_col(ws, header_row, lambda t: t.startswith(ARTICLE_HEADER))
-    name_col = _find_col(ws, header_row, lambda t: t.startswith(WORK_NAME_HEADER))
+    def header_col(predicate):
+        return _labelled_col(ws, name_row, 1, label_col + 1, predicate)
+
+    number_col = header_col(lambda t: t == NUMBER_HEADER) or 2
+    article_col = header_col(lambda t: t.startswith(ARTICLE_HEADER))
+    name_col = header_col(lambda t: t.startswith(WORK_NAME_HEADER))
 
     lines = []
-    for row in range(header_row + 2, ws.max_row + 1):
-        number = str(ws.cell(row, number_col).value or "").strip()
-        level = _level(number)
+    section_number = None
+    for row in range(last_header_row + 1, ws.max_row + 1):
+        raw = ws.cell(row, number_col).value
+        # Настоящий номер раздела записан текстом («10.1»): число или
+        # результат формулы в этой колонке — случайно попавшее туда
+        # количество, а не номер.
+        if not isinstance(raw, str):
+            continue
+        number = raw.strip().rstrip(".")
+        level = _level(raw.strip())
         if level is None:
+            continue
+        if level == LEVEL_SUBSECTION and not (
+            section_number and number.startswith(section_number + ".")
+        ):
             continue
         name = ""
         for col in (article_col, name_col):
@@ -271,14 +358,20 @@ def _parse_sheet(ws) -> Offer:
                 break
         if LOT_RE.match(name):
             continue
-        amounts = [
-            tuple(_amount(ws.cell(row, col).value)
-                  for col in (c.materials_col, c.smr_col, c.total_col))
-            for c in contractors
-        ]
+        if level == LEVEL_SECTION:
+            section_number = number
+
+        def amounts_of(block):
+            return tuple(
+                _amount(ws.cell(row, col).value)
+                for col in (block.materials_col, block.smr_col, block.total_col)
+            )
+
         lines.append(Line(
-            row=row, number=number.rstrip("."), name=name, level=level,
-            key=estimate_sections.classify(name), amounts=amounts,
+            row=row, number=number, name=name, level=level,
+            key=estimate_sections.classify(name),
+            amounts=[amounts_of(c) for c in contractors],
+            reference=amounts_of(reference) if reference else None,
         ))
 
     has_any_amount = any(
@@ -292,7 +385,14 @@ def _parse_sheet(ws) -> Offer:
             "формулами, откройте файл в Excel и сохраните его — тогда суммы "
             "появятся, и файл можно будет загрузить снова."
         )
-    return Offer(contractors=contractors, lines=lines)
+    has_reference = any(
+        line.reference and not _is_empty(line.reference[2])
+        for line in lines if line.level == LEVEL_SECTION
+    )
+    return Offer(
+        contractors=contractors, lines=lines, reference=reference,
+        has_reference=has_reference,
+    )
 
 
 def project_costs(project):
@@ -359,12 +459,31 @@ def _unjustified_smr(materials, smr):
     return smr > materials * SMR_TO_MATERIALS_LIMIT
 
 
-def _section_verdict(deviation_pct):
+def _pct(value, base):
+    if value is None or not base:
+        return None
+    return (float(value) / float(base) - 1.0) * 100.0
+
+
+def _verdict(deviation_pct, section):
     if deviation_pct is None or deviation_pct <= 0:
         return None
-    if deviation_pct > HEAVILY_OVERPRICED_PCT:
-        return REMARK_HEAVILY_OVERPRICED
-    return REMARK_OVERPRICED
+    heavy = deviation_pct > HEAVILY_OVERPRICED_PCT
+    if section:
+        return REMARK_HEAVILY_OVERPRICED if heavy else REMARK_OVERPRICED
+    return REMARK_SUB_HEAVILY_OVERPRICED if heavy else REMARK_SUB_OVERPRICED
+
+
+def _against_reference(verdict, deviation_pct):
+    """«Завышена стоимость (+18,4 % к расчётной)» — по расчётной стоимости
+    видно не только что, но и насколько."""
+    return f"{verdict} ({cost_increase.format_percent(deviation_pct)} к расчётной)"
+
+
+def _reference_total(line):
+    if line.reference is None or _is_empty(line.reference[2]):
+        return None
+    return line.reference[2]
 
 
 def _grouped(lines):
@@ -378,6 +497,41 @@ def _grouped(lines):
     return groups
 
 
+def _section_view(line, offer, averages, area, with_average):
+    """Раздел или подраздел для страницы: сумма каждого подрядчика, ₽/м²,
+    отклонения от средней по классу и от расчётной стоимости, оценка."""
+    reference = _reference_total(line) if offer.has_reference else None
+    avg = averages.per_sqm.get(line.key) if with_average and line.key else None
+    expected = avg * area if avg is not None else None
+    cells = []
+    for _contractor, (_m, _s, total) in zip(offer.contractors, line.amounts):
+        if _is_empty(total):
+            cells.append(Cell(
+                total=total, per_sqm=None, deviation_pct=None, ref_deviation_pct=None,
+                remark=REMARK_PRICE_SECTION,
+            ))
+            continue
+        deviation = _pct(total, expected) if expected else None
+        ref_deviation = _pct(total, reference) if reference else None
+        basis = ref_deviation if offer.has_reference else deviation
+        cells.append(Cell(
+            total=total, per_sqm=float(total) / area,
+            deviation_pct=deviation, ref_deviation_pct=ref_deviation,
+            remark=_verdict(basis, section=True),
+        ))
+    return Section(
+        row=line.row, number=line.number, name=line.name, key=line.key,
+        label=estimate_sections.CATEGORY_LABELS.get(line.key) if with_average and line.key else None,
+        avg_per_sqm=avg,
+        count=averages.counts.get(line.key, 0) if avg is not None else 0,
+        expected=expected, reference=reference, cells=cells,
+    )
+
+
+def _depth(number):
+    return number.count(".")
+
+
 def analyze(offer, averages, area) -> Analysis:
     """Оценка каждого подрядчика по каждому разделу, который кто-то расценил.
 
@@ -386,54 +540,80 @@ def analyze(offer, averages, area) -> Analysis:
     area = float(area)
     remarks = []
     sections = []
-    for section, subsections in _grouped(offer.lines):
-        totals = [amounts[2] for amounts in section.amounts]
-        if all(_is_empty(total) for total in totals):
+    groups = []
+    for section_line, subsections in _grouped(offer.lines):
+        if all(_is_empty(amounts[2]) for amounts in section_line.amounts):
             continue  # раздел вне тендера — его не расценил никто
 
-        avg = averages.per_sqm.get(section.key) if section.key else None
-        expected = avg * area if avg is not None else None
-        cells = []
-        for contractor, total in zip(offer.contractors, totals):
-            per_sqm = float(total) / area if total is not None else None
-            deviation = None
-            remark = None
-            if _is_empty(total):
-                remark = REMARK_PRICE_SECTION
-            elif expected:
-                deviation = (float(total) / expected - 1.0) * 100.0
-                remark = _section_verdict(deviation)
-            if remark:
-                remarks.append(Remark(section.row, contractor.comment_col, remark))
-            if expected is not None and contractor.expected_col:
-                remarks.append(Remark(section.row, contractor.expected_col, round(expected, 2)))
-            cells.append(Cell(total=total, per_sqm=per_sqm, deviation_pct=deviation, remark=remark))
+        section = _section_view(section_line, offer, averages, area, with_average=True)
+        sections.append(section)
+        for contractor, cell in zip(offer.contractors, section.cells):
+            if contractor.comment_col and cell.remark:
+                text = cell.remark
+                if offer.has_reference and cell.remark != REMARK_PRICE_SECTION:
+                    text = _against_reference(cell.remark, cell.ref_deviation_pct)
+                remarks.append(Remark(section.row, contractor.comment_col, text))
+            if section.expected is not None and contractor.expected_col:
+                remarks.append(Remark(
+                    section.row, contractor.expected_col, round(section.expected, 2),
+                ))
 
+        children = []
         for line in subsections:
+            reference = _reference_total(line) if offer.has_reference else None
             for contractor, (materials, smr, total) in zip(offer.contractors, line.amounts):
+                if not contractor.comment_col:
+                    continue
                 if _is_empty(total):
                     remarks.append(Remark(line.row, contractor.comment_col, REMARK_PRICE_SUBSECTION))
-                elif _unjustified_smr(materials, smr):
-                    remarks.append(Remark(line.row, contractor.comment_col, REMARK_UNJUSTIFIED_SMR))
+                    continue
+                parts = []
+                if reference:
+                    deviation = _pct(total, reference)
+                    verdict = _verdict(deviation, section=False)
+                    if verdict:
+                        parts.append(_against_reference(verdict, deviation))
+                if _unjustified_smr(materials, smr):
+                    parts.append(REMARK_UNJUSTIFIED_SMR)
+                if parts:
+                    remarks.append(Remark(line.row, contractor.comment_col, ", ".join(parts)))
+            if _depth(line.number) == 1 and not all(_is_empty(a[2]) for a in line.amounts):
+                children.append(line)
+        groups.append((section, children))
 
-        sections.append(Section(
-            row=section.row, number=section.number, name=section.name, key=section.key,
-            label=estimate_sections.CATEGORY_LABELS.get(section.key) if section.key else None,
-            avg_per_sqm=avg, count=averages.counts.get(section.key, 0) if section.key else 0,
-            expected=expected, cells=cells,
-        ))
+    # По видам работ: разделы, а если сравнение идёт с расчётной стоимостью
+    # и раздел в файле один (тендер на одну систему — «ВИС»), то его
+    # подразделы: эталон есть и у них, а рейтинг из одной строки «раздел
+    # целиком» повторял бы общий.
+    if offer.has_reference and len(groups) == 1 and groups[0][1]:
+        work_groups = [
+            _section_view(line, offer, averages, area, with_average=False)
+            for line in groups[0][1]
+        ]
+    else:
+        work_groups = [section for section, _children in groups]
+
+    new_columns = [
+        (c.header_row, c.comment_col) for c in offer.contractors if c.comment_created
+    ]
     return Analysis(
-        contractors=[c.name for c in offer.contractors], sections=sections, remarks=remarks,
+        contractors=[c.name for c in offer.contractors], sections=sections,
+        groups=work_groups, remarks=remarks, has_reference=offer.has_reference,
+        new_columns=new_columns,
     )
 
 
 # Одна строка рейтинга: место (None — не расценено), подрядчик, стоимость,
-# ₽/м², отклонение от средней по классу, замечание по разделу, сколько
-# разделов не расценено (для общего рейтинга).
+# ₽/м², отклонения от средней по классу и от расчётной стоимости, замечание
+# по разделу, сколько разделов не расценено (для общего рейтинга).
 RankRow = namedtuple(
     "RankRow",
-    "place name total per_sqm deviation_pct remark unpriced",
+    "place name total per_sqm deviation_pct ref_deviation_pct remark unpriced",
 )
+SectionRanking = namedtuple("SectionRanking", "section rows")
+# ``reference_total`` — расчётная стоимость MR Group по тем же разделам, или
+# None, если её в файле нет.
+Ranking = namedtuple("Ranking", "overall expected_total reference_total sections")
 
 # Организационно-правовая форма перед названием — в КП и в паспортах одна и
 # та же компания пишется то с ней, то без («АО "ФОДД"» / «ФОДД»).
@@ -503,14 +683,6 @@ def contractor_history(names, passports, building_class):
             objects=objects,
         )
     return result
-SectionRanking = namedtuple("SectionRanking", "section rows")
-Ranking = namedtuple("Ranking", "overall expected_total sections")
-
-
-def _pct(value, base):
-    if value is None or not base:
-        return None
-    return (float(value) / float(base) - 1.0) * 100.0
 
 
 def _ranked(rows):
@@ -523,20 +695,24 @@ def _ranked(rows):
 
 def rank(analysis, area) -> Ranking:
     """Предложения от лучшего к худшему по стоимости — всего и по каждому
-    разделу.
+    виду работ.
 
-    Общий итог — сумма разделов, которые подрядчик расценил; отклонение от
-    средней по классу считается только по разделам, где средняя есть, чтобы
-    подрядчик и ожидаемая стоимость складывались из одного и того же. Кто
-    не расценил часть разделов, выглядит дешевле, чем есть, — поэтому рядом
-    с ним стоит, сколько разделов не расценено.
+    Общий итог — сумма разделов, которые подрядчик расценил; отклонения от
+    средней по классу и от расчётной стоимости считаются только по разделам,
+    где есть то, с чем сравнивать, чтобы обе стороны складывались из одного
+    и того же. Кто не расценил часть разделов, выглядит дешевле, чем есть, —
+    поэтому рядом с ним стоит, сколько разделов не расценено.
     """
     area = float(area)
     expected_total = sum(s.expected for s in analysis.sections if s.expected) or None
+    reference_total = sum(
+        (s.reference for s in analysis.sections if s.reference), Decimal("0"),
+    ) or None
     overall = []
     for index, name in enumerate(analysis.contractors):
         total = Decimal("0")
-        comparable = Decimal("0")
+        vs_average = Decimal("0")
+        vs_reference = Decimal("0")
         unpriced = 0
         for section in analysis.sections:
             cell = section.cells[index]
@@ -545,18 +721,22 @@ def rank(analysis, area) -> Ranking:
                 continue
             total += cell.total
             if section.expected:
-                comparable += cell.total
+                vs_average += cell.total
+            if section.reference:
+                vs_reference += cell.total
         priced_any = unpriced < len(analysis.sections)
+        complete = priced_any and not unpriced
         overall.append(RankRow(
             place=None, name=name,
             total=total if priced_any else None,
             per_sqm=float(total) / area if priced_any else None,
-            deviation_pct=_pct(comparable, expected_total) if priced_any and not unpriced else None,
+            deviation_pct=_pct(vs_average, expected_total) if complete else None,
+            ref_deviation_pct=_pct(vs_reference, reference_total) if complete else None,
             remark=None, unpriced=unpriced,
         ))
 
     sections = []
-    for section in analysis.sections:
+    for section in analysis.groups:
         rows = []
         for name, cell in zip(analysis.contractors, section.cells):
             priced = cell.remark != REMARK_PRICE_SECTION
@@ -565,22 +745,41 @@ def rank(analysis, area) -> Ranking:
                 total=cell.total if priced else None,
                 per_sqm=cell.per_sqm if priced else None,
                 deviation_pct=cell.deviation_pct,
+                ref_deviation_pct=cell.ref_deviation_pct,
                 remark=cell.remark, unpriced=0 if priced else 1,
             ))
         sections.append(SectionRanking(section=section, rows=_ranked(rows)))
-    return Ranking(overall=_ranked(overall), expected_total=expected_total, sections=sections)
+    return Ranking(
+        overall=_ranked(overall), expected_total=expected_total,
+        reference_total=reference_total, sections=sections,
+    )
 
 
-def write_remarks(source_bytes, remarks) -> bytes:
+def write_remarks(source_bytes, remarks, new_columns=()) -> bytes:
     """Исходный файл с вписанными ``remarks``, байтами .xlsx.
 
     Ячейка, где уже что-то есть (замечание, вписанное вручную), не
-    перезаписывается. openpyxl не хранит посчитанные значения формул, поэтому
-    книга помечается на полный пересчёт при открытии — иначе Excel показал
-    бы в ней пустые итоги до первой правки.
+    перезаписывается. ``new_columns`` — ``(строка шапки, колонка)`` колонок
+    «Комментарии», которых в файле не было: им ставится заголовок в том же
+    оформлении, что у соседней колонки, и ширина под текст. openpyxl не
+    хранит посчитанные значения формул, поэтому книга помечается на полный
+    пересчёт при открытии — иначе Excel показал бы в ней пустые итоги до
+    первой правки.
     """
     wb = openpyxl.load_workbook(io.BytesIO(source_bytes))
     ws = wb.worksheets[0]
+    created = {col for _row, col in new_columns}
+    for header_row, col in new_columns:
+        cell = ws.cell(header_row, col)
+        if not hasattr(cell, "column_letter") or cell.value not in (None, ""):
+            continue
+        neighbour = ws.cell(header_row, col - 1)
+        cell.value = COMMENTS_TITLE
+        if neighbour.has_style:
+            cell._style = copy.copy(neighbour._style)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(col)].width = CREATED_COMMENT_WIDTH
+    wrap = Alignment(vertical="top", wrap_text=True)
     for remark in remarks:
         cell = ws.cell(remark.row, remark.col)
         if not hasattr(cell, "column_letter"):
@@ -588,6 +787,8 @@ def write_remarks(source_bytes, remarks) -> bytes:
         if cell.value is not None and str(cell.value).strip():
             continue
         cell.value = remark.value
+        if remark.col in created:
+            cell.alignment = wrap
     wb.calculation.fullCalcOnLoad = True
     buf = io.BytesIO()
     wb.save(buf)

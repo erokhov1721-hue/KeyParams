@@ -4,22 +4,46 @@
 {% macro history_cell(count, total) %}
 <td class="kp-history">{% if count %}{{ count }} шт.<span class="kp-sub">{{ format_big_money(total) }}</span>{% else %}—{% endif %}</td>
 {% endmacro %}
-{% macro rank_row(row, overall, record=none) %}
+{% macro pct_cell(value) %}
+<td><span class="kp-deviation">{{ format_percent(value) if value is not none else '—' }}</span></td>
+{% endmacro %}
+{# Строка-эталон: расчётная стоимость MR Group над подрядчиками. #}
+{% macro reference_row(total, overall, show_avg=true) %}
+<tr class="kp-reference">
+  <td class="kp-place">—</td>
+  <td class="kp-name">Расчётная стоимость MR Group</td>
+  {% if overall %}
+  <td><b>{{ format_number(total | round) }}</b><span class="kp-sub">{{ format_number(((total | float) / area) | round) }} ₽/м²</span></td>
+  {% else %}
+  <td>{{ format_number(total | round) }}</td>
+  <td>{{ format_number(((total | float) / area) | round) }}</td>
+  {% endif %}
+  <td><span class="kp-deviation">эталон</span></td>
+  {% if show_avg %}<td>—</td>{% endif %}
+  {% if overall %}<td>—</td><td>—</td><td>—</td>{% endif %}
+</tr>
+{% endmacro %}
+{% macro rank_row(row, overall, ref, record=none, show_avg=true) %}
+{# Подсветка — по эталону сценария: расчётной стоимости, если она есть,
+   иначе средней по классу. #}
+{% set basis = row.ref_deviation_pct if ref else row.deviation_pct %}
 {% set state = 'is-unpriced' if row.total is none
-               else ('is-heavily-over' if row.deviation_pct is not none and row.deviation_pct > 30
-               else ('is-over' if row.deviation_pct is not none and row.deviation_pct > 0 else '')) %}
+               else ('is-heavily-over' if basis is not none and basis > 30
+               else ('is-over' if basis is not none and basis > 0 else '')) %}
 <tr class="kp-cell {{ state }}">
   <td class="kp-place">{{ row.place or '—' }}</td>
   <td class="kp-name">{{ row.name }}</td>
   {% if row.total is none %}
-  <td colspan="{{ 2 if overall else 3 }}" class="kp-deviation">не расценено</td>
+  <td colspan="{{ (1 if overall else 2) + (1 if ref else 0) + (1 if show_avg else 0) }}" class="kp-deviation">не расценено</td>
   {% elif overall %}
   <td><b>{{ format_number(row.total | round) }}</b><span class="kp-sub">{{ format_number(row.per_sqm | round) }} ₽/м²</span></td>
-  <td><span class="kp-deviation">{{ format_percent(row.deviation_pct) if row.deviation_pct is not none else '—' }}</span></td>
+  {% if ref %}{{ pct_cell(row.ref_deviation_pct) }}{% endif %}
+  {% if show_avg %}{{ pct_cell(row.deviation_pct) }}{% endif %}
   {% else %}
   <td>{{ format_number(row.total | round) }}</td>
   <td>{{ format_number(row.per_sqm | round) }}</td>
-  <td><span class="kp-deviation">{{ format_percent(row.deviation_pct) if row.deviation_pct is not none else '—' }}</span></td>
+  {% if ref %}{{ pct_cell(row.ref_deviation_pct) }}{% endif %}
+  {% if show_avg %}{{ pct_cell(row.deviation_pct) }}{% endif %}
   {% endif %}
   {% if overall %}
   <td>{{ row.unpriced or '—' }}</td>
@@ -34,11 +58,13 @@
     <h1>Анализ КП</h1>
     <p class="page-sub">
       Загрузите сводную тендерную таблицу с предложениями подрядчиков, выберите
-      класс жилья и укажите общую площадь объекта. Программа сравнит стоимость
-      каждого раздела у каждого подрядчика со средней ₽/м² по загруженным
-      объектам того же класса — смета плюс подписанные и планируемые
-      удорожания, при НДС 22% — и заполнит в файле колонки «Комментарии» и
-      «Ожидаемая стоимость».
+      класс жилья и укажите общую площадь объекта. Если в таблице заполнена
+      «Расчетная стоимость» — стоимость MR Group, — она эталон: каждый раздел и
+      подраздел каждого подрядчика сравнивается с ней. Если нет — со средней
+      ₽/м² по загруженным объектам того же класса (смета плюс подписанные и
+      планируемые удорожания, при НДС 22%). Замечания программа пишет в
+      колонку «Комментарии» каждого подрядчика, а если её в файле нет —
+      добавляет её сама.
     </p>
   </div>
 </div>
@@ -109,7 +135,12 @@
   <p class="kp-note">В файле нет ни одного раздела, который расценил хотя бы один подрядчик.</p>
   {% else %}
   <h2 class="kp-heading">Рейтинг предложений</h2>
+  {% set ref = analysis.has_reference %}
   <p class="kp-note">
+    {% if ref %}
+    Эталон — расчётная стоимость MR Group: {{ format_number(ranking.reference_total | round) }} ₽;
+    подсветка — по отклонению от неё.
+    {% endif %}
     Итог — сумма разделов, которые подрядчик расценил.
     {% if ranking.expected_total %}
     Ожидаемая стоимость по средней класса: {{ format_number(ranking.expected_total | round) }} ₽.
@@ -123,15 +154,17 @@
           <th class="kp-place">№</th>
           <th class="kp-name">Подрядчик</th>
           <th>Итого, ₽</th>
-          <th>К средней</th>
+          {% if ref %}<th>К расчётной MR</th>{% endif %}
+          <th>К средней по классу</th>
           <th>Не расценено разделов</th>
           <th>Объекты MR Group</th>
           <th>Из них «{{ building_class }}»</th>
         </tr>
       </thead>
       <tbody>
+        {% if ref %}{{ reference_row(ranking.reference_total, true) }}{% endif %}
         {% for row in ranking.overall %}
-        {{ rank_row(row, true, history.get(row.name)) }}
+        {{ rank_row(row, true, ref, history.get(row.name)) }}
         {% endfor %}
       </tbody>
     </table>
@@ -188,14 +221,20 @@
   <h2 class="kp-heading">По видам работ</h2>
   {% for item in ranking.sections %}
   {% set section = item.section %}
+  {# У отдельной системы средней по классу нет — колонка была бы пустой. #}
+  {% set show_avg = not (ref and section.avg_per_sqm is none) %}
   <div class="kp-section">
     <h3 class="kp-section-title">
       {{ section.name }}
       {% if section.label and section.label | lower != section.name | lower %}<span class="kp-section-kind">{{ section.label }}</span>{% endif %}
     </h3>
     <p class="kp-note">
+      {% if ref %}
+      Расчётная стоимость MR Group:
+      {{ format_number(section.reference | round) if section.reference else 'не указана' }}{{ ' ₽' if section.reference }}.
+      {% endif %}
       {% if section.avg_per_sqm is none %}
-      Средней по классу нет — ни у одного объекта класса нет такого раздела, сравниваем только подрядчиков между собой.
+      {% if not ref %}Средней по классу нет — ни у одного объекта класса нет такого раздела, сравниваем только подрядчиков между собой.{% endif %}
       {% else %}
       Средняя по классу: {{ format_number(section.avg_per_sqm | round) }} ₽/м² (объектов: {{ section.count }}),
       ожидаемая стоимость {{ format_number(section.expected | round) }} ₽.
@@ -209,12 +248,14 @@
             <th class="kp-name">Подрядчик</th>
             <th>Стоимость, ₽</th>
             <th>₽/м²</th>
-              <th>К средней</th>
+            {% if ref %}<th>К расчётной MR</th>{% endif %}
+            {% if show_avg %}<th>К средней по классу</th>{% endif %}
           </tr>
         </thead>
         <tbody>
+          {% if ref and section.reference %}{{ reference_row(section.reference, false, show_avg) }}{% endif %}
           {% for row in item.rows %}
-          {{ rank_row(row, false) }}
+          {{ rank_row(row, false, ref, none, show_avg) }}
           {% endfor %}
         </tbody>
       </table>

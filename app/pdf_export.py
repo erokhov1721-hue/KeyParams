@@ -1505,12 +1505,15 @@ def _kp_money(value):
     return cost_increase.format_number(round(value)) if value is not None else "—"
 
 
-def _kp_deviation_paragraph(pct, styles):
-    """Отклонение от средней по классу — тем же цветом, что и на экране:
-    до 30% выше средней янтарным, больше — красным."""
+def _kp_deviation_paragraph(pct, styles, colored=True):
+    """Отклонение от эталона — тем же цветом, что и на экране: до 30% выше
+    янтарным, больше — красным. ``colored=False`` — второе, справочное
+    отклонение рядом с главным: оно без цвета, чтобы не спорить с ним."""
     if pct is None:
         return Paragraph("—", styles["cell_muted_right"])
     text = cost_increase.format_percent(pct)
+    if not colored:
+        return Paragraph(text, styles["cell_right"])
     if pct > 30:
         return Paragraph(f'<font color="{_hex(RED)}"><b>{text}</b></font>', styles["cell_right"])
     if pct > 0:
@@ -1518,13 +1521,24 @@ def _kp_deviation_paragraph(pct, styles):
     return Paragraph(text, styles["cell_right"])
 
 
-def _kp_rank_table(rows, styles, page_width, overall, history=None, building_class=None):
+def _kp_rank_table(rows, styles, page_width, overall, history=None, building_class=None,
+                   reference=None, area=None, show_average=True):
     """Подрядчики от лучшего к худшему: место, имя, стоимость, ₽/м²,
     отклонение от средней; в общем рейтинге ещё — сколько разделов не
-    расценено и сколько наших объектов у подрядчика, всего и в классе."""
-    headers = ["№", "Подрядчик", "Итого, ₽" if overall else "Стоимость, ₽",
-               "₽/м²", "К средней по классу"]
-    ratios = [0.05, 0.3, 0.14, 0.09, 0.1]
+    расценено и сколько наших объектов у подрядчика, всего и в классе.
+
+    ``reference`` — расчётная стоимость MR Group (второй сценарий): тогда
+    над подрядчиками строка-эталон и колонка «К расчётной MR», и цвет
+    отклонения — по ней."""
+    ref = reference is not None
+    headers = ["№", "Подрядчик", "Итого, ₽" if overall else "Стоимость, ₽", "₽/м²"]
+    ratios = [0.05, 0.3, 0.14, 0.09]
+    if ref:
+        headers.append("К расчётной MR")
+        ratios.append(0.1)
+    if show_average:
+        headers.append("К средней по классу")
+        ratios.append(0.1)
     if overall:
         headers += [
             "Не расценено разделов", "Объекты MR Group, сумма договоров",
@@ -1540,6 +1554,21 @@ def _kp_rank_table(rows, styles, page_width, overall, history=None, building_cla
         for i, h in enumerate(headers)
     ]]
     unpriced_rows = []
+    reference_index = None
+    if ref:
+        reference_index = len(data)
+        line = [
+            Paragraph("—", styles["cell_muted"]),
+            Paragraph("Расчётная стоимость MR Group", styles["cell_label"]),
+            Paragraph(_kp_money(reference), styles["cell_right_bold"]),
+            Paragraph(_kp_money(float(reference) / float(area)), styles["cell_muted_right"]),
+            Paragraph("эталон", styles["cell_right"]),
+        ]
+        if show_average:
+            line.append(Paragraph("—", styles["cell_muted_right"]))
+        if overall:
+            line += [Paragraph("—", styles["cell_muted_right"])] * 3
+        data.append(line)
     for row in rows:
         line = [
             Paragraph(str(row.place) if row.place else "—", styles["cell_muted"]),
@@ -1547,13 +1576,18 @@ def _kp_rank_table(rows, styles, page_width, overall, history=None, building_cla
         ]
         if row.total is None:
             unpriced_rows.append(len(data))
-            line += [Paragraph("не расценено", styles["cell_muted"]), "", ""]
+            line += [Paragraph("не расценено", styles["cell_muted"])] + [""] * (
+                1 + (1 if ref else 0) + (1 if show_average else 0)
+            )
         else:
             line += [
                 Paragraph(_kp_money(row.total), styles["cell_right_bold"]),
                 Paragraph(_kp_money(row.per_sqm), styles["cell_muted_right"]),
-                _kp_deviation_paragraph(row.deviation_pct, styles),
             ]
+            if ref:
+                line.append(_kp_deviation_paragraph(row.ref_deviation_pct, styles))
+            if show_average:
+                line.append(_kp_deviation_paragraph(row.deviation_pct, styles, colored=not ref))
         if overall:
             record = history.get(row.name)
             line.append(Paragraph(str(row.unpriced) if row.unpriced else "—", styles["cell_right"]))
@@ -1577,10 +1611,13 @@ def _kp_rank_table(rows, styles, page_width, overall, history=None, building_cla
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]
     # Лучшее предложение — подложкой акцентного цвета, как «лучшее» на экране.
+    first = 2 if ref else 1
     if rows and rows[0].place == 1:
-        style.append(("BACKGROUND", (0, 1), (-1, 1), _fade(ACCENT, 0.9)))
+        style.append(("BACKGROUND", (0, first), (-1, first), _fade(ACCENT, 0.9)))
+    if reference_index is not None:
+        style.append(("BACKGROUND", (0, reference_index), (-1, reference_index), HEAD_BG))
     for index in unpriced_rows:
-        style.append(("SPAN", (2, index), (4, index)))
+        style.append(("SPAN", (2, index), (3 + (1 if ref else 0) + (1 if show_average else 0), index)))
     tbl.setStyle(TableStyle(style))
     return tbl
 
@@ -1685,8 +1722,12 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
             styles["sub"],
         ))
 
+    ref = ranking.reference_total is not None
     story.append(Paragraph("Рейтинг предложений", styles["heading"]))
     note = "Итог — сумма разделов, которые подрядчик расценил."
+    if ref:
+        note = (f"Эталон — расчётная стоимость MR Group: {_kp_money(ranking.reference_total)} ₽; "
+                "цвет — по отклонению от неё. " + note)
     if ranking.expected_total:
         note += f" Ожидаемая стоимость по средней класса: {_kp_money(ranking.expected_total)} ₽."
     note += " Кто не расценил часть разделов, выглядит дешевле, чем есть, — см. последнюю колонку."
@@ -1694,6 +1735,7 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
     story.append(_kp_rank_table(
         ranking.overall, styles, page_width, overall=True,
         history=history, building_class=building_class,
+        reference=ranking.reference_total, area=area,
     ))
 
     story.append(Paragraph("По видам работ", styles["heading"]))
@@ -1702,17 +1744,27 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
         title = _esc(section.name)
         if section.label and section.label.lower() != section.name.lower():
             title += f' <font color="{_hex(MUTED)}" size="8">{_esc(section.label)}</font>'
-        if section.avg_per_sqm is None:
-            sub = ("Средней по классу нет — ни у одного объекта класса нет такого "
-                   "раздела, сравниваются только подрядчики между собой.")
-        else:
-            sub = (f"Средняя по классу: {_kp_money(section.avg_per_sqm)} ₽/м² "
-                   f"(объектов: {section.count}), ожидаемая стоимость "
-                   f"{_kp_money(section.expected)} ₽.")
+        parts = []
+        if ref:
+            parts.append(
+                f"Расчётная стоимость MR Group: {_kp_money(section.reference)} ₽."
+                if section.reference else "Расчётная стоимость MR Group не указана."
+            )
+        if section.avg_per_sqm is not None:
+            parts.append(f"Средняя по классу: {_kp_money(section.avg_per_sqm)} ₽/м² "
+                         f"(объектов: {section.count}), ожидаемая стоимость "
+                         f"{_kp_money(section.expected)} ₽.")
+        elif not ref:
+            parts.append("Средней по классу нет — ни у одного объекта класса нет такого "
+                         "раздела, сравниваются только подрядчики между собой.")
         story.append(KeepTogether([
             Paragraph(title, styles["subheading"]),
-            Paragraph(sub, styles["sub"]),
-            _kp_rank_table(item.rows, styles, page_width, overall=False),
+            Paragraph(" ".join(parts), styles["sub"]),
+            _kp_rank_table(
+                item.rows, styles, page_width, overall=False,
+                reference=section.reference if ref else None, area=area,
+                show_average=not (ref and section.avg_per_sqm is None),
+            ),
         ]))
 
     if history is not None:
