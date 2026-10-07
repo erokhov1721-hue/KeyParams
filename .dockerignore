@@ -13,3 +13,5 @@ README.md
 docker-compose.yml
 Dockerfile
 .dockerignore
+# Windows-сборка Tesseract: в Linux-образе свой, из apt.
+tess_min
