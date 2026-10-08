@@ -210,3 +210,32 @@ def test_tesseract_output_goes_through_the_shared_normalization():
     text = " ".join(w.text for w in tess_ocr.recognize_page_words(_png(page)))
 
     assert "0/0" not in text
+
+
+# --- контрольные суммы моделей ---
+
+def test_models_matching_the_reference_raise_no_warning(tmp_path, monkeypatch, caplog):
+    model = tmp_path / "rus.traineddata"
+    model.write_bytes(b"x")
+    monkeypatch.setattr(tess_ocr, "MODEL_SHA256", {"rus.traineddata": tess_ocr._sha256(model)})
+
+    with caplog.at_level("WARNING"):
+        assert tess_ocr.check_models(tmp_path) == []
+    assert "отличается" not in caplog.text
+
+
+def test_a_different_model_is_warned_about(tmp_path, caplog):
+    (tmp_path / "rus.traineddata").write_bytes(b"not the reference model")
+
+    with caplog.at_level("WARNING"):
+        differing = tess_ocr.check_models(tmp_path)
+
+    assert differing == ["rus.traineddata"]
+    assert "отличается от эталонной" in caplog.text
+
+
+def test_the_installed_models_are_the_reference_ones():
+    _needs_tesseract()
+    folder, _languages = tess_ocr._languages()
+
+    assert tess_ocr.check_models(folder) == []

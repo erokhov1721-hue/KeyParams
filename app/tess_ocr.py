@@ -24,9 +24,11 @@ models are missing or unsure — by trying it every way round as ``win_ocr``
 does; then recognised as words with positions.
 """
 
+import hashlib
 import io
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +93,17 @@ READS_PROPERLY = 200
 # not a crooked scan but a page on its side, which orientation handles.
 MAX_DESKEW_DEGREES = 4.0
 DESKEW_STEP = 0.2
+
+# The models the recognition was measured with: tessdata_fast, the same
+# files Debian's tesseract-ocr-rus/-eng/-osd packages install (checked
+# byte for byte). A different file still works — but its results are no
+# longer the ones the golden protocols were checked against, so it's
+# logged.
+MODEL_SHA256 = {
+    "rus.traineddata": "e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225",
+    "eng.traineddata": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    "osd.traineddata": "9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff",
+}
 
 _availability = None
 
@@ -166,9 +179,44 @@ def _run(args, data=None):
 
 
 def _languages():
+    """``(folder, languages)`` — where the program takes its models from, as
+    it reports it itself, and which ones are there."""
     out = _run(_base_args() + _tessdata_args() + ["--list-langs"])
-    # The first line is "List of available languages in ...", the rest one each.
-    return {line.strip() for line in out.splitlines()[1:] if line.strip()}
+    lines = out.splitlines()
+    # The first line is 'List of available languages in "<folder>" (3):'.
+    match = re.search(r'"(.+?)"', lines[0]) if lines else None
+    folder = match.group(1) if match else None
+    return folder, {line.strip() for line in lines[1:] if line.strip()}
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_models(folder):
+    """Names of the models in ``folder`` that differ from ``MODEL_SHA256`` —
+    each also warned about in the log. A missing file is not this check's
+    business (``availability`` reports a missing Russian model itself)."""
+    if not folder:
+        return []
+    differing = []
+    for name, expected in MODEL_SHA256.items():
+        path = Path(folder) / name
+        if not path.is_file():
+            continue
+        actual = _sha256(path)
+        if actual != expected:
+            differing.append(name)
+            logger.warning(
+                "Tesseract: модель %s отличается от эталонной (SHA-256 %s, ожидалась %s) — "
+                "результаты распознавания могут разойтись с проверенными",
+                path, actual, expected,
+            )
+    return differing
 
 
 def availability():
@@ -185,7 +233,7 @@ def availability():
         _availability = (False, f"не найдена программа Tesseract ({cmd})")
     else:
         try:
-            languages = _languages()
+            folder, languages = _languages()
         except (OSError, subprocess.SubprocessError) as e:
             _availability = (False, f"Tesseract не запускается: {e}")
         else:
@@ -193,6 +241,7 @@ def availability():
                 _availability = (False, "у Tesseract нет русской модели (rus.traineddata)")
             else:
                 _availability = (True, None)
+                check_models(folder)
                 if OSD_LANGUAGE not in languages:
                     logger.info("Tesseract: нет osd.traineddata — ориентация страницы перебором")
     if _availability[1]:
