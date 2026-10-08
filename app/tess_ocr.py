@@ -56,6 +56,14 @@ REMOVE_LINES_ENV = "KEYPARAMS_TESSERACT_REMOVE_LINES"
 WORKERS_ENV = "KEYPARAMS_TESSERACT_WORKERS"
 THREADS_ENV = "KEYPARAMS_TESSERACT_THREADS"
 
+# Measured on the server (2 cores, idle) and on Windows: one thread per call
+# halves the time of a page — Tesseract's own threads mostly wait on each
+# other — and two pages at once halve it again. A three-page protocol went
+# from 25 s to 9 s for the whole cascade. "0" for threads leaves the
+# program its own choice.
+DEFAULT_WORKERS = 2
+DEFAULT_THREADS = "1"
+
 # Page preparation, as measured on the five real protocols (stage-1 report):
 # binarising gained a field; straightening and removing the table grid each
 # lost some — the scans are straight enough, and the grid is what keeps a
@@ -172,7 +180,7 @@ def _run(args, data=None):
     kwargs = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    threads = os.environ.get(THREADS_ENV, "").strip()
+    threads = os.environ.get(THREADS_ENV, DEFAULT_THREADS).strip()
     if threads.isdigit() and int(threads) > 0:
         kwargs["env"] = {**os.environ, "OMP_THREAD_LIMIT": threads}
     result = subprocess.run(
@@ -504,9 +512,9 @@ def recognize_page(data: bytes):
 
 def page_workers():
     try:
-        return max(1, int(os.environ.get(WORKERS_ENV, "1")))
+        return max(1, int(os.environ.get(WORKERS_ENV, DEFAULT_WORKERS)))
     except ValueError:
-        return 1
+        return DEFAULT_WORKERS
 
 
 def recognize_pages(images: list) -> list:

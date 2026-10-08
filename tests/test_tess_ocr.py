@@ -1,4 +1,5 @@
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -111,7 +112,10 @@ def test_models_are_passed_as_tessdata_dir_not_through_the_environment(monkeypat
     tess_ocr._recognize(Image.new("L", (10, 10), 255))
 
     assert seen["args"][seen["args"].index("--tessdata-dir") + 1] == str(tmp_path)
-    assert seen["env"] is None
+    # Модели — только аргументом: в окружение вызова не подкладывается
+    # TESSDATA_PREFIX (там лишь ограничение потоков).
+    env = seen["env"] or {}
+    assert env.get("TESSDATA_PREFIX") == os.environ.get("TESSDATA_PREFIX")
     assert "tsv" in seen["args"]
     assert seen["args"][seen["args"].index("--psm") + 1] == str(tess_ocr.DEFAULT_PSM)
 
@@ -270,3 +274,39 @@ def test_read_region_reads_one_cell_with_a_whitelist():
 
 def test_read_region_of_nothing_is_empty():
     assert tess_ocr.read_region(None, (0, 0, 10, 10)) == ""
+
+
+
+def test_one_thread_per_call_and_two_pages_at_once_by_default(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        tess_ocr.subprocess, "run",
+        lambda args, **kwargs: seen.append(kwargs.get("env")) or _Completed(b""),
+    )
+
+    tess_ocr._run(["tesseract", "--version"])
+
+    assert seen[0]["OMP_THREAD_LIMIT"] == "1"
+    assert tess_ocr.page_workers() == 2
+
+
+def test_threads_set_to_zero_leave_the_program_its_own_choice(monkeypatch):
+    monkeypatch.setenv(tess_ocr.THREADS_ENV, "0")
+    seen = []
+    monkeypatch.setattr(
+        tess_ocr.subprocess, "run",
+        lambda args, **kwargs: seen.append(kwargs.get("env")) or _Completed(b""),
+    )
+
+    tess_ocr._run(["tesseract", "--version"])
+
+    assert seen == [None]
+
+
+def test_pages_come_back_in_their_own_order_when_read_at_once(monkeypatch):
+    monkeypatch.setenv(tess_ocr.WORKERS_ENV, "3")
+    monkeypatch.setattr(tess_ocr, "recognize_page", lambda data: ([data], None))
+
+    assert tess_ocr.recognize_pages([b"1", b"2", b"3", b"4"]) == [
+        ([b"1"], None), ([b"2"], None), ([b"3"], None), ([b"4"], None),
+    ]
