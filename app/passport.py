@@ -2,6 +2,8 @@ import json
 import os
 import re
 import sys
+import threading
+from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -215,6 +217,11 @@ def build_passport(project_name: str, dgp_path=None, tz_path=None) -> dict:
 CONTRACT_PROBLEM_NOTHING_FOUND = "nothing_found"
 CONTRACT_PROBLEM_COLUMN_UNKNOWN = "column_unknown"
 CONTRACT_PROBLEM_UNREADABLE = "unreadable"
+# The server was already reading as many scans as it may at once.
+# "busy" — a replaced protocol, the old one kept; "busy_new" — a new
+# project, its protocol saved but not read yet.
+CONTRACT_PROBLEM_BUSY = "busy"
+CONTRACT_PROBLEM_BUSY_NEW = "busy_new"
 
 # Below this much text, an engine has not read the page — it has returned the
 # few stray marks it could make out. A protocol page holds thousands of
@@ -258,6 +265,16 @@ CONTRACT_PROBLEM_MESSAGES = {
     CONTRACT_PROBLEM_UNREADABLE: (
         "Не удалось прочитать файл — убедитесь, что это корректный PDF. "
         "Прежний протокол оставлен на месте."
+    ),
+    CONTRACT_PROBLEM_BUSY: (
+        "Сервер сейчас распознаёт другие протоколы, и этот файл прочитать не "
+        "успел. Прежний протокол и значения оставлены на месте — загрузите "
+        "файл ещё раз через минуту."
+    ),
+    CONTRACT_PROBLEM_BUSY_NEW: (
+        "Протокол сохранён, но не распознан: сервер сейчас распознаёт другие "
+        "протоколы. Через минуту нажмите «Заменить файл протокола» и загрузите "
+        "его ещё раз."
     ),
     CONTRACT_PROBLEM_NOTHING_FOUND: (
         "Файл прочитан, но ни одно условие распознать не удалось. "
@@ -832,6 +849,64 @@ def _scan_cascade(pdf_path, project_name, collected):
     return api_problem, notes, vat
 
 
+class RecognitionBusy(Exception):
+    """Raised by ``build_contract_terms`` when as many scans are being read
+    as may be at once and the queue for them is full too — the caller
+    answers "try again in a minute" instead of tying up a request thread."""
+
+
+# Scans read at once, scans allowed to wait for a free slot, and how long one
+# may wait. A scan takes the request thread that brought it for its whole
+# reading; with waitress's eight threads, two reading and two waiting leave
+# four for everyone else's pages, however many protocols arrive at once.
+OCR_SLOTS_ENV = "KEYPARAMS_OCR_SLOTS"
+OCR_QUEUE_ENV = "KEYPARAMS_OCR_QUEUE"
+DEFAULT_OCR_SLOTS = 2
+DEFAULT_OCR_QUEUE = 2
+OCR_WAIT_SECONDS = 90
+
+_ocr_condition = threading.Condition()
+_ocr_running = 0
+_ocr_waiting = 0
+
+
+def _env_int(name, default, minimum):
+    try:
+        return max(minimum, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+@contextmanager
+def _ocr_slot():
+    """Hold one of the reading slots for the duration of a scan, waiting in
+    the queue for one if need be; ``RecognitionBusy`` when the queue is full
+    or the wait runs out."""
+    global _ocr_running, _ocr_waiting
+    slots = _env_int(OCR_SLOTS_ENV, DEFAULT_OCR_SLOTS, 1)
+    queue = _env_int(OCR_QUEUE_ENV, DEFAULT_OCR_QUEUE, 0)
+    with _ocr_condition:
+        if _ocr_running >= slots:
+            if _ocr_waiting >= queue:
+                raise RecognitionBusy()
+            _ocr_waiting += 1
+            try:
+                free = _ocr_condition.wait_for(
+                    lambda: _ocr_running < slots, timeout=OCR_WAIT_SECONDS,
+                )
+            finally:
+                _ocr_waiting -= 1
+            if not free:
+                raise RecognitionBusy()
+        _ocr_running += 1
+    try:
+        yield
+    finally:
+        with _ocr_condition:
+            _ocr_running -= 1
+            _ocr_condition.notify()
+
+
 def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple:
     """Best-effort extraction of the contract-terms protocol's fields.
 
@@ -857,6 +932,9 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     code from ``CONTRACT_PROBLEM_MESSAGES`` saying why, so the page can
     explain itself rather than showing a silently empty card. Whatever isn't
     found stays None, to be filled in by hand.
+
+    Raises ``RecognitionBusy`` when a scan would have to be read but the
+    server is already reading as many as it may (see ``_ocr_slot``).
     """
     text = pdf_reader.read_pdf_text(pdf_path)
     collected = _Collected()
@@ -866,9 +944,11 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     if text.strip():
         collected.take(_terms_from_text(text), METHOD_TEXT)
         if collected.open_fields() and scan_weak_text_layer():
-            problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
+            with _ocr_slot():
+                problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
     else:
-        problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
+        with _ocr_slot():
+            problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
 
     data = {field: collected.values.get(field) for field in CONTRACT_FIELDS}
     sources = dict(collected.sources)

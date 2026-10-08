@@ -1064,6 +1064,12 @@ def create_project():
             extracted, filled, problem = passport_module.build_contract_terms(
                 dest, year_signed=data.get("year_signed"), project_name=project_name,
             )
+        except passport_module.RecognitionBusy:
+            # The project is created all the same, its protocol kept on file
+            # to be read again with "Заменить файл протокола".
+            current_app.logger.warning("Протокол нового проекта не распознан: сервер занят")
+            extracted, filled = {}, []
+            problem = passport_module.CONTRACT_PROBLEM_BUSY_NEW
         except pdf_reader.PdfReadError as e:
             current_app.logger.warning("Не удалось прочитать протокол: %s", e)
             storage.discard_staging(staging_root, slug)
@@ -1557,6 +1563,13 @@ def upload_contract_terms(slug):
         extracted, filled, problem = passport_module.build_contract_terms(
             tmp, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
         )
+    except passport_module.RecognitionBusy:
+        current_app.logger.warning("Замена протокола отклонена: сервер занят распознаванием")
+        tmp.unlink(missing_ok=True)
+        return redirect(url_for(
+            "main.project_page", slug=slug,
+            problem=passport_module.CONTRACT_PROBLEM_BUSY,
+        ))
     except pdf_reader.PdfReadError as e:
         current_app.logger.warning("Протокол отклонён: %s", e)
         tmp.unlink(missing_ok=True)
