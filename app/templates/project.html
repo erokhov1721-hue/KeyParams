@@ -184,13 +184,21 @@
               <div class="field-label-col">
                 <span class="field-label">{{ contract_field_labels.get(field, field) }}</span>
                 {% if is_auto %}
-                  <span class="badge badge-pdf">Найдено в протоколе — проверьте</span>
+                  {% set method = contract_method_labels.get(contract_sources.get(field)) %}
+                  <span class="badge badge-pdf">Найдено в протоколе{% if method %} ({{ method }}){% endif %} — проверьте</span>
+                {% endif %}
+                {% if field in contract_review %}
+                  <span class="badge badge-review">{{ contract_review_note }}</span>
+                  <span class="field-hint contract-review-text">В протоколе: «{{ contract_review[field] }}»</span>
                 {% endif %}
               </div>
               <input type="text" name="{{ field }}" value="{{ value or '' }}" placeholder="Введите значение">
             </div>
             {% endfor %}
           </div>
+          {% for note in contract_notes %}
+          <p class="field-hint contract-note">{{ note }}</p>
+          {% endfor %}
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">Сохранить изменения</button>
           </div>

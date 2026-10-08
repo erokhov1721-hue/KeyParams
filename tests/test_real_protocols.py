@@ -65,6 +65,13 @@ def _cases():
 
 
 @pytest.fixture(autouse=True)
+def tesseract_off():
+    """Здесь нужен настоящий Tesseract: заменяет одноимённую фикстуру из
+    conftest.py, которая выключает его во всех остальных тестах."""
+    yield
+
+
+@pytest.fixture(autouse=True)
 def windows_ocr_off():
     """Здесь нужен настоящий Windows OCR, а не выключенный, как в остальных
     тестах (см. conftest.py): эта фикстура заменяет ту одноимённую."""

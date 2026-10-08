@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app import win_ocr
+from app import tess_ocr, win_ocr
 from app.document_reader import read_docx
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -19,6 +19,18 @@ def windows_ocr_off(monkeypatch):
     A test that wants it turns it back on itself.
     """
     monkeypatch.setattr(win_ocr, "available", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def tesseract_off(monkeypatch):
+    """Switch Tesseract off for every test by default, for the same reason:
+    whether this machine has it must not change what the tests say. Tests of
+    the engine itself (test_tess_ocr.py, test_real_protocols.py) replace this
+    fixture with one that leaves it alone."""
+    monkeypatch.setattr(
+        tess_ocr, "availability", lambda: (False, "выключен в тестах"),
+    )
+    monkeypatch.setattr(tess_ocr, "available", lambda: False)
 
 
 def _require_fixture(path):

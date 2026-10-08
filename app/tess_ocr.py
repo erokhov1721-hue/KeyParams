@@ -458,36 +458,90 @@ def _text_length(words):
     return sum(len(word.text) for word in words)
 
 
-def recognize_page_words(data: bytes) -> list:
-    """Positioned words for one page image, read whichever way up it is.
+def recognize_page(data: bytes):
+    """``(words, page)`` — positioned words for one page image, read
+    whichever way up it is, and the prepared page they were read from,
+    turned upright: the words' coordinates are on that image, which is what
+    ``read_region`` needs to read a cell again.
 
-    Empty when Tesseract isn't available, the image can't be read, or
-    recognition fails or runs out of time.
+    ``([], None)`` when Tesseract isn't available, the image can't be read,
+    or recognition fails or runs out of time.
     """
     if not available():
-        return []
+        return [], None
     try:
         with Image.open(io.BytesIO(data)) as source:
             page = preprocess(source.convert("RGB"))
         rotation = _osd_rotation(page)
         if rotation is not None:
-            words = _recognize(_turned(page, rotation))
+            upright = _turned(page, rotation)
+            words = _recognize(upright)
         else:
-            words = []
+            words, upright = [], page
             for angle in ROTATIONS:
-                attempt = _recognize(_turned(page, angle))
+                turned = _turned(page, angle)
+                attempt = _recognize(turned)
                 if _text_length(attempt) >= READS_PROPERLY:
-                    words = attempt
+                    words, upright = attempt, turned
                     break
                 if len(attempt) > len(words):
-                    words = attempt
-        return ocr_lines.normalize_words(words)
+                    words, upright = attempt, turned
+        return ocr_lines.normalize_words(words), upright
     except subprocess.TimeoutExpired:
         logger.warning("Tesseract: страница не распознана за %s с", timeout_seconds())
-        return []
+        return [], None
     except Exception:
         logger.exception("Tesseract OCR failed")
-        return []
+        return [], None
+
+
+def recognize_page_words(data: bytes) -> list:
+    """Positioned words for one page image, read whichever way up it is —
+    the same contract as ``win_ocr.recognize_page_words``.
+
+    Empty when Tesseract isn't available, the image can't be read, or
+    recognition fails or runs out of time.
+    """
+    return recognize_page(data)[0]
+
+
+# Margin around a cell read again, in pixels at RENDER_DPI — a cell's own
+# border must stay outside, the strokes of its digits inside.
+REGION_PADDING = 6
+
+
+def read_region(page, box, whitelist=None) -> str:
+    """The text of one region of a prepared page, read as a single line
+    (``--psm 7``) — for a cell whose value the whole-page reading missed.
+
+    ``box`` is ``(x0, y0, x1, y1)`` in the page's pixels; ``whitelist`` the
+    only characters allowed in the answer ("0123456789%,." for a rate), or
+    None for free text. Empty when nothing could be read.
+    """
+    if page is None or not available():
+        return ""
+    x0, y0, x1, y1 = box
+    x0 = max(int(x0) - REGION_PADDING, 0)
+    y0 = max(int(y0) - REGION_PADDING, 0)
+    x1 = min(int(x1) + REGION_PADDING, page.width)
+    y1 = min(int(y1) + REGION_PADDING, page.height)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return ""
+    args = (
+        _base_args() + ["stdin", "stdout"] + _tessdata_args()
+        + ["-l", LANGUAGES, "--psm", "7", "--dpi", str(RENDER_DPI)]
+    )
+    if whitelist:
+        args += ["-c", f"tessedit_char_whitelist={whitelist}"]
+    try:
+        text = _run(args, _png(page.crop((x0, y0, x1, y1))))
+    except subprocess.TimeoutExpired:
+        logger.warning("Tesseract: участок страницы не прочитан за %s с", timeout_seconds())
+        return ""
+    except (OSError, subprocess.SubprocessError):
+        logger.exception("Tesseract: участок страницы не прочитан")
+        return ""
+    return " ".join(ocr_lines.normalize_text(part) for part in text.split())
 
 
 def recognize_text(images: list) -> list:

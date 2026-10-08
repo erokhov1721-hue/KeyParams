@@ -12,6 +12,13 @@ FONT = Path(r"C:\Windows\Fonts\arial.ttf")
 
 
 @pytest.fixture(autouse=True)
+def tesseract_off():
+    """Здесь нужен настоящий Tesseract: заменяет одноимённую фикстуру из
+    conftest.py, которая выключает его во всех остальных тестах."""
+    yield
+
+
+@pytest.fixture(autouse=True)
 def fresh_availability(monkeypatch):
     for name in (
         tess_ocr.CMD_ENV, tess_ocr.TESSDATA_ENV, tess_ocr.PSM_ENV, tess_ocr.TIMEOUT_ENV,
@@ -214,24 +221,34 @@ def test_tesseract_output_goes_through_the_shared_normalization():
 
 # --- контрольные суммы моделей ---
 
-def test_models_matching_the_reference_raise_no_warning(tmp_path, monkeypatch, caplog):
+def _collect_warnings(monkeypatch):
+    """Предупреждения адаптера, перехваченные напрямую: настройки журнала,
+    которые меняют другие тесты (create_app), на них не влияют."""
+    warnings = []
+    monkeypatch.setattr(
+        tess_ocr.logger, "warning", lambda message, *args: warnings.append(message % args),
+    )
+    return warnings
+
+
+def test_models_matching_the_reference_raise_no_warning(tmp_path, monkeypatch):
     model = tmp_path / "rus.traineddata"
     model.write_bytes(b"x")
     monkeypatch.setattr(tess_ocr, "MODEL_SHA256", {"rus.traineddata": tess_ocr._sha256(model)})
+    warnings = _collect_warnings(monkeypatch)
 
-    with caplog.at_level("WARNING"):
-        assert tess_ocr.check_models(tmp_path) == []
-    assert "отличается" not in caplog.text
+    assert tess_ocr.check_models(tmp_path) == []
+    assert warnings == []
 
 
-def test_a_different_model_is_warned_about(tmp_path, caplog):
+def test_a_different_model_is_warned_about(tmp_path, monkeypatch):
     (tmp_path / "rus.traineddata").write_bytes(b"not the reference model")
+    warnings = _collect_warnings(monkeypatch)
 
-    with caplog.at_level("WARNING"):
-        differing = tess_ocr.check_models(tmp_path)
+    differing = tess_ocr.check_models(tmp_path)
 
     assert differing == ["rus.traineddata"]
-    assert "отличается от эталонной" in caplog.text
+    assert len(warnings) == 1 and "отличается от эталонной" in warnings[0]
 
 
 def test_the_installed_models_are_the_reference_ones():
@@ -239,3 +256,17 @@ def test_the_installed_models_are_the_reference_ones():
     folder, _languages = tess_ocr._languages()
 
     assert tess_ocr.check_models(folder) == []
+
+
+def test_read_region_reads_one_cell_with_a_whitelist():
+    _needs_tesseract()
+    page = _text_image(["Аванс, %          30%"]).convert("L")
+
+    # «Аванс, %» кончается около x=230, «30%» стоит между 300 и 390.
+    text = tess_ocr.read_region(page, (260, 20, 700, 90), whitelist="0123456789%,.")
+
+    assert text == "30%"
+
+
+def test_read_region_of_nothing_is_empty():
+    assert tess_ocr.read_region(None, (0, 0, 10, 10)) == ""

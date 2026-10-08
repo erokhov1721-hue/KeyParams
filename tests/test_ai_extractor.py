@@ -252,3 +252,39 @@ def test_contract_terms_images_asks_for_vat_too(monkeypatch):
     schema = fake_client.messages.calls[0]["output_config"]["format"]["schema"]
     assert "vat" in schema["properties"]
     assert fields["vat"] == "20%"
+
+
+def _contract_prompt(fake_client):
+    content = fake_client.messages.calls[0]["messages"][0]["content"]
+    return next(part["text"] for part in content if part["type"] == "text")
+
+
+def test_contract_terms_images_name_the_object_when_it_is_known(monkeypatch):
+    fake_client = _FakeClient(json.dumps({field: None for field in ai_extractor.CONTRACT_TERMS_IMAGE_FIELDS}))
+    monkeypatch.setattr(ai_extractor, "_get_client", lambda: fake_client)
+
+    ai_extractor.extract_contract_terms_from_images([b"png-bytes"], project_name="VEER UB9")
+
+    prompt = _contract_prompt(fake_client)
+    assert "«VEER UB9»" in prompt
+    assert "колонки этого объекта" in prompt
+
+
+def test_contract_terms_images_without_a_name_ask_for_no_column(monkeypatch):
+    fake_client = _FakeClient(json.dumps({field: None for field in ai_extractor.CONTRACT_TERMS_IMAGE_FIELDS}))
+    monkeypatch.setattr(ai_extractor, "_get_client", lambda: fake_client)
+
+    ai_extractor.extract_contract_terms_from_images([b"png-bytes"])
+
+    assert "колонки этого объекта" not in _contract_prompt(fake_client)
+
+
+def test_contract_terms_images_keep_an_unusual_guarantee_condition_verbatim(monkeypatch):
+    fake_client = _FakeClient(json.dumps({field: None for field in ai_extractor.CONTRACT_TERMS_IMAGE_FIELDS}))
+    monkeypatch.setattr(ai_extractor, "_get_client", lambda: fake_client)
+
+    ai_extractor.extract_contract_terms_from_images([b"png-bytes"])
+
+    prompt = _contract_prompt(fake_client)
+    assert "дословно" in prompt
+    assert "строго" not in prompt

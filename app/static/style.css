@@ -1365,6 +1365,19 @@ select option {
   background: var(--blue-dim);
 }
 
+/* Нестандартное условие в протоколе (гарантия «авансы на счёт ОБС» вместо
+   «включено / не включено») — тем же янтарным, что и предупреждения. */
+.badge-review {
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.contract-review-text,
+.contract-note {
+  display: block;
+  margin-top: 4px;
+}
+
 .contract-replace-link {
   display: inline-block;
   margin-top: 14px;
