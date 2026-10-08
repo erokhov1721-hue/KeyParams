@@ -109,6 +109,14 @@ def test_advance_never_takes_the_cap_on_the_unclosed_advance():
     assert contract_extractors.extract_advance_payment(text) == "30%"
 
 
+def test_advance_never_takes_another_conditions_percent_from_the_line_above():
+    # Строкой выше — другое условие со своим процентом и без номера строки:
+    # у него своя подпись, это не перенесённая цифра аванса.
+    text = "Гарантийное удержание 5%\n3 Аванс, % максимальная сумма не закрытого аванса 20%"
+
+    assert contract_extractors.extract_advance_payment(text) is None
+
+
 def test_advance_with_only_the_cap_in_sight_is_left_empty():
     # Строка выше — другое условие (начинается с номера), своей цифры у
     # аванса нигде нет: лучше пусто, чем 20% от ограничения.

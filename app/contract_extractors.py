@@ -28,6 +28,9 @@ ADVANCE_CAP_RE = re.compile(
 )
 # A figure with its percent sign — what an advance condition has to contain.
 PERCENT_FIGURE_RE = re.compile(r'\d+(?:[.,]\d+)?\s*%')
+# A word long enough to be a label of its own — what a line holding just a
+# wrapped value ("30%,") doesn't have.
+LABEL_WORD_RE = re.compile(r'[a-zа-яё]{4,}', re.IGNORECASE)
 BANK_GUARANTEE_RE = re.compile(
     r'банковск\w+\s+гаранти\w+\s+на\s+возврат\s+аванса\W+([^\n]+)', re.IGNORECASE,
 )
@@ -200,7 +203,10 @@ def extract_advance_payment(text):
         above = _line_before(lines, index)
         if above and not ROW_START_RE.match(above):
             above = ADVANCE_CAP_RE.sub(' ', above)
-            if PERCENT_FIGURE_RE.search(above):
+            # Only a line that is nothing but a figure — the wrapped first
+            # line of this cell, "30%," — and never another condition's row
+            # ("Гарантийное удержание 5%") that happens to sit above.
+            if PERCENT_FIGURE_RE.search(above) and not LABEL_WORD_RE.search(above):
                 return percent_value(above)
         return None
 
