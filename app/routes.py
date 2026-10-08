@@ -13,7 +13,8 @@ from flask import (
 )
 
 from . import (
-    auth, chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
+    auth, chart_render, comparison, corrections, cost_increase, estimate, estimate_sections,
+    excel_report,
     extractors, investor_summary, kp_analysis, master_import, passport as passport_module,
     pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard,
     workbook_cache,
@@ -1831,11 +1832,21 @@ def update_contract_terms(slug):
     auto_fields = list(data.get("contract_auto_fields", []))
     sources = dict(data.get("contract_sources") or {})
     review = dict(data.get("contract_review") or {})
+    corrected = []
     for field in passport_module.CONTRACT_FIELDS:
         old_value = data.get(field)
         new_value = request.form.get(field, "").strip() or None
         data[field] = new_value
         if new_value != old_value:
+            if field in auto_fields:
+                corrected.append({
+                    "field": field, "found": old_value, "corrected": new_value,
+                    "method": sources.get(field),
+                    "review": [
+                        item["reason"]
+                        for item in passport_module.contract_review_items(review, field)
+                    ],
+                })
             # A value a person typed is theirs: neither "found by Tesseract"
             # nor "non-standard — check it" applies to it any more.
             if field in auto_fields:
@@ -1846,6 +1857,15 @@ def update_contract_terms(slug):
     data["contract_sources"] = sources
     data["contract_review"] = review
     passport_module.save_passport_checked(data, path, expected_version)
+    # Logged only once the edit is saved — a refused stale edit corrects
+    # nothing. The log feeds new golden protocols; it stays on this machine.
+    if corrected:
+        file_hash = corrections.file_sha256(storage.contract_terms_path(root, slug))
+        for item in corrected:
+            corrections.record(root, {
+                "project": slug, "project_name": data.get("project_name"),
+                "file_sha256": file_hash, **item,
+            })
     return redirect(url_for("main.project_page", slug=slug))
 
 
