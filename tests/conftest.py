@@ -33,6 +33,20 @@ def tesseract_off(monkeypatch):
     monkeypatch.setattr(tess_ocr, "available", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def no_real_anthropic_api(monkeypatch):
+    """No test may reach the real Claude API: with a key on the machine, the
+    passport's AI fallback used to send real, paid requests from tests that
+    merely create a project. A test that needs a client puts its fake one in
+    with its own monkeypatch, which wins over this one."""
+    from app import ai_extractor
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("настоящий Claude API в тестах не вызывается")
+
+    monkeypatch.setattr(ai_extractor.anthropic, "Anthropic", refuse)
+
+
 def _require_fixture(path):
     if not path.exists():
         pytest.skip(
