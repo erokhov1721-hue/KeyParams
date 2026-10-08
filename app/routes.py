@@ -13,7 +13,8 @@ from flask import (
 )
 
 from . import (
-    auth, chart_render, comparison, cost_increase, estimate, estimate_sections, excel_report,
+    auth, chart_render, comparison, corrections, cost_increase, estimate, estimate_sections,
+    excel_report,
     extractors, investor_summary, kp_analysis, master_import, passport as passport_module,
     pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard,
     workbook_cache,
@@ -1063,6 +1064,12 @@ def create_project():
             extracted, filled, problem = passport_module.build_contract_terms(
                 dest, year_signed=data.get("year_signed"), project_name=project_name,
             )
+        except passport_module.RecognitionBusy:
+            # The project is created all the same, its protocol kept on file
+            # to be read again with "Заменить файл протокола".
+            current_app.logger.warning("Протокол нового проекта не распознан: сервер занят")
+            extracted, filled = {}, []
+            problem = passport_module.CONTRACT_PROBLEM_BUSY_NEW
         except pdf_reader.PdfReadError as e:
             current_app.logger.warning("Не удалось прочитать протокол: %s", e)
             storage.discard_staging(staging_root, slug)
@@ -1411,6 +1418,12 @@ def project_page(slug):
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
         contract_auto_fields=data.get("contract_auto_fields", []),
+        contract_sources=data.get("contract_sources") or {},
+        contract_review=data.get("contract_review") or {},
+        contract_notes=data.get("contract_notes") or [],
+        contract_method_labels=passport_module.METHOD_LABELS,
+        contract_review_note=passport_module.CONTRACT_REVIEW_NOTE,
+        contract_review_items=passport_module.contract_review_items,
         # Looked up in a fixed table, so an arbitrary ?problem=... value
         # renders nothing rather than reaching the page.
         contract_problem=passport_module.CONTRACT_PROBLEM_MESSAGES.get(
@@ -1550,6 +1563,13 @@ def upload_contract_terms(slug):
         extracted, filled, problem = passport_module.build_contract_terms(
             tmp, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
         )
+    except passport_module.RecognitionBusy:
+        current_app.logger.warning("Замена протокола отклонена: сервер занят распознаванием")
+        tmp.unlink(missing_ok=True)
+        return redirect(url_for(
+            "main.project_page", slug=slug,
+            problem=passport_module.CONTRACT_PROBLEM_BUSY,
+        ))
     except pdf_reader.PdfReadError as e:
         current_app.logger.warning("Протокол отклонён: %s", e)
         tmp.unlink(missing_ok=True)
@@ -1823,14 +1843,42 @@ def update_contract_terms(slug):
     expected_version = _expected_version()
     data = passport_module.load_passport(path)
     auto_fields = list(data.get("contract_auto_fields", []))
+    sources = dict(data.get("contract_sources") or {})
+    review = dict(data.get("contract_review") or {})
+    corrected = []
     for field in passport_module.CONTRACT_FIELDS:
         old_value = data.get(field)
         new_value = request.form.get(field, "").strip() or None
         data[field] = new_value
-        if new_value != old_value and field in auto_fields:
-            auto_fields.remove(field)
+        if new_value != old_value:
+            if field in auto_fields:
+                corrected.append({
+                    "field": field, "found": old_value, "corrected": new_value,
+                    "method": sources.get(field),
+                    "review": [
+                        item["reason"]
+                        for item in passport_module.contract_review_items(review, field)
+                    ],
+                })
+            # A value a person typed is theirs: neither "found by Tesseract"
+            # nor "non-standard — check it" applies to it any more.
+            if field in auto_fields:
+                auto_fields.remove(field)
+            sources.pop(field, None)
+            review.pop(field, None)
     data["contract_auto_fields"] = auto_fields
+    data["contract_sources"] = sources
+    data["contract_review"] = review
     passport_module.save_passport_checked(data, path, expected_version)
+    # Logged only once the edit is saved — a refused stale edit corrects
+    # nothing. The log feeds new golden protocols; it stays on this machine.
+    if corrected:
+        file_hash = corrections.file_sha256(storage.contract_terms_path(root, slug))
+        for item in corrected:
+            corrections.record(root, {
+                "project": slug, "project_name": data.get("project_name"),
+                "file_sha256": file_hash, **item,
+            })
     return redirect(url_for("main.project_page", slug=slug))
 
 

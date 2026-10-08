@@ -152,7 +152,7 @@ def _contract_terms_schema():
     }
 
 
-def extract_contract_terms_from_images(images: list) -> tuple:
+def extract_contract_terms_from_images(images: list, project_name=None) -> tuple:
     """Ask Claude to read a scanned contract-terms protocol directly as an
     image and return ``(fields, problem)``.
 
@@ -163,6 +163,10 @@ def extract_contract_terms_from_images(images: list) -> tuple:
     explicit choice for this document type. Never raises: on any failure
     ``fields`` is empty and ``problem`` is one of the ``PROBLEM_*`` codes,
     so the caller can tell the user *why* rather than showing blank fields.
+
+    ``project_name`` — the object whose figures are wanted. A protocol is
+    sometimes drawn up for two objects, a column each; named, Claude reads
+    the right column instead of whichever it lands on first.
     """
     if not images:
         return {}, None
@@ -178,17 +182,27 @@ def extract_contract_terms_from_images(images: list) -> tuple:
             }
             for image in images
         ]
+        object_hint = (
+            f"Нужны условия объекта «{project_name}». Если протокол составлен на "
+            "несколько объектов, по колонке на каждый, бери значения только из "
+            "колонки этого объекта.\n"
+            if project_name else ""
+        )
         content.append({
             "type": "text",
             "text": (
-                "Это скан протокола окончательных условий по договору. Найди на "
-                "изображении значения полей:\n"
+                "Это скан протокола окончательных условий по договору. "
+                + object_hint
+                + "Найди на изображении значения полей:\n"
                 "- smr_term: срок выполнения СМР (строительно-монтажных работ) в "
                 "месяцах — верни только число, без слова «месяцев» и без пояснений\n"
                 "- advance_payment: аванс, % — верни число со знаком % (например "
                 "«30%»), без пояснений и без остального текста условия\n"
-                "- bank_guarantee: включена ли банковская гарантия на возврат "
-                "аванса — ответь строго \"Включено\" или \"Не включено\"\n"
+                "- bank_guarantee: банковская гарантия на возврат аванса — если в "
+                "документе написано, что она включена (или «да»), ответь "
+                "\"Включено\"; если не включена (или «нет») — \"Не включено\"; если "
+                "там другое условие (например, «авансы на счёт ОБС»), верни его "
+                "текст дословно, не сводя к «включено / не включено»\n"
                 "- performance_bond_pct: performance bond, %\n"
                 "- vat: НДС — ставка или условие по НДС, как указано в документе\n\n"
                 "Если поле не найдено на изображении — верни null, не придумывай значение."

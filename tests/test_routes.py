@@ -2509,7 +2509,8 @@ def _stub_scan_returning(monkeypatch, fields, problem):
     )
     monkeypatch.setattr(
         passport_module.ai_extractor, "extract_contract_terms_from_images",
-        lambda images: (fields, problem),
+        # project_name: Claude is told which object's column to read.
+        lambda images, project_name=None: (fields, problem),
     )
 
 

@@ -17,18 +17,11 @@ import logging
 
 from PIL import Image
 
-from .ocr_lines import Word, group_into_lines
+from .ocr_lines import Word, group_into_lines, normalize_words
 
 logger = logging.getLogger(__name__)
 
 LANGUAGE = "ru"
-
-# Windows reads a percent sign as "0/0" often enough that every rate in a
-# protocol comes out wrong: "30%" as "300/0", and even the column heading
-# "Аванс, %" as "Аванс, 0/0". Replacing left to right puts them all back
-# ("300/0" -> "30%"), and a construction protocol has no reason to contain a
-# literal "0/0" of its own.
-PERCENT_ARTIFACT = "0/0"
 
 # The ways a page can be turned, upright first.
 ROTATIONS = (0, 90, 180, 270)
@@ -44,6 +37,10 @@ def _words_from_result(result) -> list:
     Taken word by word rather than from the engine's own lines: on a table it
     reads column by column, so its lines run down the page and every value
     ends up detached from the label it belongs to.
+
+    Windows reads a percent sign as "0/0" and Cyrillic letters as their Latin
+    look-alikes often enough to matter; ``normalize_words`` puts both back,
+    the same way it does for every engine that goes through it.
     """
     words = []
     for line in result.get("lines") or []:
@@ -54,9 +51,9 @@ def _words_from_result(result) -> list:
                 x0=rect["x"],
                 x1=rect["x"] + rect["width"],
                 height=rect["height"],
-                text=word["text"].replace(PERCENT_ARTIFACT, "%"),
+                text=word["text"],
             ))
-    return words
+    return normalize_words(words)
 
 
 def _recognize_at(image, angle):
@@ -101,8 +98,7 @@ def recognize_page_words(data: bytes) -> list:
 
 
 def _text_from_result(result) -> str:
-    text = "\n".join(group_into_lines(_words_from_result(result)))
-    return text.replace(PERCENT_ARTIFACT, "%")
+    return "\n".join(group_into_lines(_words_from_result(result)))
 
 
 def recognize_text(images: list) -> list:

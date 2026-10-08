@@ -14,11 +14,17 @@ FROM python:3.14-slim
 #   на этой же странице и полностью покрывает кириллицу);
 # libglib2.0-0 — нужна opencv-python-headless (тянет easyocr), без неё
 #   некоторые сборки падают при импорте уже на этапе `import cv2`;
-# curl — только для HEALTHCHECK ниже.
+# curl — только для HEALTHCHECK ниже;
+# tesseract-ocr, tesseract-ocr-rus — распознавание сканов протоколов
+#   (app/tess_ocr.py). Модели eng и osd пакет tesseract-ocr тянет сам как
+#   зависимости; программу ищет в PATH, модели — у себя, настраивать ничего
+#   не нужно. На Windows вместо них — портативная сборка tess_min.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
         libglib2.0-0 \
         curl \
+        tesseract-ocr \
+        tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

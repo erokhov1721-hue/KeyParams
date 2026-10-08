@@ -10,6 +10,10 @@ easyocr>=1.7,<2.0
 # app falls back to EasyOCR.
 winocr>=0.0.15; sys_platform == "win32"
 Pillow>=10.0,<13.0
+# Page preparation for Tesseract (app/tess_ocr.py): binarising, straightening,
+# removing a table's grid. It was installed already — easyocr pulls it in —
+# but is listed on its own now that tess_ocr depends on it directly.
+opencv-python-headless>=5.0.0.93,<6.0
 openpyxl>=3.1,<4.0
 pdfplumber>=0.11,<0.12
 reportlab>=4.0,<5.0

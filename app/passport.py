@@ -1,13 +1,16 @@
 import json
 import os
 import re
+import sys
+import threading
+from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from . import (
     ai_extractor, contract_extractors, extractors, ocr, ocr_lines, pdf_reader,
-    protocol_columns, win_ocr,
+    protocol_columns, tess_ocr, win_ocr,
 )
 from .document_reader import DocxContent, read_docx
 
@@ -214,6 +217,11 @@ def build_passport(project_name: str, dgp_path=None, tz_path=None) -> dict:
 CONTRACT_PROBLEM_NOTHING_FOUND = "nothing_found"
 CONTRACT_PROBLEM_COLUMN_UNKNOWN = "column_unknown"
 CONTRACT_PROBLEM_UNREADABLE = "unreadable"
+# The server was already reading as many scans as it may at once.
+# "busy" — a replaced protocol, the old one kept; "busy_new" — a new
+# project, its protocol saved but not read yet.
+CONTRACT_PROBLEM_BUSY = "busy"
+CONTRACT_PROBLEM_BUSY_NEW = "busy_new"
 
 # Below this much text, an engine has not read the page — it has returned the
 # few stray marks it could make out. A protocol page holds thousands of
@@ -257,6 +265,16 @@ CONTRACT_PROBLEM_MESSAGES = {
     CONTRACT_PROBLEM_UNREADABLE: (
         "Не удалось прочитать файл — убедитесь, что это корректный PDF. "
         "Прежний протокол оставлен на месте."
+    ),
+    CONTRACT_PROBLEM_BUSY: (
+        "Сервер сейчас распознаёт другие протоколы, и этот файл прочитать не "
+        "успел. Прежний протокол и значения оставлены на месте — загрузите "
+        "файл ещё раз через минуту."
+    ),
+    CONTRACT_PROBLEM_BUSY_NEW: (
+        "Протокол сохранён, но не распознан: сервер сейчас распознаёт другие "
+        "протоколы. Через минуту нажмите «Заменить файл протокола» и загрузите "
+        "его ещё раз."
     ),
     CONTRACT_PROBLEM_NOTHING_FOUND: (
         "Файл прочитан, но ни одно условие распознать не удалось. "
@@ -317,53 +335,6 @@ def _terms_from_text(text):
     }
 
 
-def _local_ocr_engines():
-    """The OCR engines to try on a scan, fastest first.
-
-    Windows' own engine reads a protocol page in about a second; EasyOCR takes
-    minutes over the same page, so it only gets a turn if Windows can't help —
-    the package missing, or the Russian language pack not installed.
-    """
-    engines = [win_ocr] if win_ocr.available() else []
-    engines.append(ocr)
-    return engines
-
-
-def _terms_from_local_ocr(pdf_path, problem, project_name=None):
-    """Read a scanned protocol with the OCR on this machine, after the API has
-    already failed.
-
-    Renders its own pages rather than reusing the ones sent to the API: those
-    are capped to the size the API accepts, and on an A3 protocol the shrink
-    costs exactly the small print the rates are written in.
-
-    Runs without the OCR_FALLBACK_ENABLED opt-in that the passport fields
-    need: by the time this is reached the fast path is already gone, so the
-    choice isn't between a quick answer and a slow one but between a slow
-    answer and none at all.
-
-    Keeps the original problem code when OCR turns up nothing, so the page
-    still names the thing that actually needs fixing.
-    """
-    images = pdf_reader.render_pages_to_images(pdf_path, max_long_edge=None)
-    for engine in _local_ocr_engines():
-        pages = [engine.recognize_page_words(image) for image in images]
-        text, ambiguous = _protocol_text(pages, project_name)
-        if len(text.strip()) < MIN_READABLE_TEXT:
-            # Barely anything came back: this engine didn't read the page, so
-            # the next one is worth its time.
-            continue
-        found = _terms_from_text(text)
-        if any(value is not None for value in found.values()):
-            return found, CONTRACT_PROBLEM_COLUMN_UNKNOWN if ambiguous else None
-        # The page was read and simply doesn't say these things in words this
-        # program knows. A second engine reading the same page differently
-        # will not change that, and on this machine it costs six minutes of
-        # the user staring at a page that appears to be doing nothing.
-        return {}, CONTRACT_PROBLEM_NOTHING_FOUND
-    return {}, problem
-
-
 def _protocol_text(pages, project_name):
     """``(text, ambiguous)`` — the protocol as this project's own reading.
 
@@ -380,11 +351,560 @@ def _protocol_text(pages, project_name):
     texts = []
     ambiguous = False
     for words in pages:
-        kept, chosen = protocol_columns.keep_project_column(words, project_name)
+        lines, chosen = protocol_columns.project_lines(words, project_name)
         if not chosen and protocol_columns.is_multi_object(words):
             ambiguous = True
-        texts.append("\n".join(ocr_lines.group_into_lines(kept)))
+        texts.append("\n".join(lines))
     return "\n".join(texts), ambiguous
+
+
+# --- распознавание протокола: каскад методов по полям ---
+#
+# Текстовый слой PDF читается всегда и первым. Дальше — методы для скана, в
+# порядке из настройки: каждый следующий вызывается, только пока какого-то из
+# четырёх полей протокола нет, и добирает только недостающие — найденное
+# раньше не перезаписывает. Поле «не найдено», если значения нет или оно не
+# прошло проверку (срок вне 1–120 месяцев, процент вне 0–100 и т. п.).
+
+# The four conditions read off the protocol itself. VAT is not among them: it
+# comes from the signing-year rule, and only Claude reads a rate off the page —
+# counting it would send every scan without a year to the paid API for one
+# figure the rule usually supplies anyway.
+CONTRACT_OCR_FIELDS = ["smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct"]
+
+METHOD_TEXT = "text"
+METHOD_TESSERACT = "tesseract"
+METHOD_CLAUDE = "claude"
+METHOD_WINDOWS = "windows"
+METHOD_EASYOCR = "easyocr"
+METHOD_RULE = "rule"
+
+# How a method is named on the page, next to the value it found.
+METHOD_LABELS = {
+    METHOD_TEXT: "текст PDF",
+    METHOD_TESSERACT: "Tesseract",
+    METHOD_CLAUDE: "Claude",
+    METHOD_WINDOWS: "Windows OCR",
+    METHOD_EASYOCR: "EasyOCR",
+    METHOD_RULE: "по году подписания",
+}
+
+SCAN_METHODS = (METHOD_TESSERACT, METHOD_CLAUDE, METHOD_WINDOWS, METHOD_EASYOCR)
+LOCAL_SCAN_METHODS = (METHOD_TESSERACT, METHOD_WINDOWS, METHOD_EASYOCR)
+
+# The order the scan methods are tried in, comma-separated — e.g.
+# "windows,tesseract,claude,easyocr". Unknown names are ignored; a method
+# left out is not used at all.
+SCAN_ORDER_ENV = "KEYPARAMS_CONTRACT_SCAN_ORDER"
+# The free methods on this machine first, the paid API after them; EasyOCR,
+# minutes a page, last. Windows OCR exists only on Windows, so the server's
+# default goes without it. (The Docker setup narrows it further — see
+# docker-compose.yml — while the API account has no credit.)
+DEFAULT_SCAN_ORDER = (
+    (METHOD_TESSERACT, METHOD_WINDOWS, METHOD_CLAUDE, METHOD_EASYOCR)
+    if sys.platform == "win32"
+    else (METHOD_TESSERACT, METHOD_CLAUDE, METHOD_EASYOCR)
+)
+
+# A PDF can carry a text layer that holds only part of the protocol — a
+# stamp, a header — with the conditions table pasted in as a picture. Set to
+# 1, a text layer that leaves fields missing is followed by the scan methods
+# for those fields; off by default, so a PDF with real text behaves exactly
+# as before.
+WEAK_TEXT_LAYER_ENV = "KEYPARAMS_CONTRACT_SCAN_WEAK_TEXT_LAYER"
+
+# Bank-guarantee answers the passport takes as they are. Anything else — "Все
+# авансы на счёт ОБС" — is a condition of its own, kept word for word and
+# flagged for a person to look at rather than squeezed into a yes or no.
+STANDARD_GUARANTEE = ("Включено", "Не включено")
+
+# Why a value is flagged "проверьте" — and only these: a value is shown with
+# its source always, but asked to be checked only when there is a reason.
+REVIEW_NONSTANDARD = "nonstandard"
+REVIEW_ZERO = "zero"
+REVIEW_DISAGREE = "disagree"
+REVIEW_REREAD = "reread"
+
+CONTRACT_REVIEW_NOTE = "проверьте"
+
+MONTHS_RANGE = (1, 120)
+PERCENT_RANGE = (0, 100)
+PERCENT_FIELDS = ("advance_payment", "performance_bond_pct")
+
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+# How well a value can stand in the passport.
+VALUE_OK = "ok"
+VALUE_DOUBTFUL = "doubtful"   # kept, flagged, and the next method still asked
+VALUE_INVALID = "invalid"     # counts as not found
+
+
+def contract_scan_order():
+    """The scan methods to try, in order, as configured."""
+    raw = os.environ.get(SCAN_ORDER_ENV)
+    if not raw or not raw.strip():
+        return list(DEFAULT_SCAN_ORDER)
+    order = []
+    for name in raw.split(","):
+        name = name.strip().lower()
+        if name in SCAN_METHODS and name not in order:
+            order.append(name)
+    return order or list(DEFAULT_SCAN_ORDER)
+
+
+def scan_weak_text_layer():
+    return os.environ.get(WEAK_TEXT_LAYER_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _number(value):
+    match = _NUMBER_RE.search(str(value))
+    return float(match.group().replace(",", ".")) if match else None
+
+
+def _normalized_term(field, value):
+    """A value in the passport's own shape: a bare month count, a rate with
+    its "%" — whichever method produced it. Claude in particular isn't bound
+    by the anchors' patterns and may hand back "33 месяца" or "30 %"."""
+    if value is None:
+        return None
+    if field == "smr_term":
+        return contract_extractors.bare_number(str(value))
+    if field == "advance_payment":
+        return contract_extractors.percent_value(str(value))
+    text = str(value).strip()
+    return text or None
+
+
+def assess_contract_value(field, value):
+    """``VALUE_OK``, ``VALUE_DOUBTFUL`` or ``VALUE_INVALID``.
+
+    Invalid — not found, the next method is asked: no value, a month count
+    outside 1–120, a rate without its "%" or over 100. Doubtful — a 0% rate:
+    a protocol can agree to no advance, but on a scan 0% is also what "30%"
+    becomes when the 3 is lost, so it is kept, flagged, and the next method is
+    still asked.
+    """
+    if value is None or not str(value).strip():
+        return VALUE_INVALID
+    if field == "smr_term":
+        months = _number(value)
+        ok = months is not None and MONTHS_RANGE[0] <= months <= MONTHS_RANGE[1]
+        return VALUE_OK if ok else VALUE_INVALID
+    if field in PERCENT_FIELDS:
+        rate = _number(value)
+        if "%" not in str(value) or rate is None or not PERCENT_RANGE[0] <= rate <= PERCENT_RANGE[1]:
+            return VALUE_INVALID
+        return VALUE_DOUBTFUL if rate == 0 else VALUE_OK
+    return VALUE_OK
+
+
+def contract_value_is_valid(field, value):
+    """Whether ``value`` can stand in the passport as this field at all."""
+    return assess_contract_value(field, value) != VALUE_INVALID
+
+
+class _ScanPages:
+    """The protocol's pages as pictures, rendered once per size and only when
+    a method needs them: Claude gets pages capped to what the API takes, the
+    local engines full-size ones (the shrink costs the small print the rates
+    are written in), Tesseract its own 300 dpi."""
+
+    def __init__(self, pdf_path):
+        self.pdf_path = pdf_path
+        self._cache = {}
+
+    def _get(self, key, **kwargs):
+        if key not in self._cache:
+            self._cache[key] = pdf_reader.render_pages_to_images(self.pdf_path, **kwargs)
+        return self._cache[key]
+
+    def for_api(self):
+        return self._get("api")
+
+    def for_local(self):
+        return self._get("local", max_long_edge=None)
+
+    def for_tesseract(self):
+        return self._get("tesseract", resolution=tess_ocr.RENDER_DPI, max_long_edge=None)
+
+
+class _MethodResult:
+    """What one scan method gave: the fields it found, a problem code (Claude's
+    reason for coming back empty), whether it read the page at all, whether
+    its column choice was a guess, a note for the page, a VAT rate read off
+    the document, and which fields it had to read again cell by cell."""
+
+    def __init__(self, found=None, problem=None, read=False, ambiguous=False,
+                 note=None, vat=None, reread=()):
+        self.found = found or {}
+        self.problem = problem
+        self.read = read
+        self.ambiguous = ambiguous
+        self.note = note
+        self.vat = vat
+        self.reread = set(reread)
+
+
+# A row's label carrying the percent sign — "Performance bond, %" — makes a
+# bare figure in that row a rate: the sign the recogniser dropped from the
+# value is still written once, in the label.
+_PERCENT_ROW_LABELS = {
+    "performance_bond_pct": contract_extractors.BOND_ANCHOR_RE,
+}
+
+
+def _percent_from_labelled_row(text, field):
+    """A bare figure in the row whose label says "%" — "3" beside
+    "Performance bond, %" — as that rate ("3%"), or None."""
+    anchor = _PERCENT_ROW_LABELS[field]
+    for line in text.splitlines():
+        match = anchor.search(line)
+        if not match:
+            continue
+        label_end = line.find("%", match.end())
+        if label_end == -1:
+            return None
+        figure = _NUMBER_RE.search(line, label_end + 1)
+        return f"{figure.group()}%" if figure else None
+    return None
+
+
+def _terms_from_scan_text(text):
+    """``_terms_from_text``, plus a percent field the anchors missed because
+    the recogniser dropped its "%" — taken when the row's label has one."""
+    found = _terms_from_text(text)
+    for field in _PERCENT_ROW_LABELS:
+        if assess_contract_value(field, _normalized_term(field, found.get(field))) == VALUE_INVALID:
+            found[field] = _percent_from_labelled_row(text, field) or found.get(field)
+    return found
+
+
+def _read_with_engine(engine, images, project_name):
+    pages = [engine.recognize_page_words(image) for image in images]
+    text, ambiguous = _protocol_text(pages, project_name)
+    read = len(text.strip()) >= MIN_READABLE_TEXT
+    return _MethodResult(
+        found=_terms_from_scan_text(text) if read else {}, read=read, ambiguous=ambiguous,
+    )
+
+
+# Where a cell is read again when Tesseract's whole-page reading left its
+# value out (or read a doubtful 0%): the label it sits beside, and the
+# characters its value may hold (None — free text, for "Не включено").
+_REREAD_CELLS = {
+    "smr_term": (contract_extractors.SMR_ANCHOR_RE, "0123456789"),
+    "advance_payment": (re.compile(r"аванс\w*\s*[,;]?\s*%", re.IGNORECASE), "0123456789%,."),
+    "performance_bond_pct": (contract_extractors.BOND_ANCHOR_RE, "0123456789%,."),
+    "bank_guarantee": (
+        re.compile(r"банковск\w+\s+гаранти\w+\s+на\s+возврат\s+аванс\w*", re.IGNORECASE), None,
+    ),
+}
+
+
+def _value_box(row, anchor, right_edge):
+    """The part of a row to the right of its label — where the label's value
+    sits — as ``(x0, y0, x1, y1)``, or None if the label isn't in the row."""
+    ordered = sorted(row, key=lambda word: word.x0)
+    text = ""
+    starts = []
+    for word in ordered:
+        if text:
+            text += " "
+        starts.append(len(text))
+        text += word.text
+    match = anchor.search(text)
+    if match is None:
+        return None
+    label_end = max(
+        word.x1 for word, start in zip(ordered, starts) if start < match.end()
+    )
+    top = min(word.y - word.height / 2 for word in ordered)
+    bottom = max(word.y + word.height / 2 for word in ordered)
+    if right_edge - label_end < 10:
+        return None
+    return (label_end + 4, top, right_edge, bottom)
+
+
+def _reread_value(field, raw):
+    if field == "smr_term":
+        return contract_extractors.bare_number(raw)
+    if field == "bank_guarantee":
+        return contract_extractors._normalized_guarantee(raw) if raw.strip() else None
+    # A figure with its own "%" first; failing that, a bare one — the label
+    # carries the "%" (it is how the cell was found), so it is that rate.
+    with_sign = contract_extractors.PERCENT_FIGURE_RE.search(raw)
+    number = contract_extractors.bare_number(with_sign.group() if with_sign else raw)
+    return f"{number}%" if number is not None else None
+
+
+def _row_text(row):
+    return " ".join(word.text for word in sorted(row, key=lambda word: word.x0))
+
+
+def _row_holds_advance_cap(row):
+    return bool(re.search(r"не\s*закрыт\w*\s+аванс", _row_text(row), re.IGNORECASE))
+
+
+def _wrapped_line_box(rows, index, label_box):
+    """The line above the label's row, across the value's columns, if it is
+    nothing but a figure ("30%," — or "0%," as Tesseract may misread it) —
+    or None when it has a label of its own or there is none."""
+    if index == 0:
+        return None
+    above = rows[index - 1]
+    text = _row_text(above)
+    if contract_extractors.LABEL_WORD_RE.search(text) or not re.search(r"\d", text):
+        return None
+    top = min(word.y - word.height / 2 for word in above)
+    bottom = max(word.y + word.height / 2 for word in above)
+    return (label_box[0], top, label_box[2], bottom)
+
+
+def _reread_cells(pages, project_name, found):
+    """Fields Tesseract's whole-page reading missed — or read as a doubtful
+    0% — read again cell by cell: the region to the right of the field's
+    label, as one line, digits only where the value is a figure. Only fields
+    whose label was found get this, and a cell read back as 0% again is not
+    taken over what was there."""
+    rereads = {}
+    for field, (anchor, whitelist) in _REREAD_CELLS.items():
+        if assess_contract_value(field, _normalized_term(field, found.get(field))) == VALUE_OK:
+            continue
+        for words, page in pages:
+            if page is None or not words:
+                continue
+            kept, _chosen = protocol_columns.keep_project_column(words, project_name)
+            right_edge = max(word.x1 for word in kept)
+            # On a protocol for several objects the image still holds the
+            # other objects' columns: the cell is this object's column only.
+            span = protocol_columns.project_column_span(words, project_name)
+            value = None
+            rows = protocol_columns.project_rows(words, project_name)
+            for index, row in enumerate(rows):
+                box = _value_box(row, anchor, right_edge)
+                if box is None:
+                    continue
+                if field == "advance_payment" and _row_holds_advance_cap(row):
+                    # The label's line holds only the cap on the unclosed
+                    # advance — its figure is never the advance. The advance
+                    # is the wrapped first line of the cell, just above, if
+                    # that line is a bare figure with no label of its own.
+                    box = _wrapped_line_box(rows, index, box)
+                    if box is None:
+                        break
+                if span is not None:
+                    box = (max(box[0], span[0]), box[1], min(box[2], span[1]), box[3])
+                    if box[2] - box[0] < 10:
+                        break
+                value = _reread_value(field, tess_ocr.read_region(page, box, whitelist))
+                break
+            if assess_contract_value(field, value) == VALUE_OK:
+                rereads[field] = value
+                break
+    return rereads
+
+
+def _scan_with_tesseract(pages, project_name):
+    available, reason = tess_ocr.availability()
+    if not available:
+        return _MethodResult(note=f"Tesseract недоступен: {reason}.")
+    read_pages = tess_ocr.recognize_pages(pages.for_tesseract())
+    text, ambiguous = _protocol_text([words for words, _page in read_pages], project_name)
+    read = len(text.strip()) >= MIN_READABLE_TEXT
+    if not read:
+        return _MethodResult(note="Tesseract не смог прочитать страницы протокола.")
+    found = _terms_from_scan_text(text)
+    rereads = _reread_cells(read_pages, project_name, found)
+    found.update(rereads)
+    return _MethodResult(found=found, read=True, ambiguous=ambiguous, reread=rereads)
+
+
+def _scan_with_claude(pages, project_name):
+    images = pages.for_api()
+    # Only named when there is a name: a caller (or a test) replacing the
+    # function may still take the images alone.
+    if project_name:
+        found, problem = ai_extractor.extract_contract_terms_from_images(
+            images, project_name=project_name,
+        )
+    else:
+        found, problem = ai_extractor.extract_contract_terms_from_images(images)
+    found = dict(found or {})
+    # Claude is asked each figure as a rate ("аванс, %", "performance bond,
+    # %"), so a bare number in its answer is that rate.
+    for field in PERCENT_FIELDS:
+        value = found.get(field)
+        if value is not None and "%" not in str(value):
+            found[field] = contract_extractors.percent_value(str(value))
+    return _MethodResult(found=found, problem=problem, vat=found.get("vat"))
+
+
+def _scan_with_windows(pages, project_name):
+    if not win_ocr.available():
+        return _MethodResult()
+    return _read_with_engine(win_ocr, pages.for_local(), project_name)
+
+
+def _scan_with_easyocr(pages, project_name):
+    return _read_with_engine(ocr, pages.for_local(), project_name)
+
+
+_SCAN_RUNNERS = {
+    METHOD_TESSERACT: _scan_with_tesseract,
+    METHOD_CLAUDE: _scan_with_claude,
+    METHOD_WINDOWS: _scan_with_windows,
+    METHOD_EASYOCR: _scan_with_easyocr,
+}
+
+
+class _Collected:
+    """What the methods have found so far: each field's value and source, the
+    fields still open to the next method (missing, or only a doubtful 0%),
+    and the reasons to check a value."""
+
+    def __init__(self):
+        self.values = {}
+        self.sources = {}
+        self.doubtful = set()
+        self.review = {}
+
+    def flag(self, field, reason, text):
+        self.review.setdefault(field, []).append({"reason": reason, "text": text})
+
+    def open_fields(self):
+        return [
+            field for field in CONTRACT_OCR_FIELDS
+            if field not in self.values or field in self.doubtful
+        ]
+
+    def take(self, method_found, method, reread=()):
+        """Add the values ``method`` found for fields still open; returns the
+        fields it settled or changed."""
+        added = []
+        for field in self.open_fields():
+            value = _normalized_term(field, method_found.get(field))
+            verdict = assess_contract_value(field, value)
+            if verdict == VALUE_INVALID:
+                continue
+            if field in self.doubtful:
+                if verdict != VALUE_OK:
+                    continue  # another 0% changes nothing
+                earlier = self.sources[field]
+                self.flag(field, REVIEW_DISAGREE, (
+                    f"способы разошлись: {METHOD_LABELS[earlier]} — {self.values[field]}, "
+                    f"{METHOD_LABELS[method]} — {value}"
+                ))
+                self.doubtful.discard(field)
+                self.review[field] = [
+                    item for item in self.review[field] if item["reason"] != REVIEW_ZERO
+                ]
+            elif verdict == VALUE_DOUBTFUL:
+                self.doubtful.add(field)
+                self.flag(field, REVIEW_ZERO, f"{value} — проверьте, не потерялась ли цифра")
+            self.values[field] = value
+            self.sources[field] = method
+            if field in reread:
+                self.flag(field, REVIEW_REREAD, "значение прочитано повторно, отдельно по ячейке")
+            added.append(field)
+        return added
+
+
+def _scan_cascade(pdf_path, project_name, collected):
+    """Run the scan methods in the configured order for whatever ``collected``
+    still lacks. Returns ``(problem, notes, vat)``: Claude's reason for coming
+    back empty (or the column guess, or "nothing found"), notes for the page,
+    and a VAT rate read off the document, if any."""
+    pages = _ScanPages(pdf_path)
+    api_problem = None
+    ambiguous = False
+    local_read = False
+    notes = []
+    vat = None
+    for method in contract_scan_order():
+        if not collected.open_fields():
+            break
+        # EasyOCR takes minutes on this machine. Once another engine here has
+        # read the page, a second reading of the same page will not say what
+        # the first couldn't find — only cost the wait.
+        if method == METHOD_EASYOCR and local_read:
+            continue
+        result = _SCAN_RUNNERS[method](pages, project_name)
+        if result.note:
+            notes.append(result.note)
+        if method == METHOD_CLAUDE and result.problem:
+            api_problem = result.problem
+        if result.read and method in LOCAL_SCAN_METHODS:
+            local_read = True
+        if collected.take(result.found, method, result.reread) and result.ambiguous:
+            ambiguous = True
+        if result.vat and vat is None:
+            vat = result.vat
+
+    if collected.values or vat:
+        return (CONTRACT_PROBLEM_COLUMN_UNKNOWN if ambiguous else None), notes, vat
+    if local_read:
+        # The page was read and simply doesn't say these things in words this
+        # program knows — that, not the API, is what there is to report.
+        return CONTRACT_PROBLEM_NOTHING_FOUND, notes, vat
+    return api_problem, notes, vat
+
+
+class RecognitionBusy(Exception):
+    """Raised by ``build_contract_terms`` when as many scans are being read
+    as may be at once and the queue for them is full too — the caller
+    answers "try again in a minute" instead of tying up a request thread."""
+
+
+# Scans read at once, scans allowed to wait for a free slot, and how long one
+# may wait. A scan takes the request thread that brought it for its whole
+# reading; with waitress's eight threads, two reading and two waiting leave
+# four for everyone else's pages, however many protocols arrive at once.
+OCR_SLOTS_ENV = "KEYPARAMS_OCR_SLOTS"
+OCR_QUEUE_ENV = "KEYPARAMS_OCR_QUEUE"
+DEFAULT_OCR_SLOTS = 2
+DEFAULT_OCR_QUEUE = 2
+OCR_WAIT_SECONDS = 90
+
+_ocr_condition = threading.Condition()
+_ocr_running = 0
+_ocr_waiting = 0
+
+
+def _env_int(name, default, minimum):
+    try:
+        return max(minimum, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+@contextmanager
+def _ocr_slot():
+    """Hold one of the reading slots for the duration of a scan, waiting in
+    the queue for one if need be; ``RecognitionBusy`` when the queue is full
+    or the wait runs out."""
+    global _ocr_running, _ocr_waiting
+    slots = _env_int(OCR_SLOTS_ENV, DEFAULT_OCR_SLOTS, 1)
+    queue = _env_int(OCR_QUEUE_ENV, DEFAULT_OCR_QUEUE, 0)
+    with _ocr_condition:
+        if _ocr_running >= slots:
+            if _ocr_waiting >= queue:
+                raise RecognitionBusy()
+            _ocr_waiting += 1
+            try:
+                free = _ocr_condition.wait_for(
+                    lambda: _ocr_running < slots, timeout=OCR_WAIT_SECONDS,
+                )
+            finally:
+                _ocr_waiting -= 1
+            if not free:
+                raise RecognitionBusy()
+        _ocr_running += 1
+    try:
+        yield
+    finally:
+        with _ocr_condition:
+            _ocr_running -= 1
+            _ocr_condition.notify()
 
 
 def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple:
@@ -393,35 +913,48 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     ``year_signed`` sets the VAT rate by rule (see ``vat_for_year``), which
     takes precedence over any rate found in the document.
 
-    Returns ``(data, filled, problem)``. Tries the PDF's own text layer
-    first (instant, regex-based). If the page turns out to be a scan with no
-    text at all, asks Claude to read it directly as an image — much faster on
-    this CPU-only setup than OCR, and it needs no opt-in since it isn't slow.
-    Only if that fails does local OCR get its turn, slowly and offline.
+    Returns ``(data, filled, problem)``. The PDF's own text layer is read
+    first (instant, regex-based). A scan — no text layer at all, or, with
+    ``WEAK_TEXT_LAYER_ENV`` on, one that left fields missing — goes
+    through the scan methods in the configured order (``SCAN_ORDER_ENV``,
+    by default Tesseract, Claude, Windows OCR, EasyOCR), each asked only
+    for the fields still open; what an earlier one found stays, except a
+    doubtful 0% that a later method reads as a real rate.
+
+    ``data`` also carries, for the page: ``contract_sources`` — which method
+    found each field; ``contract_review`` — per field, the reasons to check
+    it (``{"reason", "text"}``: a non-standard condition kept word for word,
+    a 0% rate, methods that disagreed, a cell read again on its own);
+    ``contract_notes`` — what went wrong along the way (a missing Tesseract,
+    say) that didn't stop the card from being filled.
 
     ``problem`` is None when at least one field was filled; otherwise it's a
     code from ``CONTRACT_PROBLEM_MESSAGES`` saying why, so the page can
     explain itself rather than showing a silently empty card. Whatever isn't
     found stays None, to be filled in by hand.
+
+    Raises ``RecognitionBusy`` when a scan would have to be read but the
+    server is already reading as many as it may (see ``_ocr_slot``).
     """
     text = pdf_reader.read_pdf_text(pdf_path)
+    collected = _Collected()
     problem = None
+    notes = []
+    vat = None
     if text.strip():
-        found = _terms_from_text(text)
+        collected.take(_terms_from_text(text), METHOD_TEXT)
+        if collected.open_fields() and scan_weak_text_layer():
+            with _ocr_slot():
+                problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
     else:
-        images = pdf_reader.render_pages_to_images(pdf_path)
-        found, problem = ai_extractor.extract_contract_terms_from_images(images)
-        if problem is not None:
-            found, problem = _terms_from_local_ocr(pdf_path, problem, project_name)
+        with _ocr_slot():
+            problem, notes, vat = _scan_cascade(pdf_path, project_name, collected)
 
-    data = {field: found.get(field) for field in CONTRACT_FIELDS}
-    # Whichever path found it — the regex path already returns the right
-    # shape, but Claude reading a scanned image isn't bound by that regex
-    # and might still hand back "30 %" or "33 месяца" despite being asked
-    # not to. smr_term is a bare count of months; advance_payment keeps its
-    # "%" (a percentage with the sign stripped reads as unfinished).
-    data["smr_term"] = contract_extractors.bare_number(data["smr_term"])
-    data["advance_payment"] = contract_extractors.percent_value(data["advance_payment"])
+    data = {field: collected.values.get(field) for field in CONTRACT_FIELDS}
+    sources = dict(collected.sources)
+    if vat is not None and str(vat).strip():
+        data["vat"] = str(vat).strip()
+        sources["vat"] = METHOD_CLAUDE
 
     # Decide the warning on what the document itself gave up, before the VAT
     # rule adds a field of its own — otherwise a known signing year would
@@ -433,9 +966,32 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     rate = vat_for_year(year_signed)
     if rate is not None:
         data["vat"] = rate
+        sources["vat"] = METHOD_RULE
 
+    guarantee = data.get("bank_guarantee")
+    if guarantee and guarantee not in STANDARD_GUARANTEE:
+        collected.flag(
+            "bank_guarantee", REVIEW_NONSTANDARD,
+            f"нестандартное условие, в протоколе: «{guarantee}»",
+        )
+
+    data["contract_sources"] = {f: m for f, m in sources.items() if data.get(f) is not None}
+    data["contract_review"] = {f: items for f, items in collected.review.items() if items}
+    data["contract_notes"] = notes
     filled = [f for f in CONTRACT_FIELDS if data[f] is not None]
     return data, filled, problem
+
+
+def contract_review_items(review, field):
+    """The reasons to check ``field`` as ``[{"reason", "text"}]`` — also for
+    a passport saved before reasons existed, where the review held just the
+    non-standard text."""
+    items = (review or {}).get(field)
+    if not items:
+        return []
+    if isinstance(items, str):
+        return [{"reason": REVIEW_NONSTANDARD, "text": f"нестандартное условие, в протоколе: «{items}»"}]
+    return list(items)
 
 
 def _apply_ai_fallback(data, dgp, tz, ocr_dgp, ocr_tz):
