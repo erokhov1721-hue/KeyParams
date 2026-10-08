@@ -380,6 +380,13 @@ LOCAL_SCAN_METHODS = (METHOD_TESSERACT, METHOD_WINDOWS, METHOD_EASYOCR)
 SCAN_ORDER_ENV = "KEYPARAMS_CONTRACT_SCAN_ORDER"
 DEFAULT_SCAN_ORDER = SCAN_METHODS
 
+# A PDF can carry a text layer that holds only part of the protocol — a
+# stamp, a header — with the conditions table pasted in as a picture. Set to
+# 1, a text layer that leaves fields missing is followed by the scan methods
+# for those fields; off by default, so a PDF with real text behaves exactly
+# as before.
+WEAK_TEXT_LAYER_ENV = "KEYPARAMS_CONTRACT_SCAN_WEAK_TEXT_LAYER"
+
 # Bank-guarantee answers the passport takes as they are. Anything else — "Все
 # авансы на счёт ОБС" — is a condition of its own, kept word for word and
 # flagged for a person to look at rather than squeezed into a yes or no.
@@ -404,6 +411,10 @@ def contract_scan_order():
         if name in SCAN_METHODS and name not in order:
             order.append(name)
     return order or list(DEFAULT_SCAN_ORDER)
+
+
+def scan_weak_text_layer():
+    return os.environ.get(WEAK_TEXT_LAYER_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _number(value):
@@ -677,7 +688,8 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     takes precedence over any rate found in the document.
 
     Returns ``(data, filled, problem)``. The PDF's own text layer is read
-    first (instant, regex-based). A scan — no text layer at all — goes
+    first (instant, regex-based). A scan — no text layer at all, or, with
+    ``WEAK_TEXT_LAYER_ENV`` on, one that left fields missing — goes
     through the scan methods in the configured order (``SCAN_ORDER_ENV``,
     by default Tesseract, Claude, Windows OCR, EasyOCR), each asked only
     for the fields still missing; what an earlier one found stays.
@@ -701,6 +713,8 @@ def build_contract_terms(pdf_path, year_signed=None, project_name=None) -> tuple
     vat = None
     if text.strip():
         _take(found, sources, _terms_from_text(text), METHOD_TEXT)
+        if _missing(found) and scan_weak_text_layer():
+            problem, notes, vat = _scan_cascade(pdf_path, project_name, found, sources)
     else:
         problem, notes, vat = _scan_cascade(pdf_path, project_name, found, sources)
 

@@ -318,3 +318,43 @@ def test_editing_a_field_by_hand_clears_its_marks(tmp_path):
     saved = passport.load_passport(storage.passport_path(tmp_path, slug))
     assert saved["contract_review"] == {}
     assert saved["contract_sources"] == {"smr_term": "tesseract"}
+
+
+# --- PDF со слабым текстовым слоем ---
+
+def test_a_partial_text_layer_is_left_alone_by_default(scan, monkeypatch):
+    calls, answers = scan
+    monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: PARTIAL)
+    monkeypatch.delenv(passport.WEAK_TEXT_LAYER_ENV, raising=False)
+    answers["tesseract"] = FULL + FILLER
+
+    data, _filled, _problem = passport.build_contract_terms("x.pdf")
+
+    assert calls == []
+    assert data["smr_term"] is None
+
+
+def test_a_partial_text_layer_is_completed_by_the_scan_methods_when_switched_on(scan, monkeypatch):
+    calls, answers = scan
+    monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: PARTIAL)
+    monkeypatch.setenv(passport.WEAK_TEXT_LAYER_ENV, "1")
+    answers["tesseract"] = FULL.replace("Аванс, % 30%", "Аванс, % 15%") + FILLER
+
+    data, _filled, problem = passport.build_contract_terms("x.pdf")
+
+    assert calls == ["tesseract"]
+    assert data["advance_payment"] == "30%"  # из текстового слоя, не перезаписан
+    assert data["contract_sources"]["advance_payment"] == "text"
+    assert data["smr_term"] == "30"
+    assert data["contract_sources"]["smr_term"] == "tesseract"
+    assert problem is None
+
+
+def test_a_complete_text_layer_never_starts_the_scan_methods(scan, monkeypatch):
+    calls, _answers = scan
+    monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: FULL)
+    monkeypatch.setenv(passport.WEAK_TEXT_LAYER_ENV, "1")
+
+    passport.build_contract_terms("x.pdf")
+
+    assert calls == []
