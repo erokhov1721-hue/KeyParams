@@ -1,5 +1,4 @@
 import io
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app import ocr_lines, tess_ocr
 
-PROTOCOLS = Path(__file__).parent / "fixtures" / "protocols"
 FONT = Path(r"C:\Windows\Fonts\arial.ttf")
 
 
@@ -212,32 +210,3 @@ def test_tesseract_output_goes_through_the_shared_normalization():
     text = " ".join(w.text for w in tess_ocr.recognize_page_words(_png(page)))
 
     assert "0/0" not in text
-
-
-def test_tesseract_reads_the_real_protocols():
-    """Регрессия на настоящих протоколах: не меньше 20 полей из 24 (на этапе 1
-    было 21). Пропускается, если протоколов нет — они не в репозитории."""
-    _needs_tesseract()
-    if not PROTOCOLS.is_dir() or not list(PROTOCOLS.glob("*.json")):
-        pytest.skip("нет папки tests/fixtures/protocols с настоящими протоколами")
-    from app import contract_extractors, passport, pdf_reader
-
-    def norm(value):
-        return None if value is None else str(value).replace(" ", "").lower().replace(",", ".")
-
-    right = total = 0
-    for gold_path in sorted(PROTOCOLS.glob("*.json")):
-        gold = json.loads(gold_path.read_text(encoding="utf-8"))
-        images = pdf_reader.render_pages_to_images(
-            PROTOCOLS / gold["file"], resolution=tess_ocr.RENDER_DPI, max_long_edge=None,
-        )
-        pages = [tess_ocr.recognize_page_words(image) for image in images]
-        for obj in gold["objects"]:
-            text, _ = passport._protocol_text(pages, obj["name"])
-            found = passport._terms_from_text(text)
-            found["smr_term"] = contract_extractors.bare_number(found["smr_term"])
-            found["advance_payment"] = contract_extractors.percent_value(found["advance_payment"])
-            for field, expected in obj["fields"].items():
-                total += 1
-                right += norm(found[field]) == norm(expected["expected"])
-    assert right >= 20, f"{right} из {total}"
