@@ -1416,6 +1416,7 @@ def project_page(slug):
         contract_notes=data.get("contract_notes") or [],
         contract_method_labels=passport_module.METHOD_LABELS,
         contract_review_note=passport_module.CONTRACT_REVIEW_NOTE,
+        contract_review_items=passport_module.contract_review_items,
         # Looked up in a fixed table, so an arbitrary ?problem=... value
         # renders nothing rather than reaching the page.
         contract_problem=passport_module.CONTRACT_PROBLEM_MESSAGES.get(

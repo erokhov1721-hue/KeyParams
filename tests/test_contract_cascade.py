@@ -105,14 +105,66 @@ def test_a_value_that_fails_the_check_counts_as_not_found(scan):
     assert data["contract_sources"]["smr_term"] == "claude"
 
 
-def test_a_zero_rate_counts_as_not_found(scan):
-    _calls, answers = scan
+def test_a_zero_rate_is_kept_but_the_next_method_is_still_asked(scan):
+    calls, answers = scan
     answers["tesseract"] = FULL.replace("Аванс, % 30%", "Аванс, % 0%") + FILLER
     answers["claude"] = ({"advance_payment": "30%"}, None)
 
     data, _filled, _problem = passport.build_contract_terms("x.pdf")
 
+    assert ("claude", None) in calls
     assert data["advance_payment"] == "30%"
+    assert data["contract_sources"]["advance_payment"] == "claude"
+    assert data["contract_review"]["advance_payment"] == [{
+        "reason": passport.REVIEW_DISAGREE,
+        "text": "способы разошлись: Tesseract — 0%, Claude — 30%",
+    }]
+
+
+def test_a_zero_rate_nobody_contradicts_stays_flagged(scan):
+    _calls, answers = scan
+    answers["tesseract"] = FULL.replace("Аванс, % 30%", "Аванс, % 0%") + FILLER
+    answers["claude"] = ({"advance_payment": "0%"}, None)
+
+    data, _filled, _problem = passport.build_contract_terms("x.pdf")
+
+    assert data["advance_payment"] == "0%"
+    assert data["contract_sources"]["advance_payment"] == "tesseract"
+    assert [item["reason"] for item in data["contract_review"]["advance_payment"]] == [
+        passport.REVIEW_ZERO,
+    ]
+
+
+def test_a_value_found_without_a_reason_is_not_flagged(scan):
+    _calls, answers = scan
+    answers["tesseract"] = FULL + FILLER
+
+    data, _filled, _problem = passport.build_contract_terms("x.pdf")
+
+    assert data["contract_review"] == {}
+    assert set(data["contract_sources"]) >= {"smr_term", "advance_payment"}
+
+
+def test_a_bare_rate_is_taken_when_its_row_label_says_percent(scan):
+    _calls, answers = scan
+    answers["tesseract"] = FULL.replace("Performance bond, % 3%", "Performance bond, % 3") + FILLER
+
+    data, _filled, _problem = passport.build_contract_terms("x.pdf")
+
+    assert data["performance_bond_pct"] == "3%"
+
+
+def test_a_bare_rate_without_a_percent_label_is_not_taken(scan):
+    _calls, answers = scan
+    answers["tesseract"] = FULL.replace("Performance bond, % 3%", "Performance bond 3") + FILLER
+    answers["claude"] = ({"performance_bond_pct": "5"}, None)
+
+    data, _filled, _problem = passport.build_contract_terms("x.pdf")
+
+    # Подпись «%» не несёт — значит, «3» Tesseract не берётся; Claude
+    # спрашивают о проценте, и его «5» — это 5%.
+    assert data["performance_bond_pct"] == "5%"
+    assert data["contract_sources"]["performance_bond_pct"] == "claude"
 
 
 def test_the_order_comes_from_the_setting(scan, monkeypatch):
@@ -195,7 +247,10 @@ def test_an_unusual_guarantee_is_kept_word_for_word_and_flagged(scan):
     data, _filled, _problem = passport.build_contract_terms("x.pdf")
 
     assert data["bank_guarantee"] == "Все авансы на счёт ОБС"
-    assert data["contract_review"] == {"bank_guarantee": "Все авансы на счёт ОБС"}
+    assert data["contract_review"] == {"bank_guarantee": [{
+        "reason": passport.REVIEW_NONSTANDARD,
+        "text": "нестандартное условие, в протоколе: «Все авансы на счёт ОБС»",
+    }]}
 
 
 @pytest.mark.parametrize("written,expected", [
@@ -296,10 +351,12 @@ def test_the_page_says_how_each_value_was_found_and_what_to_check(tmp_path):
 
     body = create_app(tmp_path).test_client().get(f"/projects/{slug}").get_data(as_text=True)
 
-    assert "Найдено в протоколе (Tesseract) — проверьте" in body
-    assert "Найдено в протоколе (Claude) — проверьте" in body
-    assert "нестандартное условие — проверьте" in body
-    assert "В протоколе: «Все авансы на счёт ОБС»" in body
+    assert "Найдено: Tesseract" in body
+    assert "Найдено: Claude" in body
+    assert "Найдено в протоколе (" not in body
+    # Сохранённый до появления причин паспорт: в review — просто текст.
+    assert "нестандартное условие, в протоколе: «Все авансы на счёт ОБС»" in body
+    assert body.count(">проверьте<") == 1, "«проверьте» — только у поля с поводом"
     assert "Tesseract недоступен: нет русской модели." in body
 
 
@@ -358,3 +415,53 @@ def test_a_complete_text_layer_never_starts_the_scan_methods(scan, monkeypatch):
     passport.build_contract_terms("x.pdf")
 
     assert calls == []
+
+
+
+def test_a_cap_row_is_reread_from_the_wrapped_line_above(monkeypatch):
+    regions = []
+
+    def read_region(page, box, whitelist=None):
+        regions.append(box)
+        return "30%,"
+
+    monkeypatch.setattr(passport.tess_ocr, "read_region", read_region)
+    words = [
+        Word(y=60, x0=600, x1=660, height=20, text="0%,"),
+        Word(y=100, x0=70, x1=160, height=20, text="Аванс,"),
+        Word(y=100, x0=170, x1=190, height=20, text="%"),
+        Word(y=100, x0=600, x1=900, height=20, text="максимальная"),
+        Word(y=100, x0=910, x1=960, height=20, text="сумма"),
+        Word(y=100, x0=970, x1=990, height=20, text="не"),
+        Word(y=100, x0=1000, x1=1100, height=20, text="закрытого"),
+        Word(y=100, x0=1110, x1=1180, height=20, text="аванса"),
+        Word(y=100, x0=1190, x1=1230, height=20, text="20%"),
+    ]
+
+    # Якорь аванса для такой строки ничего не находит (ограничение — не аванс).
+    found = passport._reread_cells([(words, object())], None, {})
+
+    assert found["advance_payment"] == "30%"
+    (box,) = [b for b in regions if b[1] < 80]
+    assert box[1] == 50 and box[3] == 70, "читается строка выше, а не строка с ограничением"
+
+
+def test_a_cap_row_with_a_labelled_line_above_is_not_reread(monkeypatch):
+    monkeypatch.setattr(
+        passport.tess_ocr, "read_region",
+        lambda page, box, whitelist=None: "15%" if box[1] < 80 else "",
+    )
+    words = [
+        Word(y=60, x0=70, x1=300, height=20, text="Гарантийное"),
+        Word(y=60, x0=310, x1=420, height=20, text="удержание"),
+        Word(y=60, x0=600, x1=640, height=20, text="15%"),
+        Word(y=100, x0=70, x1=160, height=20, text="Аванс,"),
+        Word(y=100, x0=170, x1=190, height=20, text="%"),
+        Word(y=100, x0=600, x1=990, height=20, text="не"),
+        Word(y=100, x0=1000, x1=1100, height=20, text="закрытого"),
+        Word(y=100, x0=1110, x1=1180, height=20, text="аванса"),
+    ]
+
+    found = passport._reread_cells([(words, object())], None, {})
+
+    assert "advance_payment" not in found

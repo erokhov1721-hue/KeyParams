@@ -69,6 +69,41 @@ def test_the_title_naming_every_object_is_not_mistaken_for_the_header():
     assert index == 3
 
 
+def test_a_name_shared_by_both_columns_is_told_apart_by_its_own_word():
+    # Объект назван так же, как в шапке: «Верейская» есть в обеих колонках,
+    # различает их только «UB2» / «UB9».
+    for name, expected in (("Верейская UB2", 3), ("Верейская UB9", 2)):
+        _columns, index = protocol_columns.find_project_column(_two_object_protocol(), name)
+        assert index == expected
+
+
+def test_a_shared_word_alone_does_not_pick_a_column():
+    assert protocol_columns.find_project_column(_two_object_protocol(), "Верейская") is None
+
+
+def test_lines_are_built_from_the_whole_page_before_the_other_column_goes():
+    # Правая колонка (UB2) сидит на полстроки выше подписей; только колонка
+    # UB9 между ними связывает строку. Строки собираются по всей странице, а
+    # потом из них убирается UB9 — «Не включено» остаётся на строке подписи.
+    words = _two_object_protocol()
+    words += _row(4, (420, "Гарантия"), (1000, "Не"), (1060, "включено"))
+    words = [w if w.x0 < 1400 or w.y < ROW_STEP * 4 else w._replace(y=w.y - 12) for w in words]
+    words += [Word(y=ROW_STEP * 4 - 12, x0=1440, x1=1470, height=20, text="Да")]
+
+    lines, chosen = protocol_columns.project_lines(words, "Верейская UB2")
+
+    assert chosen
+    assert "Гарантия Да" in lines
+
+
+def test_the_project_column_span_lies_between_its_neighbours():
+    left, right = protocol_columns.project_column_span(_two_object_protocol(), "VEER UB9")
+
+    # Слева — середина между «Наименование» и «Верейская UB9», справа —
+    # между «Верейская UB9» и «Верейская UB2»; значения колонки внутри.
+    assert 744 < left < 1000 and 1216 < right < 1440
+
+
 def test_a_name_matching_nothing_finds_no_column():
     assert protocol_columns.find_project_column(
         _two_object_protocol(), "Селигер парк",

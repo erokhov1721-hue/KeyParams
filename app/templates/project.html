@@ -183,13 +183,16 @@
             <div class="field-row {{ 'is-empty' if not value else ('is-pdf' if is_auto else 'is-filled') }}">
               <div class="field-label-col">
                 <span class="field-label">{{ contract_field_labels.get(field, field) }}</span>
+                {% set method = contract_method_labels.get(contract_sources.get(field)) %}
                 {% if is_auto %}
-                  {% set method = contract_method_labels.get(contract_sources.get(field)) %}
-                  <span class="badge badge-pdf">Найдено в протоколе{% if method %} ({{ method }}){% endif %} — проверьте</span>
+                  <span class="badge badge-pdf">Найдено: {{ method or 'в протоколе' }}</span>
                 {% endif %}
-                {% if field in contract_review %}
+                {% set reasons = contract_review_items(contract_review, field) %}
+                {% if reasons %}
                   <span class="badge badge-review">{{ contract_review_note }}</span>
-                  <span class="field-hint contract-review-text">В протоколе: «{{ contract_review[field] }}»</span>
+                  {% for item in reasons %}
+                  <span class="field-hint contract-review-text">{{ item.text }}</span>
+                  {% endfor %}
                 {% endif %}
               </div>
               <input type="text" name="{{ field }}" value="{{ value or '' }}" placeholder="Введите значение">

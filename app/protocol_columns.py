@@ -16,6 +16,7 @@ left exactly as it was.
 import re
 from collections import namedtuple
 
+from . import ocr_lines
 from .ocr_lines import LINE_TOLERANCE
 
 Column = namedtuple("Column", "text x0 x1")
@@ -100,6 +101,11 @@ def find_project_column(words, project_name):
     across the top of the page names every object at once — "по проектам
     Верейская UB9 и UB2" — but its words run together into a single column,
     so it fails the test and the real header is found underneath it.
+
+    Objects on one protocol share part of their name, so a project named the
+    way the header names it — "Верейская UB2" — matches both "Верейская UB9"
+    and "Верейская UB2". Then the column is the one holding a word of the
+    name that no other column of the row has: "UB2".
     """
     wanted = _tokens(project_name)
     if not wanted or not words:
@@ -110,7 +116,14 @@ def find_project_column(words, project_name):
         columns = _columns(row, gap)
         if len(columns) < MIN_HEADER_COLUMNS:
             continue
-        matches = [i for i, column in enumerate(columns) if _tokens(column.text) & wanted]
+        column_tokens = [_tokens(column.text) for column in columns]
+        matches = [i for i, tokens in enumerate(column_tokens) if tokens & wanted]
+        if len(matches) > 1:
+            distinctive = {
+                token for token in wanted
+                if sum(token in tokens for tokens in column_tokens) == 1
+            }
+            matches = [i for i in matches if column_tokens[i] & distinctive]
         if len(matches) == 1 and matches[0] > 0:
             return columns, matches[0]
     return None
@@ -157,6 +170,55 @@ def keep_project_column(words, project_name):
         return not any(_within_column(centre, columns, i) for i in doomed)
 
     return [word for word in words if keeps(word)], True
+
+
+def project_column_span(words, project_name):
+    """``(x0, x1)`` — where this project's column runs across the page, the
+    boundary with each neighbour halfway to it; None when the protocol has no
+    columns to choose between (or the name matches none)."""
+    found = find_project_column(words, project_name)
+    if found is None:
+        return None
+    columns, index = found
+    left = (columns[index - 1].x1 + columns[index].x0) / 2 if index > 0 else columns[index].x0
+    right = (
+        (columns[index].x1 + columns[index + 1].x0) / 2
+        if index + 1 < len(columns) else max(word.x1 for word in words)
+    )
+    return left, right
+
+
+def project_rows(words, project_name):
+    """The page's visual lines, top to bottom, each holding only this
+    project's words (and the labels); lines left empty are dropped.
+
+    The lines are put together from the whole page first, and the other
+    objects' words taken out of each line afterwards — not the other way
+    round. A wide A3 scan is never perfectly level: the rightmost column sits
+    half a row higher or lower than the labels, and only the columns in
+    between tie each value to its label's line. Taking them out first left
+    "Не включено" on a line of its own above "Банковская гарантия на возврат
+    аванса", where nothing would find it.
+    """
+    kept, _chosen = keep_project_column(words, project_name)
+    keep = {id(word) for word in kept}
+    rows = []
+    for row in ocr_lines._rows(words):
+        own = [word for word in row if id(word) in keep]
+        if own:
+            rows.append(own)
+    return rows
+
+
+def project_lines(words, project_name):
+    """``(lines, chosen)`` — ``project_rows`` as text, each line's words left
+    to right; ``chosen`` as in ``keep_project_column``."""
+    _kept, chosen = keep_project_column(words, project_name)
+    lines = [
+        " ".join(word.text for word in sorted(row, key=lambda word: word.x0))
+        for row in project_rows(words, project_name)
+    ]
+    return lines, chosen
 
 
 def _within_column(centre, columns, index):

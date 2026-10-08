@@ -21,20 +21,20 @@ FIELDS = ("smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct
 
 # (движок, протокол, объект, поле) -> почему ошибается.
 KNOWN_FAILURES = {
-    ("tesseract", "veer_ub9", "Верейская UB2", "smr_term"):
-        "колонки не разделены: «Верейская» есть в обеих, срок берётся из колонки UB9. "
-        "Разделение пробовалось — оно вскрывает ошибки распознавания в колонке UB2 "
-        "(см. отчёт этапа 2)",
+    # Ошибки распознавания самих движков. Их закрывает каскад (см. записи
+    # «cascade» — их тут нет): перечитывание ячейки, следующий способ.
+    ("tesseract", "veer_ub9", "Верейская UB2", "advance_payment"):
+        "Tesseract читает «30%,» колонки UB2 как «0%,» — неверное значение",
     ("windows", "veer_ub9", "Верейская UB9", "advance_payment"):
         "пропуск: Windows OCR не ставит «30%,» ни в строку подписи, ни строкой выше",
-    ("windows", "veer_ub9", "Верейская UB2", "smr_term"):
-        "колонки не разделены — срок берётся из колонки UB9",
     ("windows", "veer_ub9", "Верейская UB2", "advance_payment"):
         "пропуск: Windows OCR читает «30%,» этой колонки как «зоољ.»",
+    ("windows", "veer_ub9", "Верейская UB2", "performance_bond_pct"):
+        "пропуск: Windows OCR теряет «3%» в строке bond колонки UB2",
     ("windows", "city_bay_3", "CITY BAY 3", "advance_payment"):
-        "Windows OCR не читает строку аванса этого скана",
+        "пропуск: Windows OCR не читает строку аванса этого скана",
     ("windows", "city_bay_3", "CITY BAY 3", "performance_bond_pct"):
-        "Windows OCR не читает строку performance bond этого скана",
+        "пропуск: Windows OCR не читает строку performance bond этого скана",
 }
 
 
@@ -49,7 +49,7 @@ def _golden():
 
 def _cases():
     cases = []
-    for engine in ("tesseract", "windows"):
+    for engine in ("tesseract", "windows", "cascade"):
         for key, gold in _golden():
             for obj in gold["objects"]:
                 for field in FIELDS:
@@ -112,6 +112,29 @@ def _found(engine, key, project_name):
     return found
 
 
+# Итог каскада без платного Claude: Tesseract, затем Windows OCR для того,
+# чего Tesseract не нашёл.
+CASCADE_ORDER = "tesseract,windows"
+
+
+@functools.lru_cache(maxsize=None)
+def _cascade(key, project_name, year_signed):
+    import os
+    gold = dict(_golden())[key]
+    previous = os.environ.get(passport.SCAN_ORDER_ENV)
+    os.environ[passport.SCAN_ORDER_ENV] = CASCADE_ORDER
+    try:
+        data, _filled, _problem = passport.build_contract_terms(
+            PROTOCOLS / gold["file"], year_signed=year_signed, project_name=project_name,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop(passport.SCAN_ORDER_ENV, None)
+        else:
+            os.environ[passport.SCAN_ORDER_ENV] = previous
+    return data
+
+
 def _norm(value):
     return None if value is None else str(value).replace(" ", "").lower().replace(",", ".")
 
@@ -121,12 +144,18 @@ def test_field_matches_the_golden_value(engine, key, name, field, monkeypatch):
     for variable in (tess_ocr.PSM_ENV, tess_ocr.TESSDATA_ENV, tess_ocr.CMD_ENV,
                      tess_ocr.DESKEW_ENV, tess_ocr.BINARIZE_ENV, tess_ocr.REMOVE_LINES_ENV):
         monkeypatch.delenv(variable, raising=False)
-    if not _available(engine):
+    if engine == "cascade":
+        if not _available("tesseract"):
+            pytest.skip("Tesseract недоступен на этой машине")
+    elif not _available(engine):
         pytest.skip(f"движок {engine} недоступен на этой машине")
     gold = dict(_golden())[key]
     obj = next(o for o in gold["objects"] if o["name"] == name)
 
-    found = _found(engine, key, obj["project_name"])
+    if engine == "cascade":
+        found = _cascade(key, obj["project_name"], obj["year_signed"])
+    else:
+        found = _found(engine, key, obj["project_name"])
 
     assert _norm(found[field]) == _norm(obj["fields"][field]["expected"])
 

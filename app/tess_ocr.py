@@ -51,6 +51,10 @@ TIMEOUT_ENV = "KEYPARAMS_TESSERACT_TIMEOUT"
 DESKEW_ENV = "KEYPARAMS_TESSERACT_DESKEW"
 BINARIZE_ENV = "KEYPARAMS_TESSERACT_BINARIZE"
 REMOVE_LINES_ENV = "KEYPARAMS_TESSERACT_REMOVE_LINES"
+# Pages recognised at once, and how many threads one call of the program may
+# use (passed to it as OMP_THREAD_LIMIT; unset — the program decides).
+WORKERS_ENV = "KEYPARAMS_TESSERACT_WORKERS"
+THREADS_ENV = "KEYPARAMS_TESSERACT_THREADS"
 
 # Page preparation, as measured on the five real protocols (stage-1 report):
 # binarising gained a field; straightening and removing the table grid each
@@ -168,6 +172,9 @@ def _run(args, data=None):
     kwargs = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    threads = os.environ.get(THREADS_ENV, "").strip()
+    if threads.isdigit() and int(threads) > 0:
+        kwargs["env"] = {**os.environ, "OMP_THREAD_LIMIT": threads}
     result = subprocess.run(
         args, input=data, capture_output=True, timeout=timeout_seconds(), check=False, **kwargs,
     )
@@ -493,6 +500,25 @@ def recognize_page(data: bytes):
     except Exception:
         logger.exception("Tesseract OCR failed")
         return [], None
+
+
+def page_workers():
+    try:
+        return max(1, int(os.environ.get(WORKERS_ENV, "1")))
+    except ValueError:
+        return 1
+
+
+def recognize_pages(images: list) -> list:
+    """``recognize_page`` for every image, in order — several at once when
+    ``WORKERS_ENV`` allows: each page is a separate call of the program, so
+    pages of a multi-page protocol need not wait for one another."""
+    workers = min(page_workers(), len(images))
+    if workers <= 1:
+        return [recognize_page(image) for image in images]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(recognize_page, images))
 
 
 def recognize_page_words(data: bytes) -> list:
