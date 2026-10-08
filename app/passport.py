@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -378,7 +379,15 @@ LOCAL_SCAN_METHODS = (METHOD_TESSERACT, METHOD_WINDOWS, METHOD_EASYOCR)
 # "windows,tesseract,claude,easyocr". Unknown names are ignored; a method
 # left out is not used at all.
 SCAN_ORDER_ENV = "KEYPARAMS_CONTRACT_SCAN_ORDER"
-DEFAULT_SCAN_ORDER = SCAN_METHODS
+# The free methods on this machine first, the paid API after them; EasyOCR,
+# minutes a page, last. Windows OCR exists only on Windows, so the server's
+# default goes without it. (The Docker setup narrows it further — see
+# docker-compose.yml — while the API account has no credit.)
+DEFAULT_SCAN_ORDER = (
+    (METHOD_TESSERACT, METHOD_WINDOWS, METHOD_CLAUDE, METHOD_EASYOCR)
+    if sys.platform == "win32"
+    else (METHOD_TESSERACT, METHOD_CLAUDE, METHOD_EASYOCR)
+)
 
 # A PDF can carry a text layer that holds only part of the protocol — a
 # stamp, a header — with the conditions table pasted in as a picture. Set to

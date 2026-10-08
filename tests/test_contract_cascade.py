@@ -74,8 +74,9 @@ def test_tesseract_goes_first_and_alone_when_it_finds_everything(scan):
     assert problem is None
 
 
-def test_later_methods_only_fill_what_is_missing_and_keep_what_was_found(scan):
+def test_later_methods_only_fill_what_is_missing_and_keep_what_was_found(scan, monkeypatch):
     calls, answers = scan
+    monkeypatch.setenv(passport.SCAN_ORDER_ENV, "tesseract,claude,windows,easyocr")
     answers["tesseract"] = PARTIAL + FILLER
     # Claude отвечает и на найденное — его аванс не должен заменить 30%.
     answers["claude"] = ({"advance_payment": "15%", "smr_term": "33", "performance_bond_pct": "5%"}, None)
@@ -182,9 +183,15 @@ def test_an_unknown_or_empty_order_falls_back_to_the_default(monkeypatch):
     monkeypatch.setenv(passport.SCAN_ORDER_ENV, "что-то, непонятное")
     assert passport.contract_scan_order() == list(passport.DEFAULT_SCAN_ORDER)
     monkeypatch.setenv(passport.SCAN_ORDER_ENV, "")
-    assert passport.contract_scan_order() == [
-        "tesseract", "claude", "windows", "easyocr",
-    ]
+    assert passport.contract_scan_order() == list(passport.DEFAULT_SCAN_ORDER)
+
+
+def test_the_default_order_puts_the_free_methods_before_claude():
+    order = list(passport.DEFAULT_SCAN_ORDER)
+
+    assert order[0] == "tesseract" and order[-1] == "easyocr"
+    if "windows" in order:
+        assert order.index("windows") < order.index("claude")
 
 
 def test_a_missing_tesseract_is_explained_and_the_rest_carries_on(scan, monkeypatch):
