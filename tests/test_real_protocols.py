@@ -21,18 +21,14 @@ FIELDS = ("smr_term", "advance_payment", "bank_guarantee", "performance_bond_pct
 
 # (движок, протокол, объект, поле) -> почему ошибается.
 KNOWN_FAILURES = {
-    ("tesseract", "veer_ub9", "Верейская UB9", "advance_payment"):
-        "аванс: «30%,» стоит строкой выше подписи, якорь берёт «…незакрытого аванса 20%»",
     ("tesseract", "veer_ub9", "Верейская UB2", "smr_term"):
         "колонки не разделены — срок берётся из колонки UB9",
-    ("tesseract", "veer_ub9", "Верейская UB2", "advance_payment"):
-        "аванс: «30%,» стоит строкой выше подписи, якорь берёт «…незакрытого аванса 20%»",
     ("windows", "veer_ub9", "Верейская UB9", "advance_payment"):
-        "аванс: «30%,» стоит строкой выше подписи, якорь берёт «…незакрытого аванса 20%»",
+        "пропуск: Windows OCR не ставит «30%,» ни в строку подписи, ни строкой выше",
     ("windows", "veer_ub9", "Верейская UB2", "smr_term"):
         "колонки не разделены — срок берётся из колонки UB9",
     ("windows", "veer_ub9", "Верейская UB2", "advance_payment"):
-        "аванс: «30%,» стоит строкой выше подписи, якорь берёт «…незакрытого аванса 20%»",
+        "пропуск: Windows OCR читает «30%,» этой колонки как «зоољ.»",
     ("windows", "city_bay_3", "CITY BAY 3", "advance_payment"):
         "Windows OCR не читает строку аванса этого скана",
     ("windows", "city_bay_3", "CITY BAY 3", "performance_bond_pct"):

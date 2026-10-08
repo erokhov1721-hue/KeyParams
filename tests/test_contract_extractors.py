@@ -100,6 +100,25 @@ def test_advance_payment_takes_only_the_first_figure_of_the_row():
     assert contract_extractors.extract_advance_payment(text) == "30%"
 
 
+def test_advance_never_takes_the_cap_on_the_unclosed_advance():
+    # Ячейка «30%, / максимальная сумма не закрытого аванса 20%» перенеслась:
+    # первая её строка встала над подписью, рядом с подписью — только
+    # ограничение на незакрытый аванс. Его 20% — не аванс.
+    text = "2 Гарантия на работы\n30%,\n3 Аванс, % максимальная сумма не закрытого аванса 20%"
+
+    assert contract_extractors.extract_advance_payment(text) == "30%"
+
+
+def test_advance_with_only_the_cap_in_sight_is_left_empty():
+    # Строка выше — другое условие (начинается с номера), своей цифры у
+    # аванса нигде нет: лучше пусто, чем 20% от ограничения.
+    for text in (
+        "2 Гарантия 10%\n3 Аванс, % максимальная сумма не закрытого аванса 20%",
+        "3 Аванс, % максимальная сумме незакрытого аванса 20%",
+    ):
+        assert contract_extractors.extract_advance_payment(text) is None
+
+
 def test_smr_term_is_the_number_of_months():
     # Срок — это число месяцев, а не абзац вокруг него, и приходит как
     # голое число, без единицы. Значение из-за переноса стоит над своей

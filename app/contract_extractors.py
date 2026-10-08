@@ -19,6 +19,15 @@ MONTHS_WORD_RE = re.compile(MONTHS_WORD, re.IGNORECASE)
 TERM_MONTHS_RE = re.compile(rf'\b(\d{{1,3}})\s*{MONTHS_WORD}', re.IGNORECASE)
 ANY_SHORT_NUMBER_RE = re.compile(r'\b(\d{1,3})\b')
 ADVANCE_RE = re.compile(r'аванс\w*\s*[,;]?\s*%\s*([^\n]+)', re.IGNORECASE)
+# «максимальная сумма не закрытого аванса 20%», «сумма незакрытого аванса —
+# 20 %»: the cap on what may stay unclosed, with its own figure — never the
+# advance itself. OCR also writes «сумме» and splits «не закрытого».
+ADVANCE_CAP_RE = re.compile(
+    r'(?:максимальн\w*\s+)?сумм\w*\s+не\s*закрыт\w*\s+аванс\w*\W*\d+(?:[.,]\d+)?\s*%',
+    re.IGNORECASE,
+)
+# A figure with its percent sign — what an advance condition has to contain.
+PERCENT_FIGURE_RE = re.compile(r'\d+(?:[.,]\d+)?\s*%')
 BANK_GUARANTEE_RE = re.compile(
     r'банковск\w+\s+гаранти\w+\s+на\s+возврат\s+аванса\W+([^\n]+)', re.IGNORECASE,
 )
@@ -178,7 +187,22 @@ def extract_advance_payment(text):
     """
     m = ADVANCE_RE.search(text)
     if m:
-        return percent_value(m.group(1))
+        # The cap on the unclosed advance is a different condition sharing
+        # the cell — "30%, максимальная сумма не закрытого аванса 20%". When
+        # the cell wraps, its first line ("30%,") can land above the label,
+        # leaving only the cap beside it; the cap's figure is never the
+        # advance, so it is cut out and the line above is read instead.
+        tail = ADVANCE_CAP_RE.sub(' ', m.group(1))
+        if PERCENT_FIGURE_RE.search(tail):
+            return percent_value(tail)
+        lines = text.splitlines()
+        index = text.count('\n', 0, m.start())
+        above = _line_before(lines, index)
+        if above and not ROW_START_RE.match(above):
+            above = ADVANCE_CAP_RE.sub(' ', above)
+            if PERCENT_FIGURE_RE.search(above):
+                return percent_value(above)
+        return None
 
     # A protocol written as clauses rather than as a table: the wording is
     # "Авансовый платеж, % от общей стоимости работ:" with the figure on the
