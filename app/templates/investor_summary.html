@@ -37,6 +37,9 @@
       <option value="{{ row.slug }}">{{ row.label }}</option>
       {% endfor %}
     </select>
+    <label class="object-picker-label" for="investor-summary-search">Поиск</label>
+    <input type="search" id="investor-summary-search" class="object-picker-select object-picker-search"
+           placeholder="Часть названия объекта" autocomplete="off">
   </div>
 </div>
 
@@ -87,7 +90,8 @@
       </thead>
       <tbody>
         {% for row in table.rows %}
-        <tr data-slug="{{ row.slug }}" data-completed="{{ '1' if row.completed else '0' }}">
+        <tr data-slug="{{ row.slug }}" data-completed="{{ '1' if row.completed else '0' }}"
+            data-search="{{ row.label | lower | replace('ё', 'е') }}">
           <td class="sections-label-col" data-sort-value="{{ row.label }}">
             <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
             {% if row.completed %}
@@ -189,6 +193,7 @@
       </tfoot>
     </table>
   </div>
+  <p class="chart-empty" id="investor-summary-no-match" hidden></p>
 </div>
 
 {% for row in table.rows %}
@@ -348,33 +353,66 @@
     var pdfBaseHref = pdfLink ? pdfLink.getAttribute('href') : null;
     if (!select) return;
 
-    select.addEventListener('change', function () {
+    var search = document.getElementById('investor-summary-search');
+    var noMatch = document.getElementById('investor-summary-no-match');
+
+    function normalize(text) {
+      return text.trim().toLowerCase().replace(/ё/g, 'е');
+    }
+
+    function applyFilters() {
       var slug = select.value;
+      var query = search ? normalize(search.value) : '';
       // «Завершённые» — не один конкретный объект, а группа: фильтруем по
       // строкам с data-completed вместо сравнения со slug.
       var completedOnly = slug === '__completed__';
+      var visibleSlugs = {};
+      var visibleCount = 0;
       if (table && table.tBodies.length) {
         Array.from(table.tBodies[0].rows).forEach(function (row) {
-          row.hidden = completedOnly
-            ? row.dataset.completed !== '1'
-            : Boolean(slug) && row.dataset.slug !== slug;
+          var bySelect = completedOnly
+            ? row.dataset.completed === '1'
+            : !slug || row.dataset.slug === slug;
+          // Поиск — по куску названия, без учёта регистра и «ё»/«е»;
+          // работает вместе со списком «Объект», а не вместо него.
+          var byQuery = !query || (row.dataset.search || '').indexOf(query) !== -1;
+          row.hidden = !(bySelect && byQuery);
+          if (!row.hidden) {
+            visibleSlugs[row.dataset.slug] = true;
+            visibleCount += 1;
+          }
         });
       }
       // «Итого» по всем объектам не отвечает ни на какой вопрос под одним
       // конкретным объектом — там она прячется совсем. Под «Завершённые»
       // её место занимает «Итого» по тем же завершённым объектам, той же
-      // строкой снизу, что и на вкладке «Все объекты».
+      // строкой снизу, что и на вкладке «Все объекты». Пока в поиске что-то
+      // набрано, итог прячется тоже: он посчитан по всем объектам группы,
+      // а на экране остаётся только часть из них.
       if (table && table.tFoot) {
         Array.from(table.tFoot.rows).forEach(function (row) {
-          row.hidden = completedOnly
+          row.hidden = Boolean(query) || (completedOnly
             ? row.dataset.totalFor !== 'completed'
-            : Boolean(slug) || row.dataset.totalFor !== 'all';
+            : Boolean(slug) || row.dataset.totalFor !== 'all');
         });
+      }
+      if (noMatch) {
+        if (!visibleCount) {
+          noMatch.textContent = 'Ни один объект не подходит под выбранный фильтр.';
+          noMatch.hidden = false;
+        } else if (query) {
+          noMatch.textContent = 'Найдено объектов: ' + visibleCount +
+            '. Строка «Итого» скрыта, пока включён поиск — она считается по всем объектам.';
+          noMatch.hidden = false;
+        } else {
+          noMatch.hidden = true;
+        }
       }
       // Карточка деталей имеет смысл только для одного конкретного объекта —
       // не для «Всех объектов» и не для группы «Завершённые».
       details.forEach(function (detail) {
-        detail.hidden = completedOnly || detail.dataset.slug !== slug;
+        detail.hidden = completedOnly || detail.dataset.slug !== slug ||
+          !visibleSlugs[slug];
       });
       // PDF сохраняет то же, что сейчас на экране: с объектом в адресе —
       // если выбран один конкретный, без — для «Все объекты» и для
@@ -384,7 +422,14 @@
           'href', (slug && !completedOnly) ? pdfBaseHref + '?slug=' + encodeURIComponent(slug) : pdfBaseHref,
         );
       }
-    });
+    }
+
+    select.addEventListener('change', applyFilters);
+    if (search) {
+      search.addEventListener('input', applyFilters);
+      // Браузер может вернуть набранный текст после «Назад» — применяем сразу.
+      if (search.value) applyFilters();
+    }
   })();
 </script>
 
