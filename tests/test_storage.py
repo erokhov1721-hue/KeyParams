@@ -260,3 +260,54 @@ def test_save_cover_keeps_the_previous_cover_when_the_write_fails(tmp_path):
         storage.save_cover(tmp_path, slug, _FakeUpload(b"new", fail=True), ".jpg")
 
     assert (directory / "cover.jpg").read_bytes() == b"old"
+
+
+# --- замена файла, пока его держит другая программа ---
+
+import sys as _sys
+import threading as _threading
+
+import pytest as _pytest
+
+from app import passport as _passport, storage as _storage
+
+
+@_pytest.mark.skipif(_sys.platform != "win32", reason="занятый файл мешает замене только на Windows")
+def test_a_save_waits_out_a_moment_when_another_program_holds_the_file(tmp_path):
+    path = tmp_path / "passport.json"
+    _passport.save_passport({"project_name": "Старое"}, path)
+    handle = open(path, "rb")  # как антивирус, читающий только что записанный файл
+    _threading.Timer(0.15, handle.close).start()
+
+    _passport.save_passport({"project_name": "Новое"}, path)
+
+    assert _passport.load_passport(path)["project_name"] == "Новое"
+
+
+@_pytest.mark.skipif(_sys.platform != "win32", reason="занятый файл мешает замене только на Windows")
+def test_a_file_held_for_good_still_fails_the_save(tmp_path, monkeypatch):
+    monkeypatch.setattr(_storage, "REPLACE_PAUSE_SECONDS", 0.001)
+    path = tmp_path / "passport.json"
+    _passport.save_passport({"project_name": "Старое"}, path)
+    with open(path, "rb"):
+        with _pytest.raises(PermissionError):
+            _passport.save_passport({"project_name": "Новое"}, path)
+
+
+def test_elsewhere_the_swap_is_tried_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(_storage.sys, "platform", "linux")
+    calls = []
+    original = _storage.Path.replace
+
+    def refuse(self, target):
+        calls.append(target)
+        raise PermissionError("занято")
+
+    monkeypatch.setattr(_storage.Path, "replace", refuse)
+    src = tmp_path / "a"
+    src.write_text("x", encoding="utf-8")
+
+    with _pytest.raises(PermissionError):
+        _storage.replace_file(src, tmp_path / "b")
+    assert len(calls) == 1
+    monkeypatch.setattr(_storage.Path, "replace", original)

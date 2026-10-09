@@ -1605,7 +1605,7 @@ def upload_contract_terms(slug):
     _log_recognition(
         root, slug, data.get("project_name"), tmp, "replace", extracted, problem, started,
     )
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     data.update(extracted)
     data["contract_auto_fields"] = filled
     passport_module.save_passport_checked(data, path, expected_version)
@@ -1762,7 +1762,7 @@ def upload_dgp(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
@@ -1805,7 +1805,7 @@ def upload_tz(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
@@ -1850,7 +1850,7 @@ def upload_estimate(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     # (path, mtime, size) alone could in principle still match the estimate
     # this just replaced; dropping the cache outright is what actually
     # guarantees the next read reflects the new file, not a coincidence.
