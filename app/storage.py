@@ -1,5 +1,7 @@
 import re
 import shutil
+import sys
+import time
 from pathlib import Path
 
 INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
@@ -105,6 +107,35 @@ def cover_path(root: Path, slug: str) -> Path | None:
     return None
 
 
+# How long a file swap keeps retrying while Windows reports the file busy.
+REPLACE_ATTEMPTS = 10
+REPLACE_PAUSE_SECONDS = 0.05
+
+
+def replace_file(src: Path, dest: Path) -> None:
+    """``src.replace(dest)`` — the atomic swap every save here ends with —
+    retried briefly when Windows refuses it because another program has
+    either file open.
+
+    On Windows a rename onto a file fails with "Отказано в доступе" (WinError
+    5) or "файл занят другим процессом" (WinError 32) for as long as anything
+    else holds a handle on it — an antivirus or the search indexer looking at
+    a file that was just written, a page reading the same passport. Those
+    handles go in a moment; the save that met one used to fail outright. On
+    Linux (the server) the swap never meets this and the first try is the
+    only one.
+    """
+    attempts = REPLACE_ATTEMPTS if sys.platform == "win32" else 1
+    for attempt in range(attempts):
+        try:
+            Path(src).replace(dest)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(REPLACE_PAUSE_SECONDS * (attempt + 1))
+
+
 def save_upload(file_storage, dest: Path) -> None:
     """Write an upload to ``dest`` atomically: saved to a sibling temporary
     file first, and only swapped into place once that succeeds — a write
@@ -113,7 +144,7 @@ def save_upload(file_storage, dest: Path) -> None:
     truncated file with nothing to restore it from."""
     tmp = dest.with_name(dest.name + ".upload")
     file_storage.save(tmp)
-    tmp.replace(dest)
+    replace_file(tmp, dest)
 
 
 def save_cover(root: Path, slug: str, file_storage, ext: str) -> Path:
@@ -134,7 +165,7 @@ def save_cover_bytes(root: Path, slug: str, data: bytes, ext: str) -> Path:
     dest = directory / f"cover{ext}"
     tmp = dest.with_name(dest.name + ".upload")
     tmp.write_bytes(data)
-    tmp.replace(dest)
+    replace_file(tmp, dest)
     for existing_ext in COVER_EXTENSIONS:
         if existing_ext != ext:
             (directory / f"cover{existing_ext}").unlink(missing_ok=True)

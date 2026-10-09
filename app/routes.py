@@ -1060,6 +1060,7 @@ def create_project():
         # Built after the passport so the VAT rule has the signing year.
         dest = storage.contract_terms_path(staging_root, slug)
         contract_terms_file.save(dest)
+        started = time.monotonic()
         try:
             extracted, filled, problem = passport_module.build_contract_terms(
                 dest, year_signed=data.get("year_signed"), project_name=project_name,
@@ -1079,10 +1080,28 @@ def create_project():
             ), 400
         data.update(extracted)
         data["contract_auto_fields"] = filled
+        _log_recognition(
+            root, slug, project_name, dest, "create", extracted, problem, started,
+        )
 
     passport_module.save_passport(data, storage.passport_path(staging_root, slug))
     storage.publish_project(root, slug, staging_root)
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
+
+
+def _log_recognition(root, slug, project_name, file_path, mode, extracted, problem, started):
+    """One line in the local recognition log (see ``app/corrections.py``) —
+    what was found, by what, how long it took. A log that can't be written
+    must not cost the upload: it is reported and the request goes on."""
+    try:
+        corrections.record_recognition(
+            root, project=slug, project_name=project_name, file_path=file_path,
+            mode=mode, data=extracted, problem=problem,
+            scan_order=passport_module.contract_scan_order(),
+            seconds=time.monotonic() - started,
+        )
+    except OSError:
+        current_app.logger.exception("Журнал распознаваний не записан")
 
 
 def _estimate_totals(root, slug):
@@ -1559,12 +1578,17 @@ def upload_contract_terms(slug):
     expected_version = _expected_version()
     path = storage.passport_path(root, slug)
     data = passport_module.load_passport(path)
+    started = time.monotonic()
     try:
         extracted, filled, problem = passport_module.build_contract_terms(
             tmp, year_signed=data.get("year_signed"), project_name=data.get("project_name"),
         )
     except passport_module.RecognitionBusy:
         current_app.logger.warning("Замена протокола отклонена: сервер занят распознаванием")
+        _log_recognition(
+            root, slug, data.get("project_name"), tmp, "replace", {},
+            passport_module.CONTRACT_PROBLEM_BUSY, started,
+        )
         tmp.unlink(missing_ok=True)
         return redirect(url_for(
             "main.project_page", slug=slug,
@@ -1578,7 +1602,10 @@ def upload_contract_terms(slug):
             problem=passport_module.CONTRACT_PROBLEM_UNREADABLE,
         ))
 
-    tmp.replace(dest)
+    _log_recognition(
+        root, slug, data.get("project_name"), tmp, "replace", extracted, problem, started,
+    )
+    storage.replace_file(tmp, dest)
     data.update(extracted)
     data["contract_auto_fields"] = filled
     passport_module.save_passport_checked(data, path, expected_version)
@@ -1735,7 +1762,7 @@ def upload_dgp(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
@@ -1778,7 +1805,7 @@ def upload_tz(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
@@ -1823,7 +1850,7 @@ def upload_estimate(slug):
         tmp.unlink(missing_ok=True)
         return refuse("unreadable")
 
-    tmp.replace(dest)
+    storage.replace_file(tmp, dest)
     # (path, mtime, size) alone could in principle still match the estimate
     # this just replaced; dropping the cache outright is what actually
     # guarantees the next read reflects the new file, not a coincidence.
@@ -1873,12 +1900,17 @@ def update_contract_terms(slug):
     # Logged only once the edit is saved — a refused stale edit corrects
     # nothing. The log feeds new golden protocols; it stays on this machine.
     if corrected:
-        file_hash = corrections.file_sha256(storage.contract_terms_path(root, slug))
-        for item in corrected:
-            corrections.record(root, {
-                "project": slug, "project_name": data.get("project_name"),
-                "file_sha256": file_hash, **item,
-            })
+        try:
+            file_hash = corrections.file_sha256(storage.contract_terms_path(root, slug))
+            for item in corrected:
+                corrections.record(root, {
+                    "project": slug, "project_name": data.get("project_name"),
+                    "file_sha256": file_hash, **item,
+                })
+        except OSError:
+            # The edit itself is saved; a log that can't be written is
+            # reported, not allowed to turn a successful save into an error.
+            current_app.logger.exception("Журнал исправлений не записан")
     return redirect(url_for("main.project_page", slug=slug))
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import (
     ai_extractor, contract_extractors, extractors, ocr, ocr_lines, pdf_reader,
-    protocol_columns, tess_ocr, win_ocr,
+    protocol_columns, storage, tess_ocr, win_ocr,
 )
 from .document_reader import DocxContent, read_docx
 
@@ -1018,7 +1018,7 @@ def save_passport(passport_data: dict, path: Path) -> None:
     text = json.dumps(passport_data, ensure_ascii=False, indent=2)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    storage.replace_file(tmp, path)
 
 
 class PassportConflictError(Exception):
