@@ -175,3 +175,27 @@ def test_corrections_from_the_old_file_are_still_read(tmp_path):
     assert [(e["event"], e["field"]) for e in entries] == [
         ("correction", "smr_term"), ("correction", "vat"),
     ]
+
+
+def test_a_recognition_records_how_many_pages_the_protocol_has(tmp_path, monkeypatch):
+    import io
+
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf)
+    for _ in range(3):
+        pdf.drawString(100, 700, "page")
+        pdf.showPage()
+    pdf.save()
+    path = tmp_path / "protocol.pdf"
+    path.write_bytes(buf.getvalue())
+    root = _root(tmp_path)
+
+    corrections.record_recognition(
+        root, project="p", project_name="P", file_path=path, mode="create",
+        data={}, problem=None, scan_order=[], seconds=1.0,
+    )
+
+    (entry,) = corrections.read_all(root)
+    assert entry["pages"] == 3

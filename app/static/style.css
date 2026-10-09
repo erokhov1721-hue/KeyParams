@@ -4393,3 +4393,9 @@ select option {
   background: var(--bg-700);
   font-style: italic;
 }
+
+/* Поле поиска в «Сводке по удорожанию» — вторая строка той же сетки, что
+   и список «Объект»: тот же вид поля, но курсор текстовый. */
+.object-picker-search {
+  cursor: text;
+}
