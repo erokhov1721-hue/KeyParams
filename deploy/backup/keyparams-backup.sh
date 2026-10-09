@@ -23,6 +23,7 @@ HOST_TAG="keyparams"
 KEEP_DAILY=14
 KEEP_WEEKLY=8
 LOG="$CONF/backup.log"
+LAST_SUCCESS="${KEYPARAMS_BACKUP_LAST_SUCCESS:-$(dirname "$REPO")/last-success}"
 
 mkdir -p "$CONF" "$REPO" "$CONF/cache"
 chmod 700 "$CONF"
@@ -75,6 +76,12 @@ run restic forget --host "$HOST_TAG" --tag keyparams \
 if [ "$(date -u +%u)" = "7" ]; then
     run restic check
 fi
+
+# Отметка об успешной копии — по ней pull-backup.ps1 предупреждает, если
+# копирование на сервере давно не проходило. Сюда доходит только запуск, в
+# котором всё выше прошло без ошибок (set -e).
+date -u +%Y-%m-%dT%H:%M:%SZ > "$LAST_SUCCESS.tmp"
+mv "$LAST_SUCCESS.tmp" "$LAST_SUCCESS"
 
 # Второе хранилище за пределами сервера — когда появится. offsite.env задаёт
 # RESTIC_REPOSITORY (например sftp:user@host:/path или s3:...), RESTIC_PASSWORD
