@@ -43,6 +43,15 @@ def read_pdf_text(path) -> str:
     return '\n'.join(pages_text)
 
 
+def page_count(path) -> int | None:
+    """How many pages the PDF has; None if it can't be opened."""
+    try:
+        with pdfplumber.open(path) as pdf:
+            return len(pdf.pages)
+    except Exception:
+        return None
+
+
 def render_pages_to_images(path, resolution=200, max_long_edge=MAX_IMAGE_LONG_EDGE) -> list:
     """PNG bytes for every page, for reading a scan that has no text layer.
 

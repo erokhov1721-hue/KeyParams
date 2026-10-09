@@ -6,7 +6,8 @@ data and its backups) is one event:
 
 - ``"recognition"`` — a protocol was read: which file (its SHA-256), every
   field found with its value, method and reasons to check it, the fields not
-  found, the problem and notes, the scan order and how long it took;
+  found, the problem and notes, the scan order, the number of pages and
+  how long it took;
 - ``"correction"`` — a person changed a value the program had found: the
   field, what was found and by which method, what it became, and why it had
   been flagged.
@@ -21,6 +22,8 @@ import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
+from . import pdf_reader
 
 FILE_NAME = "contract_recognition_log.jsonl"
 # Where corrections went before recognitions were logged too; still read.
@@ -90,6 +93,7 @@ def record_recognition(root: Path, *, project, project_name, file_path, mode,
         "fields": fields, "missing": missing,
         "problem": problem, "notes": data.get("contract_notes") or [],
         "scan_order": scan_order, "seconds": round(seconds, 1),
+        "pages": pdf_reader.page_count(file_path),
     })
 
 
