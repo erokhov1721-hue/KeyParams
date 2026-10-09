@@ -82,3 +82,96 @@ def test_the_log_lives_outside_the_projects_folder(tmp_path):
 
     assert storage.list_project_slugs(tmp_path) == []
     assert corrections.read_all(tmp_path)[0]["field"] == "smr_term"
+
+
+# --- журнал распознаваний ---
+
+def _stub_scan(monkeypatch, fields):
+    monkeypatch.setattr(passport.pdf_reader, "read_pdf_text", lambda path: "")
+    monkeypatch.setattr(passport.pdf_reader, "render_pages_to_images", lambda path, **kw: [b"png"])
+    monkeypatch.setattr(
+        passport.ai_extractor, "extract_contract_terms_from_images",
+        lambda images, project_name=None: (fields, None),
+    )
+    monkeypatch.setenv(passport.SCAN_ORDER_ENV, "claude")
+
+
+def _upload(client, tmp_path, slug, content=b"%PDF-1.4 scan"):
+    import io
+    version = passport.load_passport(storage.passport_path(tmp_path, slug))["version"]
+    return client.post(
+        f"/projects/{slug}/contract-terms",
+        data={"contract_terms_file": (io.BytesIO(content), "p.pdf"), "version": version},
+        content_type="multipart/form-data",
+    )
+
+
+def test_every_recognition_is_logged_with_its_fields_methods_and_file(tmp_path, monkeypatch):
+    import hashlib
+    tmp_path = _root(tmp_path)
+    slug = _project(tmp_path)
+    client = create_app(tmp_path).test_client()
+    _stub_scan(monkeypatch, {"smr_term": "33", "advance_payment": "0%"})
+
+    _upload(client, tmp_path, slug)
+
+    (entry,) = [e for e in corrections.read_all(tmp_path) if e["event"] == "recognition"]
+    assert entry["mode"] == "replace" and entry["project"] == slug
+    assert entry["file_sha256"] == hashlib.sha256(b"%PDF-1.4 scan").hexdigest()
+    assert entry["fields"]["smr_term"] == {"value": "33", "method": "claude", "review": []}
+    assert entry["fields"]["advance_payment"]["review"] == ["zero"]
+    assert "bank_guarantee" in entry["missing"]
+    assert entry["scan_order"] == ["claude"]
+    assert entry["seconds"] >= 0
+
+
+def test_a_busy_server_is_logged_too(tmp_path, monkeypatch):
+    tmp_path = _root(tmp_path)
+    slug = _project(tmp_path)
+    client = create_app(tmp_path).test_client()
+
+    def busy(*args, **kwargs):
+        raise passport.RecognitionBusy()
+
+    monkeypatch.setattr(passport, "build_contract_terms", busy)
+
+    _upload(client, tmp_path, slug)
+
+    (entry,) = corrections.read_all(tmp_path)
+    assert entry["event"] == "recognition"
+    assert entry["problem"] == passport.CONTRACT_PROBLEM_BUSY
+    assert entry["fields"] == {}
+
+
+def test_a_new_projects_protocol_is_logged_as_create(tmp_path, monkeypatch):
+    import io
+
+    from tests.test_routes import _create_data
+
+    tmp_path = _root(tmp_path)
+    client = create_app(tmp_path).test_client()
+    _stub_scan(monkeypatch, {"smr_term": "30"})
+
+    resp = client.post("/projects", data=_create_data(
+        contract_terms=(io.BytesIO(b"%PDF-fake"), "protocol.pdf"),
+    ), content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    (entry,) = [e for e in corrections.read_all(tmp_path) if e["event"] == "recognition"]
+    assert entry["mode"] == "create"
+    assert entry["project"] == storage.list_project_slugs(tmp_path)[0]
+    assert entry["fields"]["smr_term"]["value"] == "30"
+
+
+def test_corrections_from_the_old_file_are_still_read(tmp_path):
+    tmp_path = _root(tmp_path)
+    old = tmp_path.parent / corrections.LEGACY_FILE_NAME
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text('{"field": "smr_term", "found": "38", "corrected": "33"}\n', encoding="utf-8")
+    corrections.record(tmp_path, {"field": "vat"})
+
+    entries = corrections.read_all(tmp_path)
+
+    assert [(e["event"], e["field"]) for e in entries] == [
+        ("correction", "smr_term"), ("correction", "vat"),
+    ]
