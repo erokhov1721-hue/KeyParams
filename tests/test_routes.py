@@ -4878,3 +4878,17 @@ def test_replacing_the_estimate_recalculates_the_cost_increase(tmp_path):
 
     assert "+100 000" in after
     assert "+300 000" not in after
+
+
+def test_investor_summary_page_has_a_search_box_over_object_names(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "ЖК Ёлки Северный", completed=False)
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    assert 'id="investor-summary-search"' in body
+    # Each row carries its name already lower-cased with «ё» folded into «е»,
+    # so the search on the page matches «елки», «Ёлки» and «ЁЛКИ» alike.
+    assert 'data-search="жк елки северный"' in body
+    assert 'id="investor-summary-no-match"' in body
