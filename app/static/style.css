@@ -222,9 +222,69 @@ a {
   width: auto;
 }
 
+/* Кнопки разделов («Добавить проект» … «Анализ КП»), поиск и заголовок
+   «Проекты» стоят на месте — листается только сам список проектов под
+   ними. min-height: 0 у колонки и у списка — без него flex не даёт
+   элементу стать ниже своего содержимого, и прокрутка не включается. */
 .sidebar-nav {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-nav > * {
+  flex-shrink: 0;
+}
+
+.sidebar-nav > #sidebar-project-list {
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  /* Место под ползунок, чтобы он не наезжал на названия проектов. */
+  margin-right: -6px;
+  padding-right: 6px;
+}
+
+/* На очень низком окне закреплённым кнопкам не хватило бы места — тогда
+   листается всё меню целиком, как раньше. */
+@media (max-height: 560px) {
+  .sidebar-nav {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .sidebar-nav > #sidebar-project-list {
+    overflow-y: visible;
+  }
+}
+
+/* Ползунок в цвет меню: тонкий, приглушённый, без светлой дорожки. Меню
+   тёмное во всех темах, поэтому и полоса у него всегда тёмная. */
+.sidebar {
+  color-scheme: dark;
+}
+
+.sidebar-nav,
+.sidebar-nav > #sidebar-project-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-600) 45%, transparent) transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar,
+.sidebar-nav > #sidebar-project-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track,
+.sidebar-nav > #sidebar-project-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb,
+.sidebar-nav > #sidebar-project-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-600) 45%, transparent);
 }
 
 .sidebar-section-title {
