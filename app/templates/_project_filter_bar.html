@@ -1,0 +1,29 @@
+{# Кнопка «Фильтры», чипы применённого и «Сбросить всё». См. _project_filters.html. #}
+{% if has_projects %}
+<div class="filter-bar">
+  <button type="button" class="filter-toggle" id="filter-toggle"
+          aria-expanded="false" aria-controls="filter-panel">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z"/>
+    </svg>
+    <span>Фильтры</span>
+    {% if filters.active_count %}<span class="filter-count">{{ filters.active_count }}</span>{% endif %}
+  </button>
+
+  <div class="filter-chips">
+    {% for chip in filters.chips %}
+    <a class="filter-chip" href="{{ list_url }}{% if chip.query %}?{{ chip.query }}{% endif %}"
+       title="Убрать фильтр «{{ chip.group_label }}: {{ chip.label }}»">
+      <span>{{ chip.label }}</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M18 6 6 18M6 6l12 12"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if filters.any %}
+  <a class="filter-reset" href="{{ list_url }}">Сбросить всё</a>
+  {% endif %}
+</div>
+{% endif %}

@@ -4394,8 +4394,24 @@ select option {
   font-style: italic;
 }
 
-/* Поле поиска в «Сводке по удорожанию» — вторая строка той же сетки, что
-   и список «Объект»: тот же вид поля, но курсор текстовый. */
-.object-picker-search {
-  cursor: text;
+/* «Сводка по удорожанию»: справа от списка «Объект» — кнопка «Фильтры» с
+   чипами выбранного, в одну строку. Отступ снизу и запас высоты у полосы
+   фильтра нужны над списком проектов, а внутри этой карточки — лишние. */
+.object-picker-with-filter {
+  grid-template-columns: auto minmax(0, 420px) minmax(0, 1fr);
+}
+
+.object-picker-with-filter .filter-bar {
+  margin-bottom: 0;
+  min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .object-picker-with-filter {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .object-picker-with-filter .filter-bar {
+    grid-column: 1 / -1;
+  }
 }

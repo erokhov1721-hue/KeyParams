@@ -4880,15 +4880,79 @@ def test_replacing_the_estimate_recalculates_the_cost_increase(tmp_path):
     assert "+300 000" not in after
 
 
-def test_investor_summary_page_has_a_search_box_over_object_names(tmp_path):
+
+def test_investor_summary_filters_objects_by_class_and_contractor(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()
-    _make_project_with_passport(tmp_path, "ЖК Ёлки Северный", completed=False)
+    _make_project_with_passport(tmp_path, "Бизнес-АНТТЕК", building_class="Бизнес",
+                                general_contractor="АНТТЕК")
+    _make_project_with_passport(tmp_path, "Комфорт-АНТТЕК", building_class="Комфорт",
+                                general_contractor="АНТТЕК")
+    _make_project_with_passport(tmp_path, "Бизнес-СУ10", building_class="Бизнес",
+                                general_contractor="СУ-10")
 
-    body = client.get("/investors").get_data(as_text=True)
+    body = client.get("/investors?class=Бизнес&contractor=АНТТЕК").get_data(as_text=True)
 
-    assert 'id="investor-summary-search"' in body
-    # Each row carries its name already lower-cased with «ё» folded into «е»,
-    # so the search on the page matches «елки», «Ёлки» and «ЁЛКИ» alike.
-    assert 'data-search="жк елки северный"' in body
-    assert 'id="investor-summary-no-match"' in body
+    # The same «Фильтры» button and checkbox panel as on the project list,
+    # instead of the old free-text search box.
+    assert 'id="filter-toggle"' in body
+    assert 'id="filter-panel"' in body
+    assert 'id="investor-summary-search"' not in body
+    # Only the table: the sidebar lists every project regardless of filter.
+    table = body[body.index('id="investor-summary-table"'):]
+    table = table[:table.index("</table>")]
+    assert ">Бизнес-АНТТЕК<" in table
+    assert ">Комфорт-АНТТЕК<" not in table
+    assert ">Бизнес-СУ10<" not in table
+    # The ticked options stay ticked after the page reloads.
+    assert re.search(r'name="class" value="Бизнес"\s+checked', body)
+
+
+def test_investor_summary_filter_counts_the_totals_over_the_matches_only(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "А", building_class="Бизнес")
+    _make_project_with_passport(tmp_path, "Б", building_class="Комфорт")
+    _make_project_with_passport(tmp_path, "В", building_class="Комфорт")
+
+    body = client.get("/investors?class=Комфорт").get_data(as_text=True)
+
+    # «N из M» under the totals: M is the number of objects that passed the
+    # filter, not all objects in the base.
+    assert "из 2<" in body
+    assert "из 3<" not in body
+
+
+def test_investor_summary_filter_with_no_matches_says_so(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "А", building_class="Бизнес")
+
+    body = client.get("/investors?class=Премиум").get_data(as_text=True)
+
+    assert "Под фильтр не подошёл ни один проект" in body
+    assert 'id="investor-summary-table"' not in body
+
+
+def test_investor_summary_pdf_follows_the_filter(tmp_path, monkeypatch):
+    from app import routes
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "Бизнес-объект", building_class="Бизнес")
+    _make_project_with_passport(tmp_path, "Комфорт-объект", building_class="Комфорт")
+    seen = {}
+
+    def fake_pdf(table, detail_row):
+        seen["labels"] = [row["label"] for row in table["rows"]]
+        return b"%PDF-fake"
+
+    monkeypatch.setattr(routes.pdf_export, "build_investor_summary_pdf", fake_pdf)
+
+    page = client.get("/investors?class=Бизнес").get_data(as_text=True)
+    resp = client.get("/investors/pdf?class=Бизнес")
+
+    assert resp.status_code == 200
+    assert seen["labels"] == ["Бизнес-объект"]
+    # The «Сохранить в PDF» link on the filtered page carries the same filter.
+    assert re.search(r'id="investor-summary-pdf-link"\s+href="/investors/pdf\?class=', page)

@@ -5,7 +5,7 @@ import time
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from flask import (
     Blueprint, Response, abort, current_app, redirect, render_template, request, send_file,
@@ -584,8 +584,38 @@ def investor_summary_page():
     """
     root = _projects_root()
     slugs = storage.list_project_slugs(root)
-    table = _investor_summary_table(root, slugs)
-    return render_template("investor_summary.html", table=table, has_projects=bool(slugs))
+    filters = _investor_summary_filters(root, slugs)
+    table = _investor_summary_table(root, filters["slugs"])
+    return render_template(
+        "investor_summary.html",
+        table=table,
+        has_projects=bool(slugs),
+        filters=filters,
+        slugs=filters["slugs"],
+        list_url=url_for("main.investor_summary_page"),
+        # «Сохранить в PDF» несёт тот же фильтр, что сейчас на экране.
+        pdf_url=_with_filter_query(url_for("main.investor_summary_pdf"), filters),
+    )
+
+
+def _investor_summary_filters(root, slugs):
+    """Тот же фильтр по генподрядчику, классу, году и статусу, что у списка
+    проектов, — для сводки по удорожанию и её PDF. Отбор на сервере, а не в
+    браузере: так строка «Итого» считается по отобранным объектам, а не по
+    всем сразу."""
+    passports = {slug: _safe_passport(root, slug) for slug in slugs}
+    return project_filter.build(passports, request.args)
+
+
+def _with_filter_query(url, filters):
+    """``url`` с выбранными значениями фильтра в адресе."""
+    params = [
+        (group["key"], option["value"])
+        for group in filters["groups"]
+        for option in group["options"]
+        if option["checked"]
+    ]
+    return url + ("?" + urlencode(params) if params else "")
 
 
 # Сводная тендерная таблица — тот же порядок размера, что и портфельный файл
@@ -761,7 +791,8 @@ def download_kp_ranking_pdf(token):
 
 @bp.route("/investors/pdf", methods=["GET"])
 def investor_summary_pdf():
-    """PDF повторяет то, что сейчас на экране: без ``?slug=`` — вся сводка,
+    """PDF повторяет то, что сейчас на экране: без ``?slug=`` — вся сводка
+    (с тем же фильтром по генподрядчику, классу и прочему, что на странице),
     с ним — тот же один объект и та же карточка деталей под ним, что
     показывал фильтр на странице."""
     root = _projects_root()
@@ -770,6 +801,7 @@ def investor_summary_pdf():
         # Нечего класть в файл — назад на страницу, она сама объяснит, что
         # объектов пока нет, а не отдаст пустой PDF.
         return redirect(url_for("main.investor_summary_page"))
+    slugs = _investor_summary_filters(root, slugs)["slugs"]
     selected_slug = request.args.get("slug")
     if selected_slug in slugs:
         table = _investor_summary_table(root, [selected_slug])
