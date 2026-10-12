@@ -4901,9 +4901,10 @@ def test_investor_summary_filters_objects_by_class_and_contractor(tmp_path):
     # Only the table: the sidebar lists every project regardless of filter.
     table = body[body.index('id="investor-summary-table"'):]
     table = table[:table.index("</table>")]
-    assert ">Бизнес-АНТТЕК<" in table
-    assert ">Комфорт-АНТТЕК<" not in table
-    assert ">Бизнес-СУ10<" not in table
+    # Names are shown in capitals on this page, as in the sidebar.
+    assert ">БИЗНЕС-АНТТЕК<" in table
+    assert "КОМФОРТ-АНТТЕК" not in table
+    assert "БИЗНЕС-СУ10" not in table
     # The ticked options stay ticked after the page reloads.
     assert re.search(r'name="class" value="Бизнес"\s+checked', body)
 

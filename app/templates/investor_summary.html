@@ -8,6 +8,8 @@
 {% endif %}
 {% endblock %}
 {% block content %}
+{# Названия объектов на этой странице — заглавными, как в меню слева.
+   Только при показе: сортировка и PDF берут название как записано. #}
 <script src="{{ url_for('static', filename='waterfall.js') }}"></script>
 <div class="page-head">
   <div>
@@ -36,7 +38,7 @@
       <option value="">Все объекты</option>
       <option value="__completed__">Завершённые</option>
       {% for row in table.rows %}
-      <option value="{{ row.slug }}">{{ row.label }}</option>
+      <option value="{{ row.slug }}">{{ row.label | upper }}</option>
       {% endfor %}
     </select>
     {% include "_project_filter_bar.html" %}
@@ -96,7 +98,7 @@
         {% for row in table.rows %}
         <tr data-slug="{{ row.slug }}" data-completed="{{ '1' if row.completed else '0' }}">
           <td class="sections-label-col" data-sort-value="{{ row.label }}">
-            <span class="sections-label" title="{{ row.label }}">{{ row.label }}</span>
+            <span class="sections-label" title="{{ row.label | upper }}">{{ row.label | upper }}</span>
             {% if row.completed %}
             <span class="badge badge-success" title="Проект завершён">Завершён</span>
             {% endif %}
@@ -201,7 +203,7 @@
 {% for row in table.rows %}
 <div class="card investor-detail" data-slug="{{ row.slug }}" hidden>
   <div class="sections-head">
-    <h2 class="chart-title">{{ row.label }}: смета и удорожание</h2>
+    <h2 class="chart-title">{{ row.label | upper }}: смета и удорожание</h2>
   </div>
 
   {% if row.estimate_vs_total %}
