@@ -216,6 +216,41 @@
       <header class="topbar">
         <div class="topbar-actions">
           {% block header_actions %}{% endblock %}
+          {# Карандаш — обвести или подчеркнуть что-то на странице для
+             наглядности (app/static/draw.js). «Назад», «вперёд» и «стереть
+             всё» видны, пока карандаш включён. Рисунок не сохраняется и в
+             PDF не попадает. #}
+          <div class="draw-tools" id="draw-tools" hidden>
+            <button type="button" class="draw-button" id="draw-undo"
+                    title="Отменить (Ctrl+Z)" aria-label="Отменить нарисованное">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>
+              </svg>
+            </button>
+            <button type="button" class="draw-button" id="draw-redo"
+                    title="Вернуть (Ctrl+Y)" aria-label="Вернуть отменённое">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>
+              </svg>
+            </button>
+            <button type="button" class="draw-button" id="draw-clear"
+                    title="Стереть всё" aria-label="Стереть всё нарисованное">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>
+              </svg>
+            </button>
+          </div>
+          <button type="button" class="draw-button draw-toggle" id="draw-toggle"
+                  aria-pressed="false" title="Карандаш: обвести или подчеркнуть (Esc — выключить)"
+                  aria-label="Карандаш">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>
+            </svg>
+          </button>
           <button type="button" class="theme-toggle" id="theme-toggle"
                   title="Переключить тему" aria-label="Переключить тему">
             <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -441,5 +476,6 @@
       });
     })();
   </script>
+  <script src="{{ url_for('static', filename='draw.js') }}"></script>
 </body>
 </html>

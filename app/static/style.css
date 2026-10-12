@@ -4415,3 +4415,80 @@ select option {
     grid-column: 1 / -1;
   }
 }
+
+/* --- Карандаш: рисование поверх страницы (app/static/draw.js) --- */
+
+/* Слой лежит поверх всего, но пропускает мышь насквозь, пока карандаш
+   выключен: обводки видны, а страница работает как обычно. */
+#draw-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 900;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.is-drawing #draw-layer {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* Шапка — над слоем, иначе выключить карандаш и нажать «назад» было бы
+   нечем: слой перехватывал бы и эти щелчки. */
+.is-drawing .topbar {
+  position: relative;
+  z-index: 901;
+}
+
+.draw-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.draw-tools[hidden] {
+  display: none;
+}
+
+/* Того же вида и роста, что кнопка темы рядом. */
+.draw-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-700);
+  color: var(--text-500);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.draw-button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.draw-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.draw-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* Рисунок — пометка для себя на экране, не часть документа. */
+@media print {
+  #draw-layer,
+  .draw-tools,
+  .draw-toggle {
+    display: none !important;
+  }
+}

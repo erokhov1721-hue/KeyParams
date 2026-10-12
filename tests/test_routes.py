@@ -4956,3 +4956,17 @@ def test_investor_summary_pdf_follows_the_filter(tmp_path, monkeypatch):
     assert seen["labels"] == ["Бизнес-объект"]
     # The «Сохранить в PDF» link on the filtered page carries the same filter.
     assert re.search(r'id="investor-summary-pdf-link"\s+href="/investors/pdf\?class=', page)
+
+
+def test_every_page_has_the_drawing_pencil_with_undo_and_redo(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "А")
+
+    for url in ("/", "/investors", "/compare/select"):
+        body = client.get(url).get_data(as_text=True)
+        assert 'id="draw-toggle"' in body, url
+        assert 'id="draw-undo"' in body, url
+        assert 'id="draw-redo"' in body, url
+        assert 'id="draw-clear"' in body, url
+        assert "draw.js" in body, url
