@@ -256,44 +256,31 @@ def test_increasing_sections_lists_only_sections_that_got_dearer():
     assert sections[0]["percent_display"] == "+30,0 %"
 
 
-def test_increasing_sections_come_biggest_delta_first():
+def test_increasing_sections_follow_the_estimates_own_order():
+    # Порядок — как разделы идут в самой смете, сверху вниз, а не по
+    # проценту или сумме удорожания: фасад подорожал сильнее, но в смете
+    # кровля стоит выше.
     predicted = _predicted_report([("Кровля", 10.0), ("Фасадные работы", 200.0)])
-    table = investor_summary.build_table(
-        ["a"], {"a": "Объект А"},
-        estimate_totals_by_slug={"a": {"roof": 100.0, "facade": 100.0}},
-        cost_increase_reports_by_slug={"a": None},
-        predicted_increase_by_slug={},
-        predicted_increase_reports_by_slug={"a": predicted},
-        area_by_slug={},
-    )
-    labels = [s["label"] for s in table["rows"][0]["increasing_sections"]]
 
-    assert labels == ["Фасад", "Кровли"]
+    def labels_for(estimate):
+        table = investor_summary.build_table(
+            ["a"], {"a": "Объект А"},
+            estimate_totals_by_slug={"a": estimate},
+            cost_increase_reports_by_slug={"a": None},
+            predicted_increase_by_slug={},
+            predicted_increase_reports_by_slug={"a": predicted},
+            area_by_slug={},
+        )
+        return [s["label"] for s in table["rows"][0]["increasing_sections"]]
 
-
-def test_increasing_sections_sort_by_percent_not_by_rouble_amount():
-    # Кровля: 100 -> 500, +400 %. Фасад: 10 000 -> 10 500, +500 ₽ but only
-    # +5 %. Bigger rouble delta, smaller percent — order must follow the
-    # percent, not the absolute sum.
-    predicted = _predicted_report([("Кровля", 400.0), ("Фасадные работы", 500.0)])
-    table = investor_summary.build_table(
-        ["a"], {"a": "Объект А"},
-        estimate_totals_by_slug={"a": {"roof": 100.0, "facade": 10_000.0}},
-        cost_increase_reports_by_slug={"a": None},
-        predicted_increase_by_slug={},
-        predicted_increase_reports_by_slug={"a": predicted},
-        area_by_slug={},
-    )
-    labels = [s["label"] for s in table["rows"][0]["increasing_sections"]]
-
-    assert labels == ["Кровли", "Фасад"]
+    assert labels_for({"roof": 100.0, "facade": 100.0}) == ["Кровли", "Фасад"]
+    assert labels_for({"facade": 100.0, "roof": 100.0}) == ["Фасад", "Кровли"]
 
 
-def test_increasing_sections_put_a_section_missing_from_the_estimate_first():
-    # Раздел, которого не было в смете вовсе (0 -> 300), не выразить
-    # процентом — но это точно не «подорожал меньше всех», кто вырос,
-    # например, всего на 50 %.
-    predicted = _predicted_report([("Кровля", 50.0), ("Фасадные работы", 300.0)])
+def test_increasing_sections_put_sections_missing_from_the_estimate_last():
+    # Раздела нет в смете вовсе — ему нет места в её порядке; он идёт после
+    # разделов сметы.
+    predicted = _predicted_report([("Фасадные работы", 300.0), ("Кровля", 50.0)])
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {"roof": 100.0}},  # facade: nothing in the estimate
@@ -304,7 +291,28 @@ def test_increasing_sections_put_a_section_missing_from_the_estimate_first():
     )
     labels = [s["label"] for s in table["rows"][0]["increasing_sections"]]
 
-    assert labels == ["Фасад", "Кровли"]
+    assert labels == ["Кровли", "Фасад"]
+
+
+def test_sections_missing_from_the_estimate_keep_the_standard_order():
+    # Несколько разделов, которых в смете нет, — между собой в обычном
+    # порядке разделов сметы (фасад выше благоустройства), а не в порядке
+    # строк файла удорожания.
+    predicted = _predicted_report(
+        [("Благоустройство, дороги", 10.0), ("Фасадные работы", 10.0), ("Кровля", 10.0)],
+    )
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        predicted_increase_reports_by_slug={"a": predicted},
+        area_by_slug={},
+    )
+    labels = [s["label"] for s in table["rows"][0]["increasing_sections"]]
+
+    assert labels[0] == "Кровли"
+    assert labels.index("Фасад") < labels.index("Благоустройство")
 
 
 def test_increasing_sections_show_cost_per_square_metre():

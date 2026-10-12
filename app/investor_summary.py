@@ -10,7 +10,7 @@
 
 from decimal import Decimal
 
-from . import cost_increase
+from . import cost_increase, estimate_sections
 from .passport import format_number
 
 TOTAL_LABEL = "Итого"
@@ -87,12 +87,13 @@ def _percent(baseline, current):
 def _increasing_sections(report, predicted_report, estimate_totals, area):
     """Разделы сметы, которые дорожают — смета, подписанное и прогнозируемое
     удорожание порознь (та же разбивка, что и у объекта целиком в таблице
-    выше), самый подорожавший в процентах первым (не по сумме в рублях —
-    иначе маленький, но сильно подорожавший раздел тонул бы ниже большого,
-    едва тронутого). Раздел, которого не было в смете вовсе (рост со «100 ₽»
-    вниз ошибка не считать), встаёт первым — рост от нуля не выразить
-    процентом, но это точно не «подорожал меньше всех». ``[]``, когда нет ни
-    одного из двух источников: сравнивать тогда не с чем.
+    выше), в том порядке, в каком разделы идут в самой смете, сверху вниз:
+    так таблицу читают рядом со сметой, не ища, куда переехал нужный раздел.
+    Порядок сметы — это порядок ключей ``estimate_totals``: они собираются в
+    том порядке, в каком разделы встретились в файле. Разделы, которых в
+    смете нет вовсе («новые работы»), идут после неё — между собой в обычном
+    порядке разделов сметы (``estimate_sections.CATEGORY_KEYS``). ``[]``,
+    когда нет ни одного из двух источников: сравнивать тогда не с чем.
 
     Подписанное удорожание считается только когда есть смета, от которой
     его дельта отмерена (``report.from_estimate``) — иначе его «стало»
@@ -138,10 +139,13 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
         baseline = estimate_totals.get(key, Decimal("0"))
         current = baseline + amount
         candidates.append((key, baseline, current, _percent(baseline, current)))
-    # percent is None only for baseline == 0 with current > 0 ("новые
-    # работы") — сорт ставит такие впереди (True > False), а не роняет их
-    # в конец из-за отсутствующего числа.
-    candidates.sort(key=lambda item: (item[3] is None, item[3] or 0.0), reverse=True)
+    estimate_order = {key: index for index, key in enumerate(estimate_totals)}
+    standard_order = {key: index for index, key in enumerate(estimate_sections.CATEGORY_KEYS)}
+    candidates.sort(key=lambda item: (
+        item[0] not in estimate_order,
+        estimate_order.get(item[0], 0),
+        standard_order.get(item[0], len(standard_order)),
+    ))
 
     sections = []
     for key, baseline, current, percent in candidates:
