@@ -2492,8 +2492,25 @@ select option {
    and the point of sharing this class between the two tables in the first
    place: the same money column should end up the same width in both, not
    fixed in one and content-sized in the other. */
+/* Ширины столбцов — из общей раскладки (<colgroup> в
+   investor_summary.html), а не по содержимому: так столбцы верхней таблицы
+   и таблицы разделов стоят строго друг под другом. На узком окне таблица не
+   сжимается меньше min-width, а прокручивается вбок. */
 .investor-summary-table {
-  table-layout: auto;
+  table-layout: fixed;
+  min-width: 1050px;
+}
+
+.investor-summary-table .col-w-label { width: 22%; }
+.investor-summary-table .col-w-money { width: 10.5%; }
+.investor-summary-table .col-w-sqm { width: 6.5%; }
+.investor-summary-table .col-w-pct { width: 10%; }
+
+/* Заголовки в шапке переносятся одинаково в обеих таблицах — иначе в
+   таблице разделов длинное «Прогнозируемое удорожание» или «% удорожания»
+   вылезало бы за свой столбец, а в верхней — переносилось. */
+.investor-detail-table thead th {
+  white-space: normal;
 }
 
 .investor-summary-table thead th.sections-label-col,
@@ -3405,9 +3422,10 @@ select option {
   white-space: nowrap;
 }
 
-/* table-layout: auto уже задан выше, на общем .investor-summary-table —
-   обе таблицы сводки делят этот класс как раз для того, чтобы у одной и той
-   же денежной колонки была одна и та же ширина что там, что там. */
+/* Ширины столбцов уже заданы выше, на общем .investor-summary-table, —
+   обе таблицы сводки делят этот класс и одну раскладку <colgroup> как раз
+   для того, чтобы у одной и той же денежной колонки была одна и та же
+   ширина что там, что там. */
 
 /* Те же отступы ячеек, что и у верхней таблицы сводки (.sections-table th,
    td — var(--table-pad-y/x) — и var(--table-edge) по краю), только явно:
@@ -4573,12 +4591,8 @@ select option {
 
 /* «Сводка по удорожанию»: общая площадь — внутри столбца «Объект», у его
    правого края. Название слева, площадь справа; заголовок «Общая площадь,
-   м²» и числа под ним выровнены по одному правому краю. Столбец шире
-   обычного, чтобы название и площадь не теснили друг друга. */
-.investor-summary-table .sections-label-col.label-with-area {
-  width: clamp(330px, 30vw, 460px);
-}
-
+   м²» и числа под ним выровнены по одному правому краю. Ширина столбца —
+   из общей раскладки сводки (.col-w-label). */
 .label-area-row {
   display: flex;
   align-items: flex-start;

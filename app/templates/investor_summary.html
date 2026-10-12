@@ -8,6 +8,20 @@
 {% endif %}
 {% endblock %}
 {% block content %}
+{# Одна раскладка столбцов на обе таблицы сводки — верхнюю по объектам и
+   таблицу разделов выбранного объекта, — чтобы «Смета» стояла ровно под
+   «Сметой» и так далее. Доли от ширины карточки, а карточки одинаковой
+   ширины, поэтому совпадение точное. #}
+{% macro summary_cols() %}
+      <colgroup>
+        <col class="col-w-label">
+        <col class="col-w-money"><col class="col-w-sqm">
+        <col class="col-w-money"><col class="col-w-sqm">
+        <col class="col-w-money"><col class="col-w-sqm">
+        <col class="col-w-money"><col class="col-w-sqm">
+        <col class="col-w-pct">
+      </colgroup>
+{% endmacro %}
 {# Названия объектов на этой странице — заглавными, как в меню слева.
    Только при показе: сортировка и PDF берут название как записано. #}
 <script src="{{ url_for('static', filename='waterfall.js') }}"></script>
@@ -52,7 +66,7 @@
 <div class="card sections-card">
   <div class="sections-table-wrap">
     <table class="sections-table investor-summary-table" id="investor-summary-table">
-      <thead>
+{{ summary_cols() }}      <thead>
         <tr>
           {# Площадь — внутри столбца «Объект», у его правого края: название
              слева, площадь справа, строго под заголовком. Так она держится
@@ -271,7 +285,7 @@
   <div data-sections-panel="table">
   <div class="sections-table-wrap">
     <table class="sections-table investor-detail-table investor-summary-table">
-      <thead>
+{{ summary_cols() }}      <thead>
         <tr>
           <th class="sections-label-col" rowspan="2">Раздел</th>
           <th colspan="2" class="group-th group-smeta">Смета</th>
