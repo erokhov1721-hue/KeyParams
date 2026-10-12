@@ -29,6 +29,14 @@ def _signed_money(value):
     return f"{sign}{format_number(round(abs(value)))} ₽"
 
 
+def _area(value):
+    """Площадь в м² целым числом с разрядами: «141 823». Единица — в шапке
+    колонки, как и у «₽/м²»."""
+    if not value:
+        return "—"
+    return format_number(round(value))
+
+
 def _money_per_sqm(value):
     # No " ₽/м²" suffix: every table this feeds already headers the column
     # "₽/м²", and repeating it on each row just adds noise next to a
@@ -270,6 +278,7 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
         # ``_per_sqm`` здесь, вместо того чтобы заново разбирать уже
         # готовые "_per_sqm_display" строки на странице.
         "area": area,
+        "area_display": _area(area),
         "estimate": estimate,
         "estimate_display": _money(estimate),
         "estimate_per_sqm": estimate_per_sqm,
@@ -296,6 +305,10 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
 
 
 def _total_row(rows):
+    # Площадь, у которой нет числа или стоит ноль, в сумму не идёт и в
+    # счётчике «N из всего» не засчитывается — как и пустая смета.
+    areas = [row["area"] for row in rows if row["area"]]
+    area_total, area_count = (sum(areas) if areas else None), len(areas)
     estimate_total, estimate_count = _sum_known(rows, "estimate")
     predicted_total, predicted_count = _sum_known(rows, "predicted")
     signed_total, signed_count = _sum_known(rows, "signed")
@@ -303,6 +316,8 @@ def _total_row(rows):
     return {
         "label": TOTAL_LABEL,
         "count": len(rows),
+        "area_display": _area(area_total),
+        "area_count": area_count,
         "estimate_display": _money(estimate_total),
         "estimate_count": estimate_count,
         "predicted_display": _money(predicted_total),

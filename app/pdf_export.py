@@ -1262,13 +1262,18 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
     rest_total = page_width - label_w
     # «Всего» шире «₽/м²»: 27 710 828 200 ₽ против 118 012 — вдвое больше
     # знаков, и половина ширины колонки под шестизначное число выглядела бы
-    # пустой тратой места на 12-значное.
-    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.5 + 1.0))
+    # пустой тратой места на 12-значное. Общая площадь объекта — первой
+    # колонкой после названия, как на экране, шириной с «₽/м²»: число того
+    # же порядка.
+    unit = rest_total / (1.0 + len(_INVESTOR_SUMMARY_GROUPS) * (1.5 + 1.0))
     money_w, sqm_w = unit * 1.5, unit * 1.0
-    col_widths = [label_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS)
+    col_widths = [label_w, sqm_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS)
 
-    group_row = [Paragraph("Объект", styles["head"])]
-    subhead_row = [""]
+    group_row = [
+        Paragraph("Объект", styles["head"]),
+        Paragraph("Общая площадь, м²", styles["subhead_right"]),
+    ]
+    subhead_row = ["", ""]
     for title, head_style, _color in _INVESTOR_SUMMARY_GROUPS:
         group_row += [Paragraph(title, styles[head_style]), ""]
         subhead_row += [
@@ -1280,6 +1285,7 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
     for row in table["rows"]:
         data.append([
             Paragraph(_esc(row["label"]), styles["cell"]),
+            Paragraph(row["area_display"], styles["cell_right"]),
             Paragraph(row["estimate_display"], styles["cell_right"]),
             Paragraph(row["estimate_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["signed_display"], styles["cell_right"]),
@@ -1299,6 +1305,10 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
         total = table["total"]
         data.append([
             Paragraph(total["label"], styles["cell_label"]),
+            [
+                Paragraph(total["area_display"], styles["cell_right"]),
+                Paragraph(f'{total["area_count"]} из {total["count"]}', styles["note"]),
+            ],
             [
                 Paragraph(total["estimate_display"], styles["cell_right"]),
                 Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
@@ -1327,6 +1337,9 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
         ("BACKGROUND", (0, 0), (0, 1), HEAD_BG),
         ("SPAN", (0, 0), (0, 1)),
         ("VALIGN", (0, 0), (0, 1), "BOTTOM"),
+        ("BACKGROUND", (1, 0), (1, 1), HEAD_BG),
+        ("SPAN", (1, 0), (1, 1)),
+        ("VALIGN", (1, 0), (1, 1), "BOTTOM"),
         ("VALIGN", (1, 1), (-1, 1), "BOTTOM"),
         ("VALIGN", (0, 2), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -1335,7 +1348,7 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]
     for index, (_title, _head_style, color) in enumerate(_INVESTOR_SUMMARY_GROUPS):
-        col = 1 + index * 2
+        col = 2 + index * 2
         style.append(("SPAN", (col, 0), (col + 1, 0)))
         style.append(("BACKGROUND", (col, 0), (col + 1, 1), _fade(color, 0.88)))
         style.append(("VALIGN", (col, 0), (col + 1, 0), "MIDDLE"))

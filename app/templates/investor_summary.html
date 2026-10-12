@@ -59,38 +59,41 @@
               Объект<span class="sections-arrow"></span>
             </button>
           </th>
+          <th class="pct-th area-th" rowspan="2">
+            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">Общая площадь, м²<span class="sections-arrow"></span></button>
+          </th>
           <th colspan="2" class="group-th group-smeta">Смета</th>
           <th colspan="2" class="group-th group-signed">Подписанное удорожание</th>
           <th colspan="2" class="group-th group-forecast">Прогнозируемое удорожание</th>
           <th colspan="2" class="group-th group-total">Итоговая стоимость</th>
           <th class="pct-th" rowspan="2">
-            <button type="button" class="sections-sort" data-sort-index="9" data-sort-type="number">% удорожания<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="10" data-sort-type="number">% удорожания<span class="sections-arrow"></span></button>
           </th>
         </tr>
         <tr>
           <th class="subgroup-th group-smeta">
-            <button type="button" class="sections-sort" data-sort-index="1" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-smeta">
-            <button type="button" class="sections-sort" data-sort-index="2" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-signed">
-            <button type="button" class="sections-sort" data-sort-index="3" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-signed">
-            <button type="button" class="sections-sort" data-sort-index="4" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="5" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-forecast">
-            <button type="button" class="sections-sort" data-sort-index="5" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="6" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-forecast">
-            <button type="button" class="sections-sort" data-sort-index="6" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="7" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-total">
-            <button type="button" class="sections-sort" data-sort-index="7" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="8" data-sort-type="number">Всего<span class="sections-arrow"></span></button>
           </th>
           <th class="subgroup-th group-total">
-            <button type="button" class="sections-sort" data-sort-index="8" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
+            <button type="button" class="sections-sort" data-sort-index="9" data-sort-type="number">₽/м²<span class="sections-arrow"></span></button>
           </th>
         </tr>
       </thead>
@@ -102,6 +105,10 @@
             {% if row.completed %}
             <span class="badge badge-success" title="Проект завершён">Завершён</span>
             {% endif %}
+          </td>
+          <td class="sections-value col-area{{ ' is-empty' if not row.area }}"
+              data-sort-value="{{ row.area if row.area else -1 }}">
+            <span class="sections-number">{{ row.area_display }}</span>
           </td>
           <td class="sections-value{{ ' is-empty' if row.estimate is none }}"
               data-sort-value="{{ row.estimate if row.estimate is not none else -1 }}">
@@ -146,6 +153,10 @@
         <tr data-total-for="all">
           <td class="sections-label-col">{{ table.total.label }}</td>
           <td class="sections-value">
+            <span class="sections-number">{{ table.total.area_display }}</span>
+            <span class="avg-count-note">{{ table.total.area_count }} из {{ table.total.count }}</span>
+          </td>
+          <td class="sections-value">
             <span class="sections-number">{{ table.total.estimate_display }}</span>
             <span class="avg-count-note">{{ table.total.estimate_count }} из {{ table.total.count }}</span>
           </td>
@@ -171,6 +182,10 @@
         </tr>
         <tr data-total-for="completed" hidden>
           <td class="sections-label-col">{{ table.total_completed.label }}</td>
+          <td class="sections-value">
+            <span class="sections-number">{{ table.total_completed.area_display }}</span>
+            <span class="avg-count-note">{{ table.total_completed.area_count }} из {{ table.total_completed.count }}</span>
+          </td>
           <td class="sections-value">
             <span class="sections-number">{{ table.total_completed.estimate_display }}</span>
             <span class="avg-count-note">{{ table.total_completed.estimate_count }} из {{ table.total_completed.count }}</span>

@@ -611,3 +611,28 @@ def test_per_sqm_is_a_dash_without_the_underlying_figure():
     row = table["rows"][0]
     assert row["signed_per_sqm"] is None
     assert row["signed_per_sqm_display"] == "—"
+
+
+def test_each_row_shows_the_objects_total_area():
+    table = investor_summary.build_table(
+        ["a", "b"], {"a": "Объект А", "b": "Объект Б"},
+        estimate_totals_by_slug={},
+        cost_increase_reports_by_slug={"a": None, "b": None},
+        predicted_increase_by_slug={},
+        area_by_slug={"a": 141823.4, "b": None},
+    )
+    rows = {row["slug"]: row for row in table["rows"]}
+    assert rows["a"]["area_display"] == "141 823"
+    assert rows["b"]["area_display"] == "—"
+
+
+def test_the_total_row_sums_the_known_areas():
+    table = investor_summary.build_table(
+        ["a", "b", "c"], {"a": "А", "b": "Б", "c": "В"},
+        estimate_totals_by_slug={},
+        cost_increase_reports_by_slug={"a": None, "b": None, "c": None},
+        predicted_increase_by_slug={},
+        area_by_slug={"a": 1000.0, "b": 2500.0, "c": None},
+    )
+    assert table["total"]["area_display"] == "3 500"
+    assert table["total"]["area_count"] == 2

@@ -4971,3 +4971,15 @@ def test_every_page_has_the_drawing_pencil_with_undo_and_redo(tmp_path):
         assert 'id="draw-redo"' in body, url
         assert 'id="draw-clear"' in body, url
         assert "draw.js" in body, url
+
+
+def test_investor_summary_has_a_total_area_column_before_the_estimate(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _make_project_with_passport(tmp_path, "А", total_area_sqm=141823.4)
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    head = body[body.index('id="investor-summary-table"'):]
+    assert head.index("Общая площадь") < head.index("Смета")
+    assert "141 823" in head

@@ -659,3 +659,21 @@ def test_the_investor_summary_pdf_detail_card_says_when_theres_no_increase_file(
     text = "\n".join(_page_texts(pdf_bytes))
 
     assert "Не загружен ни файл удорожания, ни файл прогнозируемого удорожания." in text
+
+
+def test_the_investor_summary_pdf_has_the_total_area_column():
+    from app import investor_summary
+
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        area_by_slug={"a": 141823.4},
+    )
+
+    text = "\n".join(_page_texts(pdf_export.build_investor_summary_pdf(table)))
+
+    # The header wraps in the narrow column: «Общая» / «площадь, м²».
+    assert "площадь, м²" in text
+    assert "Объект А 141 823" in text
