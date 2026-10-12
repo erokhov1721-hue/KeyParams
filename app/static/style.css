@@ -451,6 +451,12 @@ a {
   text-overflow: ellipsis;
 }
 
+/* Названия проектов в меню — заглавными. Только при показе: в паспорте
+   и везде, где название вписывают или ищут, оно остаётся как записано. */
+#sidebar-project-list .sidebar-link-text {
+  text-transform: uppercase;
+}
+
 .sidebar-item {
   position: relative;
 }
