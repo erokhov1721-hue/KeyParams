@@ -4570,3 +4570,42 @@ select option {
     display: none !important;
   }
 }
+
+/* «Сводка по удорожанию»: общая площадь — внутри столбца «Объект», у его
+   правого края. Название слева, площадь справа; заголовок «Общая площадь,
+   м²» и числа под ним выровнены по одному правому краю. Столбец шире
+   обычного, чтобы название и площадь не теснили друг друга. */
+.investor-summary-table .sections-label-col.label-with-area {
+  width: clamp(330px, 30vw, 460px);
+}
+
+.label-area-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.label-area-row > :first-child {
+  min-width: 0;
+}
+
+thead .label-area-row {
+  align-items: flex-end;
+}
+
+.label-area {
+  flex-shrink: 0;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+tbody .label-area {
+  font-weight: 400;
+  color: var(--text-100);
+}
+
+tbody .label-area.is-empty {
+  color: var(--text-600);
+}
