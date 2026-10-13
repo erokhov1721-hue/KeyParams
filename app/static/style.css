@@ -4623,3 +4623,45 @@ tbody .label-area {
 tbody .label-area.is-empty {
   color: var(--text-600);
 }
+
+/* «Информация о загрузках» в окне «Настройки» — только у аккаунта erokhov. */
+.settings-section-uploads {
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.upload-log-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.upload-log-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.upload-log-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.upload-log-download {
+  color: var(--text-500);
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.upload-log-download:hover {
+  color: var(--text-100);
+}

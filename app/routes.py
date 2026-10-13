@@ -16,7 +16,7 @@ from . import (
     auth, chart_render, comparison, corrections, cost_increase, estimate, estimate_sections,
     excel_report,
     extractors, investor_summary, kp_analysis, master_import, passport as passport_module,
-    pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard,
+    pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard, upload_log,
     workbook_cache,
 )
 from .document_reader import DocxReadError
@@ -61,6 +61,22 @@ def login():
             "login.html", error="Неверный логин или пароль", next=request.form.get("next", ""),
         )
     return render_template("login.html", error=None, next=request.args.get("next", ""))
+
+
+@bp.route("/upload-log")
+def upload_log_page():
+    """Журнал загрузок одним текстовым файлом — в браузере, а с
+    ``?download=1`` скачивается. Другим аккаунтам — «не найдено», будто
+    страницы нет вовсе: незачем подсказывать, что она существует."""
+    if not upload_log.can_read(session.get("user")):
+        abort(404)
+    text = upload_log.read(_projects_root()) or "Загрузок пока не было.\n"
+    disposition = "attachment" if request.args.get("download") else "inline"
+    return Response(
+        text,
+        mimetype="text/plain",
+        headers={"Content-Disposition": f"{disposition}; filename={upload_log.FILE_NAME}"},
+    )
 
 
 @bp.route("/logout", methods=["POST"])
@@ -166,6 +182,7 @@ def inject_sidebar_projects():
         "sidebar_years": _project_field_map(root, slugs, "year_signed"),
         "sidebar_completed": _project_completed_search_text(root, slugs),
         "sidebar_covers": {slug: _cover_version(root, slug) for slug in slugs},
+        "can_read_upload_log": upload_log.can_read(session.get("user")),
     }
 
 
@@ -862,6 +879,14 @@ def run_master_import():
         return render_template("master_import.html", error=str(e), report=None), 400
 
     report = master_import.apply_import(root, parsed)
+    created = [r["name"] for r in report if r["action"] == "created"]
+    updated = [r["name"] for r in report if r["action"] == "updated"]
+    _log_upload(
+        root, f"Импорт из сводного файла «{xlsx_file.filename}»",
+        [f"Создано: {len(created)}, обновлено: {len(updated)}"]
+        + [f"+ создан: {name}" for name in created]
+        + [f"~ обновлён: {name}" for name in updated],
+    )
     current_app.logger.info(
         "Импорт из сводного файла: %d проектов (создано %d, обновлено %d)",
         len(report),
@@ -1118,6 +1143,11 @@ def create_project():
 
     passport_module.save_passport(data, storage.passport_path(staging_root, slug))
     storage.publish_project(root, slug, staging_root)
+    _log_upload(root, f"Новый проект «{project_name}»", [
+        f"{label}: {request.files[field].filename}"
+        for field, label in _NEW_PROJECT_FILE_LABELS
+        if request.files.get(field) and request.files[field].filename
+    ])
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 
@@ -1134,6 +1164,35 @@ def _log_recognition(root, slug, project_name, file_path, mode, extracted, probl
         )
     except OSError:
         current_app.logger.exception("Журнал распознаваний не записан")
+
+
+def _log_upload(root, title, lines=()):
+    """Одна запись в журнале загрузок (``app/upload_log.py``). Журнал, который
+    не удалось записать, не должен стоить загрузки: ошибка уходит в лог
+    сервера, а запрос идёт дальше."""
+    try:
+        upload_log.record(root, session.get("user"), title, lines)
+    except OSError:
+        current_app.logger.exception("Журнал загрузок не записан")
+
+
+def _log_project_file(root, slug, what, upload):
+    """«Проект «…» обновлён» и строка «что: имя файла» под ней."""
+    name = _safe_passport(root, slug).get("project_name") or slug
+    _log_upload(root, f"Проект «{name}» обновлён", [f"{what}: {upload.filename}"])
+
+
+# Подписи файлов нового проекта в журнале загрузок — по полям формы.
+_NEW_PROJECT_FILE_LABELS = (
+    ("dgp_file", "ДГП"),
+    ("tz_file", "ТЗ"),
+    ("smeta_file", "Смета"),
+    ("kp_file", "КП"),
+    ("contract_terms_file", "Протокол условий договора"),
+    ("cost_increase_file", "Удорожание"),
+    ("predicted_increase_file", "Прогнозируемое удорожание"),
+    ("cover_file", "Обложка"),
+)
 
 
 def _estimate_totals(root, slug):
@@ -1575,6 +1634,7 @@ def upload_project_cover(slug):
         abort(400)
 
     storage.save_cover(root, slug, cover_file, Path(cover_file.filename).suffix.lower())
+    _log_project_file(root, slug, "Обложка", cover_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1643,6 +1703,7 @@ def upload_contract_terms(slug):
     passport_module.save_passport_checked(data, path, expected_version)
     # A problem code travels back as a query parameter rather than a flash
     # message: flashing would need a SECRET_KEY, which this app doesn't set.
+    _log_project_file(root, slug, "Протокол условий договора", pdf_file)
     return redirect(url_for("main.project_page", slug=slug, problem=problem))
 
 
@@ -1695,6 +1756,7 @@ def upload_cost_increase(slug):
     # (path, mtime, size) само по себе могло бы в редком случае совпасть с
     # только что заменённым файлом — сброс кэша убирает эту случайность.
     workbook_cache.invalidate(dest)
+    _log_project_file(root, slug, "Удорожание", xlsx_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1739,6 +1801,7 @@ def upload_predicted_increase(slug):
     dest = storage.predicted_increase_path(root, slug)
     dest.write_bytes(data)
     workbook_cache.invalidate(dest)
+    _log_project_file(root, slug, "Прогнозируемое удорожание", xlsx_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1797,6 +1860,7 @@ def upload_dgp(slug):
     storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
+    _log_project_file(root, slug, "ДГП", dgp_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1840,6 +1904,7 @@ def upload_tz(slug):
     storage.replace_file(tmp, dest)
     data.update(fresh)
     passport_module.save_passport_checked(data, path, expected_version)
+    _log_project_file(root, slug, "ТЗ", tz_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
@@ -1887,6 +1952,7 @@ def upload_estimate(slug):
     # this just replaced; dropping the cache outright is what actually
     # guarantees the next read reflects the new file, not a coincidence.
     workbook_cache.invalidate(dest)
+    _log_project_file(root, slug, "Смета", xlsx_file)
     return redirect(url_for("main.project_page", slug=slug))
 
 
