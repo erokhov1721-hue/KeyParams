@@ -708,7 +708,12 @@ def contractor_history(names, passports, building_class):
                 ),
                 in_class=passport.get("building_class") == building_class,
             ))
-        objects.sort(key=lambda o: (not o.in_class, -(o.price or 0.0)))
+        # Выбранный класс — наверху; внутри обеих групп — по году договора
+        # от раннего к позднему, без года — в конце группы; в одном году —
+        # от дорогого к дешёвому.
+        objects.sort(key=lambda o: (
+            not o.in_class, o.year is None, o.year or "", -(o.price or 0.0),
+        ))
         in_class = [o for o in objects if o.in_class]
         result[name] = ContractorHistory(
             count=len(objects),

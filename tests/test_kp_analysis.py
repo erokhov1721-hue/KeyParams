@@ -552,3 +552,26 @@ def test_contractor_history_shows_the_contract_year():
     years = {o.name: o.year for o in history["АО ФОДД"].objects}
 
     assert years == {"А": "2024", "Б": "2021", "В": None}
+
+
+def test_contractor_objects_go_class_first_then_by_year_ascending():
+    def p(name, cls, year, price):
+        return {"project_name": name, "general_contractor": "АО ФОДД",
+                "building_class": cls, "year_signed": year, "contract_price_rub": price}
+
+    passports = [
+        p("Бизнес-2026", "Бизнес", "2026", 9.0),
+        p("Делюкс-2024", "Делюкс", "2024", 1.0),
+        p("Бизнес-без-года", "Бизнес", None, 99.0),
+        p("Бизнес-2021", "Бизнес", "от 2021 г.", 1.0),
+        p("Делюкс-2023", "Делюкс", "2023", 1.0),
+        p("Бизнес-2024-дорогой", "Бизнес", "2024", 50.0),
+        p("Бизнес-2024-дешёвый", "Бизнес", "2024", 5.0),
+    ]
+    history = kp_analysis.contractor_history(["АО ФОДД"], passports, "Делюкс")
+
+    assert [o.name for o in history["АО ФОДД"].objects] == [
+        "Делюкс-2023", "Делюкс-2024",
+        "Бизнес-2021", "Бизнес-2024-дорогой", "Бизнес-2024-дешёвый", "Бизнес-2026",
+        "Бизнес-без-года",
+    ]
