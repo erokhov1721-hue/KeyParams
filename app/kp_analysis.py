@@ -633,10 +633,23 @@ _LEGAL_FORM_RE = re.compile(
 )
 _NON_WORD_RE = re.compile(r"[^\w]+")
 
-# Объект подрядчика из базы: название, класс, цена по договору (или None),
+# Объект подрядчика из базы: название, класс, год подписания договора
+# (строкой «2024» или None), цена по договору (или None),
 # она же на м² общей площади (или None, если нет цены или площади), того ли
 # он класса, что выбран для анализа.
-HistoryObject = namedtuple("HistoryObject", "name building_class price price_per_sqm in_class")
+HistoryObject = namedtuple(
+    "HistoryObject", "name building_class year price price_per_sqm in_class",
+)
+
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+
+def _contract_year(value):
+    """Год из поля паспорта: «от 2024 г.» → «2024», 2021 → «2021»; None,
+    если года в поле нет. Так же год читает фильтр по году у списка
+    проектов."""
+    found = _YEAR_RE.search(str(value)) if value is not None else None
+    return found.group() if found else None
 # Сколько наших объектов у подрядчика и на какую сумму — всего и в классе.
 ContractorHistory = namedtuple(
     "ContractorHistory", "count total class_count class_total objects",
@@ -684,6 +697,7 @@ def contractor_history(names, passports, building_class):
             objects.append(HistoryObject(
                 name=passport.get("project_name") or "—",
                 building_class=passport.get("building_class"),
+                year=_contract_year(passport.get("year_signed")),
                 price=price,
                 # Тот же расчёт, что «Цена за м²» при сравнении объектов:
                 # цена по договору на общую площадь.

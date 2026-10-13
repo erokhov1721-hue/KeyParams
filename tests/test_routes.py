@@ -4990,3 +4990,10 @@ def test_kp_contractor_objects_table_has_a_price_per_sqm_column():
     body = Path("app/templates/kp_analysis.html").read_text(encoding="utf-8")
     head = body[body.index('<th class="kp-name">Класс</th>'):]
     assert head.index("₽/м²") < head.index("Цена работ по договору")
+
+
+def test_kp_contractor_objects_table_has_a_year_column():
+    from pathlib import Path
+    body = Path("app/templates/kp_analysis.html").read_text(encoding="utf-8")
+    head = body[body.index('<th class="kp-name">Класс</th>'):]
+    assert head.index("Год") < head.index("₽/м²")

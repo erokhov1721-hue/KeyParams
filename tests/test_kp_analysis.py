@@ -540,3 +540,15 @@ def test_contractor_history_shows_price_per_square_metre():
     per_sqm = {o.name: o.price_per_sqm for o in history["АО ФОДД"].objects}
 
     assert per_sqm == {"А": 2500.0, "Б": None}
+
+
+def test_contractor_history_shows_the_contract_year():
+    passports = [
+        {"project_name": "А", "general_contractor": "АО ФОДД", "year_signed": "от 2024 г."},
+        {"project_name": "Б", "general_contractor": "АО ФОДД", "year_signed": 2021},
+        {"project_name": "В", "general_contractor": "АО ФОДД", "year_signed": None},
+    ]
+    history = kp_analysis.contractor_history(["АО ФОДД"], passports, "Бизнес")
+    years = {o.name: o.year for o in history["АО ФОДД"].objects}
+
+    assert years == {"А": "2024", "Б": "2021", "В": None}
