@@ -4983,3 +4983,10 @@ def test_investor_summary_has_a_total_area_column_before_the_estimate(tmp_path):
     head = body[body.index('id="investor-summary-table"'):]
     assert head.index("Общая площадь") < head.index("Смета")
     assert "141 823" in head
+
+
+def test_kp_contractor_objects_table_has_a_price_per_sqm_column():
+    from pathlib import Path
+    body = Path("app/templates/kp_analysis.html").read_text(encoding="utf-8")
+    head = body[body.index('<th class="kp-name">Класс</th>'):]
+    assert head.index("₽/м²") < head.index("Цена работ по договору")

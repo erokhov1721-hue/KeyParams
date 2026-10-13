@@ -634,8 +634,9 @@ _LEGAL_FORM_RE = re.compile(
 _NON_WORD_RE = re.compile(r"[^\w]+")
 
 # Объект подрядчика из базы: название, класс, цена по договору (или None),
-# того ли он класса, что выбран для анализа.
-HistoryObject = namedtuple("HistoryObject", "name building_class price in_class")
+# она же на м² общей площади (или None, если нет цены или площади), того ли
+# он класса, что выбран для анализа.
+HistoryObject = namedtuple("HistoryObject", "name building_class price price_per_sqm in_class")
 # Сколько наших объектов у подрядчика и на какую сумму — всего и в классе.
 ContractorHistory = namedtuple(
     "ContractorHistory", "count total class_count class_total objects",
@@ -678,10 +679,19 @@ def contractor_history(names, passports, building_class):
         objects = []
         for passport in by_key.get(normalize_contractor(name), []):
             price = passport.get("contract_price_rub")
+            price = float(price) if isinstance(price, (int, float, Decimal)) else None
+            area = passport.get("total_area_sqm")
             objects.append(HistoryObject(
                 name=passport.get("project_name") or "—",
                 building_class=passport.get("building_class"),
-                price=float(price) if isinstance(price, (int, float, Decimal)) else None,
+                price=price,
+                # Тот же расчёт, что «Цена за м²» при сравнении объектов:
+                # цена по договору на общую площадь.
+                price_per_sqm=(
+                    price / float(area)
+                    if price is not None and isinstance(area, (int, float, Decimal)) and area
+                    else None
+                ),
                 in_class=passport.get("building_class") == building_class,
             ))
         objects.sort(key=lambda o: (not o.in_class, -(o.price or 0.0)))

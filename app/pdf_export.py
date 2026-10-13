@@ -1646,7 +1646,7 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
             styles["sub"],
         ),
     ]
-    col_widths = [page_width * 0.5, page_width * 0.25, page_width * 0.25]
+    col_widths = [page_width * 0.45, page_width * 0.2, page_width * 0.12, page_width * 0.23]
     for row in ranking.overall:
         record = history.get(row.name)
         if not record or not record.count:
@@ -1656,6 +1656,7 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
         data = [[
             Paragraph("Объект", styles["head"]),
             Paragraph("Класс", styles["head"]),
+            Paragraph("₽/м²", styles["subhead_right"]),
             Paragraph("Цена работ по договору, ₽", styles["subhead_right"]),
         ]]
         highlighted = []
@@ -1665,11 +1666,13 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
             data.append([
                 Paragraph(_esc(obj.name), styles["cell"]),
                 Paragraph(_esc(obj.building_class or "—"), styles["cell_muted"]),
+                Paragraph(_kp_money(obj.price_per_sqm) if obj.price_per_sqm is not None else "—",
+                          styles["cell_right"]),
                 Paragraph(_kp_money(obj.price) if obj.price is not None else "не указана",
                           styles["cell_right"]),
             ])
         data.append([
-            Paragraph("Итого", styles["cell_label"]), "",
+            Paragraph("Итого", styles["cell_label"]), "", "",
             Paragraph(_kp_money(record.total), styles["cell_right_bold"]),
         ])
         tbl = Table(data, colWidths=col_widths, repeatRows=1)
@@ -1677,7 +1680,7 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
             ("GRID", (0, 0), (-1, -1), 0.5, GRID),
             ("BACKGROUND", (0, 0), (-1, 0), HEAD_BG),
             ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
-            ("SPAN", (0, -1), (1, -1)),
+            ("SPAN", (0, -1), (2, -1)),
             ("TOPPADDING", (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ("LEFTPADDING", (0, 0), (-1, -1), 6),

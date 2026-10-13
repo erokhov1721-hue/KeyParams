@@ -527,3 +527,16 @@ def test_write_remarks_frames_a_created_comment_column_and_adds_a_spacer_after_i
     assert ws.cell(17, 19).value is None
     assert ws.cell(14, 24).value == "Комментарии"
     assert ws.cell(17, 23).value == "=W17"
+
+
+def test_contractor_history_shows_price_per_square_metre():
+    passports = [
+        {"project_name": "А", "general_contractor": "АО ФОДД", "building_class": "Бизнес",
+         "contract_price_rub": 1_000_000.0, "total_area_sqm": 400.0},
+        {"project_name": "Б", "general_contractor": "АО ФОДД", "building_class": "Бизнес",
+         "contract_price_rub": 500_000.0, "total_area_sqm": None},
+    ]
+    history = kp_analysis.contractor_history(["АО ФОДД"], passports, "Бизнес")
+    per_sqm = {o.name: o.price_per_sqm for o in history["АО ФОДД"].objects}
+
+    assert per_sqm == {"А": 2500.0, "Б": None}

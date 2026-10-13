@@ -192,6 +192,7 @@
           <tr>
             <th class="kp-name">Объект</th>
             <th class="kp-name">Класс</th>
+            <th>₽/м²</th>
             <th>Цена работ по договору, ₽</th>
           </tr>
         </thead>
@@ -200,13 +201,14 @@
           <tr class="{{ 'is-in-class' if obj.in_class else '' }}">
             <td class="kp-name">{{ obj.name }}</td>
             <td class="kp-name kp-muted">{{ obj.building_class or '—' }}</td>
+            <td>{{ format_number(obj.price_per_sqm | round) if obj.price_per_sqm is not none else '—' }}</td>
             <td>{{ format_number(obj.price | round) if obj.price is not none else 'не указана' }}</td>
           </tr>
           {% endfor %}
         </tbody>
         <tfoot>
           <tr>
-            <td class="kp-name" colspan="2">Итого</td>
+            <td class="kp-name" colspan="3">Итого</td>
             <td>{{ format_number(record.total | round) }}</td>
           </tr>
         </tfoot>
