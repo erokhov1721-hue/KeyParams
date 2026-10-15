@@ -160,16 +160,46 @@ def test_total_cost_is_estimate_plus_signed_plus_predicted():
     assert table["rows"][0]["total_cost"] == 180.0
 
 
-def test_total_cost_sums_whatever_is_known_and_ignores_the_rest():
+def test_total_cost_without_a_missing_increase_file_is_still_known():
+    # Нет файла прогноза — итог всё равно есть: смета плюс то, что известно.
+    report = _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}},
+        cost_increase_reports_by_slug={"a": report},
+        predicted_increase_by_slug={},
+    )
+    assert table["rows"][0]["total_cost"] == 130.0
+
+
+def test_total_cost_is_a_dash_without_an_estimate():
+    # Итоговая стоимость — смета плюс удорожание. Без сметы одно удорожание
+    # итоговой стоимостью не является: 50 ₽ прогноза — не цена объекта.
     table = investor_summary.build_table(
         ["a"], {"a": "Объект А"},
         estimate_totals_by_slug={"a": {}},
         cost_increase_reports_by_slug={"a": None},
         predicted_increase_by_slug={"a": 50.0},
     )
-    # ни сметы, ни подписанного удорожания нет — итог не дыра, а просто
-    # известная часть.
-    assert table["rows"][0]["total_cost"] == 50.0
+    row = table["rows"][0]
+    assert row["predicted"] == 50.0
+    assert row["total_cost"] is None
+    assert row["total_cost_display"] == "—"
+    assert row["total_per_sqm"] is None
+
+
+def test_portfolio_percent_ignores_increase_of_objects_without_an_estimate():
+    # X: смета 100, удорожания нет. Y: сметы нет, прогноз 50. Прогноз Y не
+    # может лечь на смету X — по портфелю удорожание 0%, а не «+50%».
+    table = investor_summary.build_table(
+        ["x", "y"], {"x": "X", "y": "Y"},
+        estimate_totals_by_slug={"x": {"roof": 100.0}, "y": None},
+        cost_increase_reports_by_slug={"x": None, "y": None},
+        predicted_increase_by_slug={"x": None, "y": 50.0},
+    )
+    evt = table["total"]["estimate_vs_total"]
+    assert evt["percent"] == 0.0
+    assert evt["total_cost_display"] == "100 ₽"
 
 
 def test_total_cost_is_a_dash_when_nothing_at_all_is_known():
@@ -206,8 +236,9 @@ def test_total_row_sums_only_known_values_and_counts_them():
     assert total["estimate_display"] == "100 ₽"
     assert total["predicted_count"] == 2
     assert total["predicted_display"] == "30 ₽"
-    assert total["total_cost_count"] == 2
-    assert total["total_cost_display"] == "130 ₽"
+    # У Б нет сметы — итоговой стоимости у него нет, в сумму идёт только А.
+    assert total["total_cost_count"] == 1
+    assert total["total_cost_display"] == "110 ₽"
 
 
 def test_total_row_is_a_dash_when_nothing_is_known_for_that_column():

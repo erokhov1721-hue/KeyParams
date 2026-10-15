@@ -204,14 +204,19 @@ def _estimate_vs_total(estimate, total_cost):
     }
 
 
-def _sum_present(values):
-    """Сумма тех значений из ``values``, что не ``None`` — как
-    ``_sum_known`` ниже, но по голому списку чисел, а не по колонке строк.
-    ``None``, только если все величины неизвестны: отсутствие одного из
-    трёх файлов не должно превращать всю итоговую стоимость в прочерк.
+def _total_cost(estimate, signed, predicted):
+    """Итоговая стоимость — смета плюс подписанное и прогнозируемое
+    удорожание, из тех двух, что известны: отсутствие файла удорожания не
+    должно превращать всю итоговую стоимость в прочерк.
+
+    Без сметы — ``None``: удорожание без базы, к которой оно прибавляется,
+    стоимостью объекта не является. Иначе один прогноз встал бы в колонку
+    итоговой стоимости, а в «Итого» лёг бы поверх смет других объектов и
+    раздул портфельный процент удорожания.
     """
-    known = [v for v in values if v is not None]
-    return sum(known) if known else None
+    if estimate is None:
+        return None
+    return estimate + sum(v for v in (signed, predicted) if v is not None)
 
 
 def _sum_known(rows, key):
@@ -267,7 +272,7 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
     # Прогноз приходит ``Decimal`` из отчёта по прогнозируемому удорожанию —
     # тот же перевод, что и у сметы и у подписанного удорожания выше.
     predicted = float(predicted) if predicted is not None else None
-    total_cost = _sum_present([estimate, signed, predicted])
+    total_cost = _total_cost(estimate, signed, predicted)
     estimate_per_sqm = _per_sqm(estimate, area)
     predicted_per_sqm = _per_sqm(predicted, area)
     signed_per_sqm = _per_sqm(signed, area)
@@ -331,10 +336,10 @@ def _total_row(rows):
         "total_cost_display": _money(total_cost_total),
         "total_cost_count": total_cost_count,
         # Портфельный % удорожания — по суммам всех объектов сразу, а не
-        # среднее их собственных процентов: у объекта без сметы или без
-        # итоговой стоимости свой процент попросту не посчитать, а тут он
-        # всё равно вносит вклад в обе суммы там, где известен хоть один из
-        # его составляющих.
+        # среднее их собственных процентов. Обе суммы — по одним и тем же
+        # объектам: итоговая стоимость есть ровно у тех, у кого есть смета
+        # (см. ``_total_cost``), так что удорожание объекта без сметы не
+        # ложится поверх чужих смет.
         "estimate_vs_total": _estimate_vs_total(estimate_total, total_cost_total),
     }
 
