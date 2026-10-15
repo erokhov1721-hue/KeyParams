@@ -469,19 +469,29 @@ def test_analyze_against_the_reference_marks_sections_and_subsections():
     analysis = kp_analysis.analyze(offer, _averages({}), 10)
     remarks = _remarks_by_cell(analysis)
 
-    assert remarks[(17, 18)] == "Завышена стоимость за раздел, ожидаем снижение на 10,0%"
+    assert remarks[(17, 18)] == "Завышена стоимость за раздел, ожидаем снижение на 9,1%"
     assert remarks[(17, 23)] == (
-        "Существенно завышена стоимость за раздел, ожидаем снижение на 40,0%"
+        "Существенно завышена стоимость за раздел, ожидаем снижение на 28,6%"
     )
     # 1.1: Гамма ровно по расчётной — молчим; Дельта +40% и СМР 30 000 к 40 000 материалов.
     assert (18, 18) not in remarks
     assert remarks[(18, 23)] == (
-        "Существенно завышена стоимость, ожидаем снижение на 40,0%, необоснована стоимость СМР"
+        "Существенно завышена стоимость, ожидаем снижение на 28,6%, необоснована стоимость СМР"
     )
-    assert remarks[(19, 18)] == "Завышена стоимость, ожидаем снижение на 20,0%"
+    assert remarks[(19, 18)] == "Завышена стоимость, ожидаем снижение на 16,7%"
     assert remarks[(19, 23)] == kp_analysis.REMARK_PRICE_SUBSECTION
     assert analysis.has_reference
     assert analysis.new_columns == [(9, 14, 18), (9, 14, 23)]
+
+
+def test_the_expected_reduction_is_taken_from_the_offer_not_from_the_reference():
+    # 120 против расчётных 100: на 20% выше расчётной, но чтобы прийти к 100,
+    # снизить нужно на 16,7% — 120 минус 20% это 96.
+    deviation = kp_analysis._pct(120, 100)
+
+    assert kp_analysis._against_reference(kp_analysis.REMARK_OVERPRICED, deviation) == (
+        "Завышена стоимость за раздел, ожидаем снижение на 16,7%"
+    )
 
 
 def test_a_single_section_with_a_reference_is_ranked_by_its_subsections():
@@ -522,7 +532,7 @@ def test_write_remarks_frames_a_created_comment_column_and_adds_a_spacer_after_i
     assert "R14:R15" in {str(r) for r in ws.merged_cells.ranges}
     assert ws.column_dimensions["R"].width == kp_analysis.CREATED_COMMENT_WIDTH
     assert ws.column_dimensions["S"].width == kp_analysis.SPACER_WIDTH
-    assert ws.cell(17, 18).value == "Завышена стоимость за раздел, ожидаем снижение на 10,0%"
+    assert ws.cell(17, 18).value == "Завышена стоимость за раздел, ожидаем снижение на 9,1%"
     assert ws.cell(17, 18).border.left.style == "thin"
     assert ws.cell(17, 19).value is None
     assert ws.cell(14, 24).value == "Комментарии"
