@@ -9,7 +9,7 @@ today's money.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from decimal import Decimal
 
@@ -28,9 +28,14 @@ VAT_MODE_CUSTOM = "custom"
 
 DEFAULT_VAT_RATE = 22.0
 DEFAULT_INFLATION = 12.0
-# The year money gets brought to when no other year is chosen — today's, not
-# a number that goes stale the moment the calendar turns.
-DEFAULT_TARGET_YEAR = date.today().year
+
+
+def default_target_year():
+    """The year money gets brought to when no other year is chosen — today's,
+    asked for on every request. A constant taken once at import went stale
+    the moment the calendar turned: a server running since December went on
+    bringing January's figures to the year before."""
+    return date.today().year
 
 NOTE_NO_ESTIMATE = "смета не загружена"
 NOTE_NO_AREA = "рубли, не ₽/м²: общая площадь неизвестна"
@@ -48,7 +53,7 @@ class Adjustments:
 
     vat_rate: float = None
     inflation: float = None
-    target_year: int = DEFAULT_TARGET_YEAR
+    target_year: int = dataclass_field(default_factory=default_target_year)
 
     @property
     def applied(self) -> bool:
@@ -164,7 +169,7 @@ def adjustments_from_args(args) -> Adjustments:
         if inflation is None:
             inflation = DEFAULT_INFLATION
 
-    year = parse_year(args.get("year")) or DEFAULT_TARGET_YEAR
+    year = parse_year(args.get("year")) or default_target_year()
     return Adjustments(vat_rate=vat, inflation=inflation, target_year=year)
 
 
@@ -218,11 +223,11 @@ def project_factor(vat, year_signed, adjustments):
     notes = []
 
     if adjustments.vat_rate is not None:
-        source = parse_percent(vat)
-        # A rate at or below -100% would zero or flip the sign of this
-        # divisor — not a real VAT rate, so treated the same as an unread
-        # one rather than handed to the division.
-        if source is None or source <= -100.0:
+        # Read the way a person writes the field — «НДС 20%», «без НДС» —
+        # and only within 0–100%, so the divisor below is never zero or
+        # negative: anything else is treated as an unread rate.
+        source = passport_module.parse_vat_rate(vat)
+        if source is None:
             notes.append(NOTE_NO_VAT)
         else:
             factor *= (100.0 + adjustments.vat_rate) / (100.0 + source)
@@ -264,27 +269,11 @@ def _as_float_costs(costs_by_slug):
 
 
 def _source_vat(passport):
-    """The rate the estimate was priced at.
-
-    The passport's own ``vat`` field wins when it's set: the project page,
-    the PDF and every export already show that value, and deriving a
-    second, different rate from the signing year here — the year-by-year
-    rule this project used to prefer — meant a project with an uploaded
-    protocol could show one VAT rate everywhere else and a different one
-    on this page, with nothing to explain why. Falls back to the rule by
-    year only when there's no stored rate to read yet: that's every
-    project before a contract-terms protocol has been uploaded, and the
-    rule is what keeps the correction from going inert on all of them.
-
-    A year edited later does not retroactively update an already-stored
-    rate — by design: the stored rate may be what the protocol actually
-    says, not a guess from the rule, and silently overwriting it on every
-    unrelated year correction would be its own way of losing information.
-    """
-    stored = passport.get("vat")
-    if stored:
-        return stored
-    return passport_module.vat_for_year(parse_year(passport.get("year_signed")))
+    """The rate the estimate was priced at — the same one the Excel report
+    and the project page use (``passport.effective_vat``): a rate from a
+    document or a person as it stands, one guessed from the signing year
+    following the year as it is now."""
+    return passport_module.effective_vat(passport)
 
 
 def _column(slug, passport, costs, adjustments, extra_notes=()):

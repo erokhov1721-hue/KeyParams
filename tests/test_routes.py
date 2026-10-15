@@ -650,6 +650,71 @@ def _make_project_with_passport(root, name, **fields):
     return slug
 
 
+def test_correcting_the_year_moves_a_vat_rate_guessed_from_it(tmp_path):
+    # Протокол загрузили при годе 2025 — программа проставила 20% по году.
+    # Год исправили на 2026: на странице должно стать 22%, как в расчётах.
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "СменаГода", year_signed="2025", vat="20%",
+        contract_auto_fields=["vat"],
+        contract_sources={"vat": passport_module.METHOD_RULE},
+    )
+
+    client.post(f"/projects/{slug}", data={"version": "0", "year_signed": "2026"})
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] == "22%"
+    assert saved["contract_sources"]["vat"] == passport_module.METHOD_RULE
+
+
+def test_correcting_the_year_leaves_a_vat_rate_a_person_typed(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "РучнаяСтавка", year_signed="2025", vat="0%")
+
+    client.post(f"/projects/{slug}", data={"version": "0", "year_signed": "2026"})
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] == "0%"
+
+
+def test_clearing_the_year_clears_a_vat_rate_guessed_from_it(tmp_path):
+    # Года больше нет — угадывать ставку не из чего, и поле должно читаться
+    # как «ставка неизвестна», а не как ставка, которую кто-то указал.
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(
+        tmp_path, "БезГода", year_signed="2025", vat="20%",
+        contract_auto_fields=["vat"],
+        contract_sources={"vat": passport_module.METHOD_RULE},
+    )
+
+    client.post(f"/projects/{slug}", data={"version": "0", "year_signed": ""})
+
+    saved = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert saved["vat"] is None
+    assert "vat" not in saved["contract_auto_fields"]
+    assert "vat" not in saved["contract_sources"]
+
+
+def test_an_unreadable_vat_rate_is_pointed_out_on_the_project_page(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _make_project_with_passport(tmp_path, "Нечитаемо", vat="двадцать")
+    readable = _make_project_with_passport(tmp_path, "Читаемо", vat="НДС 20%")
+
+    assert "Ставка не распознана" in client.get(f"/projects/{slug}").get_data(as_text=True)
+    assert "Ставка не распознана" not in client.get(
+        f"/projects/{readable}").get_data(as_text=True)
+
+
 def test_compare_projects_shows_selected_projects_side_by_side(tmp_path):
     app = create_app(tmp_path)
     client = app.test_client()

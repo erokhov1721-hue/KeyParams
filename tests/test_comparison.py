@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import comparison
+from app import comparison, passport as passport_module
 from app.comparison import Adjustments
 
 NONE = Adjustments()
@@ -61,6 +61,65 @@ def test_percent_is_read_however_it_is_written():
     assert comparison.parse_percent(None) is None
 
 
+@pytest.mark.parametrize("text, rate", [
+    ("20", 20.0),
+    ("20%", 20.0),
+    ("22 %", 22.0),
+    ("НДС 20%", 20.0),
+    ("20% (двадцать процентов)", 20.0),
+    ("в т.ч. НДС 22 %", 22.0),
+    ("12,5%", 12.5),
+    ("без НДС", 0.0),
+    ("НДС не облагается", 0.0),
+    ("Не облагается НДС (УСН)", 0.0),
+    (0, 0.0),
+    (20, 20.0),
+])
+def test_a_vat_rate_is_read_the_ways_a_person_writes_it(text, rate):
+    assert passport_module.parse_vat_rate(text) == pytest.approx(rate)
+
+
+@pytest.mark.parametrize("text", [
+    None, "", "НДС", "20% / 22%", "без НДС 20%", "150%", "-5%", "двадцать",
+])
+def test_an_unclear_vat_rate_is_left_unread_not_guessed(text):
+    assert passport_module.parse_vat_rate(text) is None
+
+
+def test_a_rate_written_in_words_gets_the_correction():
+    passports = {"a": _passport(year_signed="2025", vat="НДС 20% (двадцать)",
+                                total_area_sqm=1000.0)}
+
+    table = comparison.build_section_table(
+        ["a"], passports, {"a": {"facade": 1_200_000.0}}, VAT_22,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][0]["value"] == pytest.approx(1200.0 * 122 / 120)
+    assert table["columns"][0]["notes"] == []
+
+
+def test_a_rate_guessed_from_the_year_follows_a_corrected_year():
+    # Протокол загрузили при годе 2025, программа проставила 20%; год потом
+    # исправили на 2026. Сравнение считает от 22%, как и Excel.
+    passport = _passport(
+        year_signed="2026", vat="20%",
+        contract_sources={"vat": passport_module.METHOD_RULE},
+    )
+
+    assert comparison._source_vat(passport) == "22%"
+
+
+def test_a_rate_a_person_typed_is_kept_whatever_the_year():
+    assert comparison._source_vat(_passport(year_signed="2026", vat="0%")) == "0%"
+    # Как и ставка, прочитанная из самого документа.
+    passport = _passport(
+        year_signed="2026", vat="20%",
+        contract_sources={"vat": passport_module.METHOD_CLAUDE},
+    )
+    assert comparison._source_vat(passport) == "20%"
+
+
 def test_year_is_read_from_a_number_or_a_phrase():
     assert comparison.parse_year(2025) == 2025
     assert comparison.parse_year("2025") == 2025
@@ -74,7 +133,23 @@ def test_corrections_are_off_unless_switched_on():
     assert adjustments.vat_rate is None
     assert adjustments.inflation is None
     assert adjustments.applied is False
-    assert adjustments.target_year == comparison.DEFAULT_TARGET_YEAR
+    assert adjustments.target_year == comparison.default_target_year()
+
+
+def test_the_default_year_follows_the_calendar_not_the_server_start(monkeypatch):
+    # Сервер, запущенный в декабре, в январе должен считать к новому году, а
+    # не к тому, что был на дату запуска.
+    class January2027(comparison.date):
+        @classmethod
+        def today(cls):
+            return cls(2027, 1, 10)
+
+    monkeypatch.setattr(comparison, "date", January2027)
+
+    assert comparison.adjustments_from_args({}).target_year == 2027
+    assert comparison.Adjustments().target_year == 2027
+    # Год, выбранный явно, календарь не трогает.
+    assert comparison.adjustments_from_args({"year": "2025"}).target_year == 2025
 
 
 def test_a_figure_alone_does_not_switch_a_correction_on():

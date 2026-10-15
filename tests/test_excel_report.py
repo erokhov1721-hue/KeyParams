@@ -230,6 +230,25 @@ def test_normalize_derives_vat_from_the_signing_year():
     assert excel_report.normalize_passport(_passport("П", year_signed="2030"))["vat"] == "22%"
 
 
+def test_normalize_follows_the_year_for_a_rate_the_program_guessed_from_it():
+    # Протокол загрузили при годе 2025 — программа сама проставила 20%. Год
+    # потом исправили на 2026: Excel и сравнение обязаны дать одно и то же —
+    # 22%, — а не каждый своё.
+    data = excel_report.normalize_passport(_passport(
+        "П", year_signed="2026", vat="20%",
+        contract_sources={"vat": passport_module.METHOD_RULE},
+    ))
+
+    assert data["vat"] == "22%"
+
+
+def test_normalize_keeps_a_rate_a_person_typed_whatever_the_year():
+    # 0% вписали руками — подрядчик без НДС. Правило по году его не трогает.
+    data = excel_report.normalize_passport(_passport("П", year_signed="2026", vat="0%"))
+
+    assert data["vat"] == "0%"
+
+
 def test_normalize_keeps_a_stored_vat_when_no_year_is_known():
     data = excel_report.normalize_passport(_passport("П", vat="без НДС"))
 

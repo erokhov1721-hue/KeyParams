@@ -252,6 +252,96 @@ def vat_for_year(year_signed):
     year = int(match.group())
     return VAT_RATE_FROM_CHANGE if year >= VAT_RATE_CHANGE_YEAR else VAT_RATE_BEFORE_CHANGE
 
+
+# «без НДС», «НДС не облагается», «не облагается НДС» — a price with no tax
+# in it, which for a correction is exactly a 0% rate.
+_NO_VAT_RE = re.compile(r"без\s+ндс|не\s*облага", re.IGNORECASE)
+_VAT_PERCENT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
+
+
+def parse_vat_rate(value):
+    """The VAT rate ``value`` names, as a number of per cent, or None.
+
+    Reads the rate the ways a person writes it in the field: «20», «20%»,
+    «НДС 20%», «20% (двадцать процентов)», «без НДС» (0%). Anything that
+    names more than one rate («20% / 22%»), names a rate and «без НДС» at
+    once, or no rate at all stays None — a wrong rate is worse than a
+    missing one, and an object with no rate is named as such wherever it
+    matters, while a misread one would just be quietly off. So is a figure
+    outside 0–100%: not a tax rate anyone meant.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        rate = float(value)
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        rate = extractors.parse_number(text.replace("%", " "))
+        if rate is None:
+            rates = {
+                float(found.replace(",", "."))
+                for found in _VAT_PERCENT_RE.findall(text)
+            }
+            no_vat = bool(_NO_VAT_RE.search(text))
+            if len(rates) == 1 and not no_vat:
+                rate = rates.pop()
+            elif not rates and no_vat:
+                rate = 0.0
+            else:
+                return None
+    return rate if 0.0 <= rate <= 100.0 else None
+
+
+def vat_set_by_rule(passport):
+    """Whether the stored rate is one this program put there from the
+    signing year (``build_contract_terms``), rather than one read off a
+    document or typed by a person."""
+    return (passport.get("contract_sources") or {}).get("vat") == METHOD_RULE
+
+
+def effective_vat(passport):
+    """The VAT rate that applies to this object — one answer for every part
+    of the program: the comparison page, the Excel report, the PDF.
+
+    A rate read off a document or typed by a person is the object's own and
+    wins: it may be exactly what the contract says (0% for a contractor on
+    a simplified tax system, say), and no rule may overwrite it. A rate this
+    program filled in by the signing-year rule — or no rate at all — follows
+    the year as it is now, so correcting the year from 2025 to 2026 moves
+    the rate with it everywhere at once, instead of leaving the old guess
+    behind in one place and a new one in another.
+    """
+    stored = passport.get("vat")
+    if stored is not None and str(stored).strip() == "":
+        stored = None
+    # «is not None», not truthiness: a rate stored as the number 0 is a
+    # stated 0%, not an empty field.
+    if stored is not None and not vat_set_by_rule(passport):
+        return stored
+    return vat_for_year(passport.get("year_signed")) or stored
+
+
+def refresh_rule_vat(passport):
+    """Bring a rate filled in by the signing-year rule in line with the
+    year as it now stands — called after the year is edited, so the
+    project page shows the same rate the calculations use. A rate from a
+    document or a person is left exactly as it is."""
+    if not vat_set_by_rule(passport):
+        return
+    rate = vat_for_year(passport.get("year_signed"))
+    if rate is not None:
+        passport["vat"] = rate
+        return
+    # No year any more — no rule to go by. The guess goes with it, so the
+    # field reads as empty («ставка неизвестна»), not as a rate nobody stated.
+    passport["vat"] = None
+    passport["contract_sources"] = {
+        f: m for f, m in (passport.get("contract_sources") or {}).items() if f != "vat"
+    }
+    passport["contract_auto_fields"] = [
+        f for f in passport.get("contract_auto_fields", []) if f != "vat"
+    ]
+
 # What to tell the user when a contract-terms upload fills nothing. Each
 # message names the action that fixes it — an empty card with no
 # explanation is indistinguishable from "the document had no such row".

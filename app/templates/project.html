@@ -194,6 +194,12 @@
                   <span class="field-hint contract-review-text">{{ item.text }}</span>
                   {% endfor %}
                 {% endif %}
+                {% if field == 'vat' and vat_unreadable %}
+                  <span class="field-hint contract-review-text">
+                    Ставка не распознана — в сравнении объект пойдёт без поправки
+                    на НДС. Впишите её числом, например «20%» или «без НДС».
+                  </span>
+                {% endif %}
               </div>
               <input type="text" name="{{ field }}" value="{{ value or '' }}" placeholder="Введите значение">
             </div>

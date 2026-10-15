@@ -1528,6 +1528,10 @@ def project_page(slug):
         contract_fields=passport_module.CONTRACT_FIELDS,
         contract_field_labels=passport_module.CONTRACT_FIELD_LABELS,
         contract_auto_fields=data.get("contract_auto_fields", []),
+        vat_unreadable=(
+            str(data.get("vat") or "").strip() != ""
+            and passport_module.parse_vat_rate(data.get("vat")) is None
+        ),
         contract_sources=data.get("contract_sources") or {},
         contract_review=data.get("contract_review") or {},
         contract_notes=data.get("contract_notes") or [],
@@ -2176,6 +2180,9 @@ def update_project(slug):
             ai_fields.remove(field)
     data["ocr_fields"] = ocr_fields
     data["ai_fields"] = ai_fields
+    # A rate the program filled in from the signing year follows the year
+    # the person just saved; a rate from a document or a person stays put.
+    passport_module.refresh_rule_vat(data)
     passport_module.save_passport_checked(data, path, expected_version)
     return redirect(url_for("main.project_page", slug=slug))
 

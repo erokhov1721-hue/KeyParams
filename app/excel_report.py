@@ -138,11 +138,12 @@ def normalize_passport(passport: dict) -> dict:
     """The report's view of one passport: canonical names, real numbers, a
     signing date split from its year, and the VAT rate.
 
-    VAT follows the same rule as the rest of the app (see
-    ``passport.vat_for_year``): it is derived from the signing year — 20%
-    through 2025, 22% from 2026 — and only falls back to whatever the
-    passport stored when no year is known. The rate is statutory, so a figure
-    misread off a scan must not reach the report.
+    VAT is the rate the rest of the app uses (``passport.effective_vat``): a
+    rate read off a document or typed by a person as it stands, one the
+    program guessed from the signing year — or none at all — following the
+    year as it is now. Deriving it from the year alone here, as this report
+    once did, put 22% in the report next to a 20% the comparison page was
+    still using, and overrode a 0% a person had typed in on purpose.
     """
     raw = {field: _lookup(passport, aliases) for field, aliases in FIELD_ALIASES.items()}
     signing_date, year = _signing(raw["year_signed"])
@@ -157,7 +158,11 @@ def normalize_passport(passport: dict) -> dict:
         "aboveground_area_sqm": _number(raw["aboveground_area_sqm"]),
         "total_area_sqm": _number(raw["total_area_sqm"]),
         "contract_price_rub": _number(raw["contract_price_rub"]),
-        "vat": passport_module.vat_for_year(year) or _text(raw["vat"]),
+        "vat": _text(passport_module.effective_vat({
+            "vat": raw["vat"],
+            "year_signed": year,
+            "contract_sources": passport.get("contract_sources"),
+        })),
         "smr_term": _text(raw["smr_term"]),
         "advance_payment": _text(raw["advance_payment"]),
         "bank_guarantee": _text(raw["bank_guarantee"]),
