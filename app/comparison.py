@@ -316,12 +316,13 @@ def _cell(column, costs, key):
     """
     amount = costs.get(key)
     if amount is None:
-        return {"value": None, "display": "—", "deviation": None, "deviation_display": ""}
+        return {"value": None, "display": "—", "deviation": None, "deviation_display": "",
+                "per_sqm": column["per_sqm"]}
     value = amount * column["factor"]
     if column["per_sqm"]:
         value = value / column["area"]
     return {"value": value, "display": _money(value), "deviation": None,
-            "deviation_display": ""}
+            "deviation_display": "", "per_sqm": column["per_sqm"]}
 
 
 # Шкала отклонения для заливки тепловой карты, ±%. Одна на всю таблицу: если
@@ -384,11 +385,16 @@ def _add_deviations(cells):
 
     Against the first rather than against the cheapest: the first column is
     the one being asked about, and the rest are the yardstick.
+
+    Only between figures in the same unit: a column with no known area stays
+    in plain roubles while the base is in ₽/м² (or the other way round), and
+    a million roubles against a thousand per square metre is no deviation at
+    all — it read as "+99 900%" with a full red fill.
     """
     base = cells[0]["value"] if cells else None
     if base:
         for cell in cells[1:]:
-            if cell["value"] is None:
+            if cell["value"] is None or cell["per_sqm"] != cells[0]["per_sqm"]:
                 continue
             cell["deviation"] = cell["value"] / base - 1.0
             cell["deviation_display"] = (
@@ -644,13 +650,13 @@ def build_section_table(
         costs = costs_by_slug.get(column["slug"]) or {}
         if not costs:
             total.append({"value": None, "display": "—", "deviation": None,
-                          "deviation_display": ""})
+                          "deviation_display": "", "per_sqm": column["per_sqm"]})
             continue
         value = sum(costs.values()) * column["factor"]
         if column["per_sqm"]:
             value = value / column["area"]
         total.append({"value": value, "display": _money(value), "deviation": None,
-                      "deviation_display": ""})
+                      "deviation_display": "", "per_sqm": column["per_sqm"]})
     _add_deviations(total)
     # По убыванию доли, а не в порядке из сметы: первым идёт то, из чего
     # стоимость в основном и складывается. Итоговая строка живёт отдельно и

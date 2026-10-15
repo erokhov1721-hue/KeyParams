@@ -327,6 +327,38 @@ def test_deviation_is_measured_against_the_first_project():
     assert facade["cells"][1]["deviation_display"] == "+50%"
 
 
+def test_no_deviation_between_roubles_per_sqm_and_plain_roubles():
+    # Без площади у второго объекта его колонка в рублях, у базы — в ₽/м²:
+    # 1 000 ₽/м² против 1 000 000 ₽ дало бы «+99 900%» и красную заливку.
+    table = comparison.build_section_table(
+        ["a", "b"], {"a": _passport("А"), "b": _passport("Б", total_area_sqm=None)},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_000_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["display"] == "1 000 000"
+    assert facade["cells"][1]["deviation"] is None
+    assert facade["cells"][1]["deviation_display"] == ""
+    assert facade["cells"][1]["heat_bg"] is None
+    total = table["total"]["cells"][1]
+    assert (total["deviation"], total["deviation_display"], total["heat_bg"]) == (None, "", None)
+
+
+def test_no_deviation_when_only_the_base_project_lacks_an_area():
+    table = comparison.build_section_table(
+        ["a", "b", "c"],
+        {"a": _passport("А", total_area_sqm=None), "b": _passport("Б"),
+         "c": _passport("В", total_area_sqm=None)},
+        {"a": {"facade": 1_000_000.0}, "b": {"facade": 1_000_000.0},
+         "c": {"facade": 1_500_000.0}}, NONE,
+    )
+
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert facade["cells"][1]["deviation"] is None
+    # Две колонки в рублях между собой по-прежнему сравниваются.
+    assert facade["cells"][2]["deviation_display"] == "+50%"
+
+
 def test_heat_fill_is_red_and_maxed_out_at_the_deviation_scale():
     # +50% is exactly DEVIATION_SCALE — same point the .dev-bar already
     # clips at, so the heat fill reaches its own ceiling there too.
