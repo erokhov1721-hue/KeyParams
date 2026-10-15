@@ -4139,7 +4139,9 @@ def test_an_empty_stalo_is_taken_from_was_and_said_so(tmp_path):
     client = app.test_client()
     slug = _project_with_offer(tmp_path, "Тест", [("8. Кровля", 1_000_000.0)])
 
-    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, 0)]))
+    # Пустая ячейка, а не 0: ноль в «стало» — снятые работы, и «было» за него
+    # не подставляется.
+    _upload_increase(client, slug, _increase_bytes([("Кровля", 1_100_000.0, None)]))
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
 
     assert "взято «было»" in body

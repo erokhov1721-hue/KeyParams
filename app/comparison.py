@@ -887,7 +887,7 @@ def _add_weights(rows, base_total):
 INCREASE_EPSILON = 1.0
 
 
-def _project_increase(slug, passport, report, adjustments):
+def _project_increase(slug, passport, report, factor):
     """Удорожание одного проекта — одной строкой для диаграммы.
 
     Деньги приводятся тем же множителем, что и всё остальное на странице: без
@@ -895,30 +895,37 @@ def _project_increase(slug, passport, report, adjustments):
     множитель не задевает — он отношение внутри одного проекта, и поправка
     сокращается. Площадь — тоже: квадратный метр 2020 года это квадратный метр
     2026-го, поправляется только то, что в рублях.
+
+    ``factor`` — None, когда включённую поправку к проекту применить нельзя
+    (см. ``_project_factor_or_exclude``). Тогда рублей у него нет вовсе:
+    непересчитанная сумма рядом с пересчитанными читалась бы как
+    пересчитанная. Процент остаётся — поправка в нём всё равно сокращается.
     """
-    factor, notes = project_factor(
-        _source_vat(passport), passport.get("year_signed"), adjustments,
-    )
     total = report.total
-    # cost_increase.Row's money fields are Decimal (see cost_increase._amount)
-    # — converted to float here, at the door into this module's own ratio-
-    # and-factor arithmetic, same as _as_float_costs does for estimate costs.
-    delta = float(total.delta) * factor
     area = passport.get("total_area_sqm") or None
+    if factor is None:
+        baseline = delta = per_sqm = None
+    else:
+        # cost_increase.Row's money fields are Decimal (see
+        # cost_increase._amount) — converted to float here, at the door into
+        # this module's own ratio-and-factor arithmetic, same as
+        # _as_float_costs does for estimate costs.
+        baseline = float(total.baseline) * factor
+        delta = float(total.delta) * factor
+        per_sqm = delta / area if area else None
     return {
         "slug": slug,
         "name": passport.get("project_name") or slug,
-        "baseline": float(total.baseline) * factor,
+        "baseline": baseline,
         "delta": delta,
         "area": area,
-        "per_sqm": delta / area if area else None,
-        "per_sqm_display": _signed(delta / area, UNIT_PER_SQM) if area else "—",
+        "per_sqm": per_sqm,
+        "per_sqm_display": _signed(per_sqm, UNIT_PER_SQM) if per_sqm is not None else "—",
         "percent": total.percent,
         "percent_display": cost_increase.format_percent(total.percent) or "—",
-        "money_display": _signed(delta, UNIT_MONEY),
+        "money_display": _signed(delta, UNIT_MONEY) if delta is not None else "—",
         "dearer": total.delta > INCREASE_EPSILON,
         "from_estimate": report.from_estimate,
-        "notes": notes,
     }
 
 
@@ -932,17 +939,26 @@ def _work_rows(slugs, reports, factors, areas):
     ₽/м² — по той же причине от площади только тех проектов, где этот вид
     работ есть. Делить на площадь всей выборки значило бы размазывать
     удорожание одного проекта по метрам остальных.
+
+    Проект, к которому включённую поправку применить нельзя (его множитель в
+    ``factors`` — None), идёт в частоту и в средний процент — поправка в них
+    не участвует, — но не в рубли и не в ₽/м²: складывать его непересчитанную
+    сумму с пересчитанными значило бы смешать деньги разных лет.
     """
     gathered = {}
     for slug in slugs:
         report = reports.get(slug)
         if report is None:
             continue
+        factor = factors[slug]
         for row in report.rows:
             entry = gathered.setdefault(row.key, {
                 "key": row.key,
                 "label": estimate_sections.CATEGORY_LABELS.get(row.key, row.key),
                 "delta": 0.0,
+                # Сколько пересчитанных проектов легло в сумму: ни одного —
+                # суммы у вида работ нет, а не ноль.
+                "counted": 0,
                 "area": 0.0,
                 # Площадь известна у всех проектов, где этот вид работ есть.
                 # Стоит хоть одному её не иметь — ₽/м² не считается вовсе:
@@ -953,9 +969,11 @@ def _work_rows(slugs, reports, factors, areas):
                 "projects_up": 0,
                 "percents": [],
             })
-            entry["delta"] += float(row.delta) * factors[slug]
-            entry["area"] += areas.get(slug) or 0.0
-            entry["areas_known"] = entry["areas_known"] and bool(areas.get(slug))
+            if factor is not None:
+                entry["delta"] += float(row.delta) * factor
+                entry["counted"] += 1
+                entry["area"] += areas.get(slug) or 0.0
+                entry["areas_known"] = entry["areas_known"] and bool(areas.get(slug))
             entry["projects_total"] += 1
             if row.delta > INCREASE_EPSILON:
                 entry["projects_up"] += 1
@@ -964,11 +982,13 @@ def _work_rows(slugs, reports, factors, areas):
 
     rows = list(gathered.values())
     for row in rows:
+        if not row.pop("counted"):
+            row["delta"] = None
         percents = row.pop("percents")
         row["avg_percent"] = sum(percents) / len(percents) if percents else None
         if row["avg_percent"] is not None:
             row["avg_percent_display"] = cost_increase.format_percent(row["avg_percent"])
-        elif row["delta"] > INCREASE_EPSILON:
+        elif row["delta"] is not None and row["delta"] > INCREASE_EPSILON:
             # Работ, которых в сметах не было, ни у одного проекта: процента нет
             # ни у одной строки, и прочерк рядом с суммой в четыреста миллионов
             # читался бы как «неизвестно», а известно как раз всё.
@@ -978,21 +998,27 @@ def _work_rows(slugs, reports, factors, areas):
         row["frequency"] = row["projects_up"] / row["projects_total"]
         row["frequency_display"] = f'{row["projects_up"]} из {row["projects_total"]}'
         row["frequency_pct"] = round(row["frequency"] * 100, 1)
-        row["delta_display"] = _signed(row["delta"], UNIT_MONEY)
+        row["delta_display"] = (
+            _signed(row["delta"], UNIT_MONEY) if row["delta"] is not None else "—"
+        )
         area = row.pop("area") if row.pop("areas_known") else None
-        row["per_sqm"] = row["delta"] / area if area else None
+        row["per_sqm"] = (
+            row["delta"] / area if area and row["delta"] is not None else None
+        )
         row["per_sqm_display"] = (
             _signed(row["per_sqm"], UNIT_PER_SQM) if row["per_sqm"] is not None else "—"
         )
-        row["dearer"] = row["delta"] > INCREASE_EPSILON
+        row["dearer"] = row["delta"] is not None and row["delta"] > INCREASE_EPSILON
 
-    peak = max((abs(row["delta"]) for row in rows), default=0.0)
-    for row in rows:
-        row["width_pct"] = round(abs(row["delta"]) / peak * 100, 1) if peak else 0
+    _scale(rows, "delta", "width_pct")
     # Сначала то, что дороже всего обошлось, — это и есть ответ на «какие работы
     # максимально ведут к удорожанию». Частота стоит рядом отдельным столбцом, и
-    # по ней таблицу можно переупорядочить на месте.
-    rows.sort(key=lambda row: row["delta"], reverse=True)
+    # по ней таблицу можно переупорядочить на месте. Вид работ без суммы — в
+    # конце: сравнивать его с остальными по рублям нечем.
+    rows.sort(
+        key=lambda row: row["delta"] if row["delta"] is not None else float("-inf"),
+        reverse=True,
+    )
     return rows
 
 
@@ -1021,15 +1047,16 @@ def build_increase_summary(slugs, passports, reports, adjustments):
     if not with_data:
         return None
 
+    # Множитель None — включённую поправку к проекту применить нельзя. Его
+    # рубли не идут ни в один итог, как и в таблице средних, а процент идёт:
+    # поправка в нём сокращается, и он верен и без неё.
     factors = {
-        slug: project_factor(
-            _source_vat(passports[slug]), passports[slug].get("year_signed"),
-            adjustments,
-        )[0]
+        slug: _project_factor_or_exclude(passports[slug], adjustments)
         for slug in with_data
     }
+    adjusted = [slug for slug in with_data if factors[slug] is not None]
     projects = [
-        _project_increase(slug, passports[slug], reports[slug], adjustments)
+        _project_increase(slug, passports[slug], reports[slug], factors[slug])
         for slug in with_data
     ]
 
@@ -1043,15 +1070,16 @@ def build_increase_summary(slugs, passports, reports, adjustments):
 
     percents = [p["percent"] for p in projects if p["percent"] is not None]
     average_percent = sum(percents) / len(percents) if percents else None
-    total_delta = sum(p["delta"] for p in projects)
-    total_baseline = sum(p["baseline"] for p in projects)
+    counted = [p for p in projects if p["delta"] is not None]
+    total_delta = sum(p["delta"] for p in counted) if counted else None
+    total_baseline = sum(p["baseline"] for p in counted)
     weighted = (total_delta / total_baseline * 100) if total_baseline else None
 
-    # ₽/м² — только когда площадь известна у всех учтённых проектов. Иначе в
-    # одном столбце стояли бы рубли на метр и рубли просто, а итог считался бы
-    # по части выборки и выглядел бы как по всей.
-    areas = {slug: passports[slug].get("total_area_sqm") or None for slug in with_data}
-    per_sqm = all(areas.values())
+    # ₽/м² — только когда площадь известна у всех учтённых в рублях проектов.
+    # Иначе в одном столбце стояли бы рубли на метр и рубли просто, а итог
+    # считался бы по части выборки и выглядел бы как по всей.
+    areas = {slug: passports[slug].get("total_area_sqm") or None for slug in adjusted}
+    per_sqm = bool(adjusted) and all(areas.values())
     total_area = sum(areas.values()) if per_sqm else None
     total_per_sqm = total_delta / total_area if total_area else None
 
@@ -1067,7 +1095,9 @@ def build_increase_summary(slugs, passports, reports, adjustments):
         "average_percent": average_percent,
         "average_percent_display": cost_increase.format_percent(average_percent) or "—",
         "total_delta": total_delta,
-        "total_delta_display": _signed(total_delta, UNIT_MONEY),
+        "total_delta_display": (
+            _signed(total_delta, UNIT_MONEY) if total_delta is not None else "—"
+        ),
         # Средний процент и процент по сумме — разные числа, и разойтись они
         # могут сильно: маленький проект, подорожавший вдвое, тянет средний
         # вверх, а на сумму почти не влияет. Поэтому оба, и каждый подписан.
@@ -1078,6 +1108,8 @@ def build_increase_summary(slugs, passports, reports, adjustments):
         "without_estimate": [
             p["name"] for p in projects if not p["from_estimate"]
         ],
+        # Не учтены в рублях: включённую поправку к ним применить нельзя.
+        "unadjusted": [p["name"] for p in projects if p["delta"] is None],
     }
 
 

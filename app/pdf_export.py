@@ -767,6 +767,13 @@ def _increase_block(increase, styles, page_width):
     if increase["without_estimate"]:
         names = "», «".join(_esc(name) for name in increase["without_estimate"])
         sub += f' У «{names}» нет сметы, поэтому там есть сумма удорожания, но не процент.'
+    if increase["unadjusted"]:
+        names = "», «".join(_esc(name) for name in increase["unadjusted"])
+        sub += (
+            ' Не учтены в суммах в рублях из-за включённой поправки — год '
+            f'подписания или ставка НДС неизвестны: «{names}». Их процент '
+            'удорожания учтён.'
+        )
 
     story = [
         Paragraph("Удорожание проектов", styles["heading"]),

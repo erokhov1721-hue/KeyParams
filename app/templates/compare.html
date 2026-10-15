@@ -469,6 +469,13 @@
       там есть сумма удорожания, но не процент.
       {% endif %}
     </p>
+    {% if increase.unadjusted %}
+    <p class="sections-sub">
+      Не учтены в суммах в рублях из-за включённой поправки — год подписания
+      или ставка НДС неизвестны: «{{ increase.unadjusted | join('», «') }}».
+      Их процент удорожания учтён.
+    </p>
+    {% endif %}
   </div>
 
   {# Два числа, а не диаграмма: одно число диаграммой не рисуют. Оба сразу,
@@ -611,7 +618,7 @@
           <td class="sections-value" data-sort-value="{{ row.avg_percent if row.avg_percent is not none else -1000000 }}">
             <span class="sections-number">{{ row.avg_percent_display }}</span>
           </td>
-          <td class="sections-value" data-sort-value="{{ row.delta }}">
+          <td class="sections-value" data-sort-value="{{ row.delta if row.delta is not none else -1000000000000000 }}">
             <span class="sections-number {{ 'is-worse' if row.dearer }}">{{ row.delta_display }}</span>
             <div class="works-bar">
               <div class="works-bar-fill {{ 'is-worse' if row.dearer else 'is-better' }}" style="width: {{ row.width_pct }}%"></div>

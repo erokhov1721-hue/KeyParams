@@ -1119,6 +1119,69 @@ def test_the_corrections_move_the_money_and_leave_the_percentage_alone():
     assert lifted["total_delta"] > plain["total_delta"]
 
 
+def test_a_project_the_correction_cannot_reach_keeps_its_percentage_but_not_its_roubles():
+    # Инфляция включена, а года подписания у «Без года» нет: пересчитать его
+    # рубли нельзя, и складывать их как есть с пересчитанными — смешать
+    # деньги разных лет. Процент от поправки не зависит и остаётся.
+    summary = comparison.build_increase_summary(
+        ["a", "b"],
+        {"a": _passport("С годом", year_signed="2025", total_area_sqm=1000.0),
+         "b": _passport("Без года", year_signed=None, total_area_sqm=1000.0)},
+        {
+            "a": _report([("Кровля", 100.0, 120.0), ("Фасадные работы", 100.0, 100.0)],
+                         {"roof": 100.0, "facade": 100.0}),
+            "b": _report([("Кровля", 1000.0, 1400.0), ("Котлован", 100.0, 150.0)],
+                         {"roof": 1000.0, "excavation": 100.0}),
+        },
+        INFLATION_10,
+    )
+    left, right = summary["projects"]
+
+    assert summary["unadjusted"] == ["Без года"]
+    # Итоги — только по пересчитанному проекту: 20 ₽ на 200 ₽ сметы, ×1,1.
+    assert summary["total_delta"] == pytest.approx(20.0 * 1.1)
+    assert summary["weighted_percent"] == pytest.approx(10.0)
+    assert summary["total_per_sqm"] == pytest.approx(20.0 * 1.1 / 1000.0)
+    # Средний процент — по обоим.
+    assert summary["average_percent"] == pytest.approx((10.0 + 450 / 1100 * 100) / 2)
+    # В своей строке у проекта без поправки — процент, но не рубли.
+    assert right["percent"] == pytest.approx(450 / 1100 * 100)
+    assert right["money_display"] == "—"
+    assert right["per_sqm"] is None
+    assert right["per_sqm_display"] == "—"
+    assert right["per_sqm_width_pct"] == 0
+    assert left["per_sqm_width_pct"] == 100.0
+
+    works = {row["key"]: row for row in summary["works"]}
+    # Кровля: частота и средний процент — по обоим, рубли — по одному.
+    assert works["roof"]["frequency_display"] == "2 из 2"
+    assert works["roof"]["avg_percent"] == pytest.approx(30.0)
+    assert works["roof"]["delta"] == pytest.approx(20.0 * 1.1)
+    assert works["roof"]["per_sqm"] == pytest.approx(20.0 * 1.1 / 1000.0)
+    # Котлован есть только у проекта без поправки — суммы у него нет вовсе,
+    # а не ноль, и стоит он в конце.
+    assert works["excavation"]["delta"] is None
+    assert works["excavation"]["delta_display"] == "—"
+    assert works["excavation"]["per_sqm"] is None
+    assert works["excavation"]["frequency_display"] == "1 из 1"
+    assert summary["works"][-1]["key"] == "excavation"
+
+
+def test_when_the_correction_reaches_no_project_there_are_no_roubles_at_all():
+    summary = comparison.build_increase_summary(
+        ["a"],
+        {"a": _passport("Без года", year_signed=None)},
+        {"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
+        INFLATION_10,
+    )
+
+    assert summary["total_delta"] is None
+    assert summary["total_delta_display"] == "—"
+    assert summary["weighted_percent_display"] == "—"
+    assert summary["per_sqm"] is False
+    assert summary["average_percent"] == pytest.approx(30.0)
+
+
 def test_a_project_without_an_estimate_is_named_so_its_baseline_is_not_taken_for_one():
     summary = comparison.build_increase_summary(
         ["a", "b"],
