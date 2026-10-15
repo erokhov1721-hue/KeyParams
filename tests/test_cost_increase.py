@@ -325,7 +325,7 @@ def test_stalo_below_the_estimate_is_a_saving_not_an_increase():
 def test_an_empty_stalo_falls_back_to_was():
     # Пустое «стало» — не нулевая стоимость, а «эту строку не пересчитывали»:
     # последняя цифра, которая у файла есть, стоит в «было».
-    report = _report([("Кровля", 130.0, 0)], estimate={"roof": 100.0})
+    report = _report([("Кровля", 130.0, None)], estimate={"roof": 100.0})
     row = report.rows[0]
 
     assert row.current == 130.0
@@ -333,9 +333,36 @@ def test_an_empty_stalo_falls_back_to_was():
     assert row.delta == pytest.approx(30.0)
 
 
+def test_a_zero_written_in_stalo_is_work_struck_out_not_an_empty_cell():
+    # 0 в «стало» — цифра, а не пустая ячейка: работы сняли, и вся их
+    # стоимость — экономия. Раньше ноль читался как «не пересчитывали», и
+    # бралось «было».
+    report = _report([("Кровля", 130.0, 0)], estimate={"roof": 100.0})
+    row = report.rows[0]
+
+    assert row.current == 0
+    assert row.source == cost_increase.FROM_NOW
+    assert row.delta == pytest.approx(-100.0)
+    assert row.percent == pytest.approx(-100.0)
+
+
+def test_restated_and_unrestated_rows_of_one_kind_of_work_both_count():
+    # Две строки одного раздела: первую пересчитали, вторую нет. Текущая
+    # стоимость — «стало» первой плюс «было» второй, а не одна первая.
+    report = _report(
+        [("Фасадные работы", 100.0, 120.0), ("Фасад (облицовка)", 50.0, None)],
+        estimate={"facade": 150.0},
+    )
+    row = report.rows[0]
+
+    assert row.current == pytest.approx(170.0)
+    assert row.delta == pytest.approx(20.0)
+    assert row.source == cost_increase.FROM_WAS
+
+
 def test_a_whole_empty_stalo_column_falls_back_to_was_line_by_line():
     report = _report(
-        [("Кровля", 130.0, 0), ("Фасадные работы", 250.0, None)],
+        [("Кровля", 130.0, None), ("Фасадные работы", 250.0, None)],
         estimate={"roof": 100.0, "facade": 200.0},
     )
 
@@ -349,8 +376,9 @@ def test_a_line_both_columns_are_silent_about_is_left_at_the_estimate():
     # Ни «стало», ни «было»: файл про эти работы ничего не говорит. Это не то же
     # самое, что «работы убрали», — иначе вся стоимость раздела прочиталась бы
     # как экономия, которой никто не делал.
-    report = _report([("Кровля", 0, 0)], estimate={"roof": 100.0})
-    row = report.rows[0]
+    report = _report([("Кровля", None, None), ("Фасадные работы", 10.0, 12.0)],
+                     estimate={"roof": 100.0})
+    row = _by_key(report)["roof"]
 
     assert row.current == 100.0
     assert row.delta == 0.0

@@ -350,7 +350,10 @@ def _lines_from_sheet(ws, header) -> list:
         now = ws.amount_at(row, header.now_col)
         if was is None and now is None:
             continue
-        lines.append(Line(name, was or Decimal("0"), now or Decimal("0")))
+        # Пустая ячейка остаётся None, а не превращается в ноль: пустое
+        # «стало» — «строку не пересчитывали», а 0 в «стало» — «работы
+        # сняты», и это разные вещи (см. ``_current``).
+        lines.append(Line(name, was, now))
     return lines
 
 
@@ -382,22 +385,22 @@ def _percent(baseline, current):
     return (float(current) / float(baseline) - 1.0) * 100.0
 
 
-def _current(was, now, baseline):
-    """``(current cost, where it came from)`` for one line.
+def _current(was, now):
+    """``(current cost, where it came from)`` for one row of the workbook, or
+    ``(None, None)`` where the row says nothing at all.
 
     "стало" is the answer wherever it has one — it is the whole point of the
     column, and of the file being kept cumulatively. An empty "стало" is not a
     zero cost, though: it means this row hasn't been restated, so the last figure
-    the workbook holds for it is "было". And where neither column says anything,
-    the workbook is silent about this work, which is not the same as the work
-    having been struck out — the baseline stands unchanged rather than the line
-    reading as the whole of it saved.
+    the workbook holds for it is "было". A 0 written in "стало", on the other
+    hand, is a figure like any other — the work was struck out, and its whole
+    cost is a saving. Empty means ``None`` here, never a falsy zero.
     """
-    if now:
-        return now, FROM_NOW
-    if was:
-        return was, FROM_WAS
-    return baseline, FROM_NOTHING
+    if now is not None:
+        return _as_decimal(now), FROM_NOW
+    if was is not None:
+        return _as_decimal(was), FROM_WAS
+    return None, None
 
 
 def build_report(lines, estimate_totals=None) -> Report:
@@ -442,28 +445,49 @@ def _build_report_from_was_now(lines, estimate_totals) -> Report:
     """
     from_estimate = bool(estimate_totals)
 
+    # Per kind of work: "было" and "стало" as written (empty cells as 0, for
+    # the page's own columns), and the current cost decided row by row — one
+    # row restated and another one not still adds up to "стало" of the first
+    # plus "было" of the second, not to the first alone.
     gathered, unmatched = {}, []
     for line in lines:
         key = estimate_sections.classify(line.name)
         if key is None:
             unmatched.append(line.name)
             continue
-        was, now, sources = gathered.get(key, (Decimal("0"), Decimal("0"), []))
-        gathered[key] = (
-            was + _as_decimal(line.was), now + _as_decimal(line.now), sources + [line.name],
-        )
+        entry = gathered.setdefault(key, {
+            "was": Decimal("0"), "now": Decimal("0"), "current": None,
+            "from_was": False, "sources": [],
+        })
+        entry["was"] += _as_decimal(line.was or 0)
+        entry["now"] += _as_decimal(line.now or 0)
+        entry["sources"].append(line.name)
+        current, source = _current(line.was, line.now)
+        if current is not None:
+            entry["current"] = (entry["current"] or Decimal("0")) + current
+            entry["from_was"] = entry["from_was"] or source == FROM_WAS
 
     rows = []
     for key in estimate_sections.CATEGORY_KEYS:
         if key not in gathered and key not in estimate_totals:
             continue
-        was, now, sources = gathered.get(key, (Decimal("0"), Decimal("0"), []))
+        entry = gathered.get(key) or {
+            "was": Decimal("0"), "now": Decimal("0"), "current": None,
+            "from_was": False, "sources": [],
+        }
+        was, now, sources = entry["was"], entry["now"], entry["sources"]
         estimate = estimate_totals.get(key)
         # Work the estimate never priced starts from nothing, so every rouble of
         # it is increase. Work priced with no estimate to compare against starts
         # from "было", which is the only earlier figure there is.
         baseline = (estimate or Decimal("0")) if from_estimate else was
-        current, source = _current(was, now, baseline)
+        if entry["current"] is None:
+            # The workbook is silent about this work — not the same as the
+            # work having been struck out: the baseline stands unchanged.
+            current, source = baseline, FROM_NOTHING
+        else:
+            current = entry["current"]
+            source = FROM_WAS if entry["from_was"] else FROM_NOW
         # Ноль по смете и ноль в файле — строка, которая ничего не сообщает.
         # В таблице от неё только «0 · 0 · 0 %», и среди настоящих цифр это
         # мешает читать.
