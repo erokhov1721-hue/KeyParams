@@ -62,7 +62,8 @@
       «Расчетная стоимость» — стоимость MR Group, — она эталон: каждый раздел и
       подраздел каждого подрядчика сравнивается с ней. Если нет — со средней
       ₽/м² по загруженным объектам того же класса (смета плюс подписанные и
-      планируемые удорожания, при НДС 22%). Замечания программа пишет в
+      планируемые удорожания, при НДС 22%; смета приводится к сегодняшним
+      ценам по инфляции от года подписания договора). Замечания программа пишет в
       колонку «Комментарии» каждого подрядчика, а если её в файле нет —
       добавляет её сама.
     </p>
@@ -101,6 +102,11 @@
         <input type="text" id="area" name="area" value="{{ area_text }}" inputmode="decimal"
                placeholder="например, 45 000">
       </div>
+      <div class="field">
+        <label for="inflation">Инфляция, % в год</label>
+        <input type="text" id="inflation" name="inflation" value="{{ inflation_text }}" inputmode="decimal">
+        <span class="field-hint">Смета каждого объекта приводится к ценам этого года от года подписания договора; 0 — без поправки.</span>
+      </div>
     </div>
     <div class="kp-form-actions">
       <button type="submit" class="btn btn-primary">Проанализировать</button>
@@ -125,12 +131,47 @@
   </div>
   <p class="kp-note">
     Класс «{{ building_class }}», {{ format_number(area) }} м².
-    Средняя посчитана по {{ averages.considered }} объект(ам) этого класса со сметой и площадью.
+    Средняя посчитана по {{ averages.considered }} объект(ам) этого класса со сметой и площадью
+    и приведена к НДС 22%{% if averages.inflation is not none %} и к ценам {{ averages.target_year }} г.:
+    смета — по инфляции {{ ('%g' % averages.inflation) | replace('.', ',') }}% в год от года
+    подписания договора, удорожание — без неё (оно подписано позже, по ценам своего времени){% else %},
+    без поправки на инфляцию{% endif %}.
     {% if averages.excluded %}
     Не вошли — не известна ставка НДС: {{ averages.excluded | join(', ') }}.
     {% endif %}
+    {% if averages.no_year %}
+    Не вошли — не известен год подписания: {{ averages.no_year | join(', ') }}.
+    {% endif %}
     Файл хранится сутки — скачайте его, пока открыта эта страница.
   </p>
+  {% if averages.objects and averages.inflation is not none %}
+  <details class="kp-history-item">
+    <summary>
+      <span class="kp-name">Объекты в средней</span>
+      <span class="kp-history-summary">год подписания и множитель сметы к ценам {{ averages.target_year }} г. с НДС 22%</span>
+    </summary>
+    <div class="kp-table-wrap">
+      <table class="kp-rank-table">
+        <thead>
+          <tr>
+            <th class="kp-name">Объект</th>
+            <th>Год подписания</th>
+            <th>Множитель сметы</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for obj in averages.objects %}
+          <tr>
+            <td class="kp-name">{{ obj.name }}</td>
+            <td class="kp-muted">{{ obj.year }}</td>
+            <td>×{{ ('%.3f' % obj.factor) | replace('.', ',') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
   {% if not analysis.sections %}
   <p class="kp-note">В файле нет ни одного раздела, который расценил хотя бы один подрядчик.</p>
   {% else %}

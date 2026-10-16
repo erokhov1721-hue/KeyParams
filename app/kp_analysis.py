@@ -126,8 +126,19 @@ Project = namedtuple("Project", "name passport estimate signed_report predicted_
 
 # ``per_sqm`` — {вид работ: ₽/м²}, ``counts`` — по скольким объектам,
 # ``considered`` — сколько объектов класса вообще вошло в расчёт,
-# ``excluded`` — имена объектов класса, выпавших из-за неизвестного НДС.
-ClassAverages = namedtuple("ClassAverages", "per_sqm counts considered excluded")
+# ``excluded`` — имена объектов класса, выпавших из-за неизвестного НДС,
+# ``no_year`` — из-за неизвестного года подписания (только при поправке на
+# инфляцию), ``objects`` — вошедшие объекты с годом подписания и множителем
+# сметы, ``inflation`` — % в год (None — без поправки), ``target_year`` — к
+# ценам какого года приведена средняя.
+ClassAverages = namedtuple(
+    "ClassAverages",
+    "per_sqm counts considered excluded no_year objects inflation target_year",
+    defaults=((), (), None, None),
+)
+# Объект, вошедший в среднюю: год подписания (None — без поправки на
+# инфляцию его не спрашивали) и множитель, на который умножена его смета.
+AverageObject = namedtuple("AverageObject", "name year factor")
 
 # Что вписать в какую ячейку: текст замечания или ожидаемую стоимость.
 Remark = namedtuple("Remark", "row col value")
@@ -405,55 +416,89 @@ def _parse_sheet(ws) -> Offer:
     )
 
 
-def project_costs(project):
-    """{вид работ: Decimal} — смета объекта плюс подписанное и прогнозируемое
-    удорожание по тому же виду работ.
+def project_cost_parts(project):
+    """``(смета, удорожание)`` — два словаря {вид работ: Decimal}: смета
+    объекта и подписанное плюс прогнозируемое удорожание по тому же виду
+    работ. Порознь, потому что приводятся они по-разному: смета — в ценах
+    года подписания, удорожание — нет (см. ``comparison.without_inflation``).
 
     Подписанное — только если отчёт мерен от сметы (как в «Сводке по
     удорожанию»): иначе его дельта сравнивает файл сам с собой.
     """
-    costs = dict(project.estimate or {})
+    increase = {}
     report = project.signed_report
     if report is not None and report.from_estimate:
         for row in report.rows:
-            costs[row.key] = costs.get(row.key, Decimal("0")) + row.delta
+            increase[row.key] = increase.get(row.key, Decimal("0")) + row.delta
     if project.predicted_report is not None:
         for row in project.predicted_report.rows:
-            costs[row.key] = costs.get(row.key, Decimal("0")) + row.amount
-    return costs
+            increase[row.key] = increase.get(row.key, Decimal("0")) + row.amount
+    return dict(project.estimate or {}), increase
 
 
-def class_averages(projects, building_class) -> ClassAverages:
+def class_averages(projects, building_class, inflation=None, target_year=None) -> ClassAverages:
     """Средняя ₽/м² по каждому виду работ по объектам ``building_class``.
 
     Портфельная, как на странице «Сравнить со средним»: сумма стоимостей
     вида работ по объектам, где он есть, делённая на сумму их площадей.
-    Объект без сметы или площади не участвует; объект, чью ставку НДС не
-    прочитать, выпадает и называется в ``excluded`` — приводить его к 22%
-    не от чего.
+    Объект без сметы или площади не участвует.
+
+    Подрядчик даёт цену сегодня и с НДС 22%, поэтому и средняя приводится к
+    этому: всё — к НДС 22%, а смета ещё и к ценам ``target_year`` (по
+    умолчанию текущего) по инфляции ``inflation`` % в год от года подписания
+    договора. Удорожание на инфляцию не умножается: оно подписано позже, по
+    ценам своего времени, и во многом само и есть рост цен (см.
+    ``comparison.without_inflation``). ``inflation`` None — без поправки на
+    инфляцию.
+
+    Объект, чью ставку НДС не прочитать, выпадает и называется в
+    ``excluded``; объект без года подписания при поправке на инфляцию — в
+    ``no_year``: приводить их не от чего.
     """
-    adjustments = comparison.Adjustments(vat_rate=OFFER_VAT_RATE)
+    adjustments = comparison.Adjustments(
+        vat_rate=OFFER_VAT_RATE, inflation=inflation,
+        target_year=target_year or comparison.default_target_year(),
+    )
+    vat_only = comparison.without_inflation(adjustments)
     totals, areas, counts = {}, {}, {}
-    considered = 0
-    excluded = []
+    excluded, no_year, objects = [], [], []
     for project in projects:
-        if (project.passport.get("building_class") or "") != building_class:
+        passport = project.passport
+        if (passport.get("building_class") or "") != building_class:
             continue
-        area = project.passport.get("total_area_sqm") or None
+        area = passport.get("total_area_sqm") or None
         if not project.estimate or not area:
             continue
-        factor = comparison._project_factor_or_exclude(project.passport, adjustments)
-        if factor is None:
+        vat = comparison._source_vat(passport)
+        year_signed = passport.get("year_signed")
+        factor, notes = comparison.project_factor(vat, year_signed, adjustments)
+        if comparison.NOTE_NO_VAT in notes:
             excluded.append(project.name)
+        if comparison.NOTE_NO_YEAR in notes:
+            no_year.append(project.name)
+        if notes:
             continue
-        considered += 1
-        for key, cost in project_costs(project).items():
-            totals[key] = totals.get(key, 0.0) + float(cost) * factor
+        increase_factor, _ = comparison.project_factor(vat, year_signed, vat_only)
+        objects.append(AverageObject(
+            name=project.name,
+            year=comparison.parse_year(year_signed) if inflation is not None else None,
+            factor=factor,
+        ))
+        estimate, increase = project_cost_parts(project)
+        for key in estimate.keys() | increase.keys():
+            cost = (
+                float(estimate.get(key, 0)) * factor
+                + float(increase.get(key, 0)) * increase_factor
+            )
+            totals[key] = totals.get(key, 0.0) + cost
             areas[key] = areas.get(key, 0.0) + float(area)
             counts[key] = counts.get(key, 0) + 1
     per_sqm = {key: totals[key] / areas[key] for key in totals if areas[key]}
     return ClassAverages(
-        per_sqm=per_sqm, counts=counts, considered=considered, excluded=sorted(excluded),
+        per_sqm=per_sqm, counts=counts, considered=len(objects),
+        excluded=sorted(excluded), no_year=sorted(no_year),
+        objects=sorted(objects, key=lambda o: (o.year or 0, o.name)),
+        inflation=inflation, target_year=adjustments.target_year,
     )
 
 

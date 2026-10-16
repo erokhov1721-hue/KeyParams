@@ -110,10 +110,14 @@ def test_parse_offer_with_no_amounts_at_all_asks_to_resave_in_excel():
         kp_analysis.parse_offer(io.BytesIO(_offer_workbook(rows)))
 
 
-def _project(name, building_class, area, estimate, vat="22%", signed=None, predicted=None):
+def _project(name, building_class, area, estimate, vat="22%", signed=None, predicted=None,
+             year=None):
+    passport = {"building_class": building_class, "total_area_sqm": area, "vat": vat}
+    if year is not None:
+        passport["year_signed"] = year
     return kp_analysis.Project(
         name=name,
-        passport={"building_class": building_class, "total_area_sqm": area, "vat": vat},
+        passport=passport,
         estimate={key: Decimal(str(v)) for key, v in estimate.items()},
         signed_report=signed,
         predicted_report=predicted,
@@ -151,6 +155,60 @@ def test_class_averages_bring_vat_to_22_percent_and_drop_unknown_vat():
 
     assert averages.per_sqm["facade"] == pytest.approx(1200 * 122 / 120 / 10)
     assert averages.excluded == ["Б"]
+
+
+def test_class_averages_carry_the_estimate_forward_by_inflation_but_not_the_increase():
+    # Смета 2024 года к ценам 2026-го при 10% в год — ×1,21. Подписанные
+    # +200 и прогноз +100 уже в ценах своего времени: прибавляются как есть,
+    # иначе рост цен посчитался бы дважды.
+    signed = cost_increase.build_report(
+        [cost_increase.Line("Фасадные работы", 1000, 1200)], {"facade": Decimal("1000")},
+    )
+    predicted = predicted_increase.build_report(
+        [predicted_increase.Line("Фасадные работы", 100)],
+    )
+    projects = [_project("А", "Бизнес", 10, {"facade": 1000}, year="2024",
+                         signed=signed, predicted=predicted)]
+
+    averages = kp_analysis.class_averages(projects, "Бизнес", inflation=10.0, target_year=2026)
+
+    assert averages.per_sqm["facade"] == pytest.approx((1000 * 1.21 + 200 + 100) / 10)
+    assert averages.objects == [kp_analysis.AverageObject("А", 2024, pytest.approx(1.21))]
+    assert averages.inflation == 10.0
+    assert averages.target_year == 2026
+
+
+def test_class_averages_bring_vat_and_inflation_together():
+    # НДС 20% → 22% и два года инфляции — один множитель на смету; на
+    # удорожание — только НДС.
+    signed = cost_increase.build_report(
+        [cost_increase.Line("Фасадные работы", 1000, 1100)], {"facade": Decimal("1000")},
+    )
+    projects = [_project("А", "Бизнес", 10, {"facade": 1000}, vat="20%", year="2024",
+                         signed=signed)]
+
+    averages = kp_analysis.class_averages(projects, "Бизнес", inflation=10.0, target_year=2026)
+
+    vat = 122 / 120
+    assert averages.per_sqm["facade"] == pytest.approx((1000 * 1.21 * vat + 100 * vat) / 10)
+
+
+def test_class_averages_drop_a_project_without_a_signing_year_only_with_inflation():
+    projects = [
+        _project("А", "Бизнес", 10, {"facade": 1000}, year="2026"),
+        _project("Б", "Бизнес", 10, {"facade": 3000}),
+    ]
+
+    with_inflation = kp_analysis.class_averages(
+        projects, "Бизнес", inflation=10.0, target_year=2026,
+    )
+    without = kp_analysis.class_averages(projects, "Бизнес")
+
+    assert with_inflation.no_year == ["Б"]
+    assert with_inflation.excluded == []
+    assert with_inflation.per_sqm["facade"] == pytest.approx(100.0)
+    assert without.no_year == []
+    assert without.per_sqm["facade"] == pytest.approx(200.0)
 
 
 def test_class_averages_skip_projects_without_estimate_or_area():

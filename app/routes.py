@@ -650,6 +650,10 @@ def _kp_form(error=None, status=200, **values):
         error=error,
         building_class=values.get("building_class"),
         area_text=values.get("area_text", ""),
+        inflation_text=(
+            values["inflation_text"] if values.get("inflation_text")
+            else comparison._percent_text(comparison.DEFAULT_INFLATION)
+        ),
         analysis=values.get("analysis"),
         ranking=values.get("ranking"),
         history=values.get("history") or {},
@@ -720,6 +724,17 @@ def run_kp_analysis():
     area = extractors.parse_number(area_text)
     if area is None or area <= 0:
         return _kp_form("Укажите общую площадь объекта числом, в м²", 400, **values)
+    # Поле приходит заполненным ставкой по умолчанию; пустое — та же ставка,
+    # а 0 — «без поправки на инфляцию».
+    inflation_text = (request.form.get("inflation") or "").strip()
+    values["inflation_text"] = inflation_text
+    inflation = comparison.DEFAULT_INFLATION
+    if inflation_text:
+        inflation = comparison._percent_in_range(inflation_text, *comparison.INFLATION_RANGE)
+        if inflation is None:
+            return _kp_form("Укажите инфляцию числом, в % в год — например, 12", 400, **values)
+    if inflation == 0:
+        inflation = None
 
     data = offer_file.read()
     if len(data) > MAX_KP_ANALYSIS_SIZE:
@@ -735,6 +750,7 @@ def run_kp_analysis():
     passports = {slug: _safe_passport(root, slug) for slug in storage.list_project_slugs(root)}
     averages = kp_analysis.class_averages(
         _kp_class_projects(root, passports, building_class), building_class,
+        inflation=inflation,
     )
     analysis = kp_analysis.analyze(offer, averages, area)
     ranking = kp_analysis.rank(analysis, area)
@@ -753,7 +769,7 @@ def run_kp_analysis():
     (folder / f"{token}.name").write_text(file_name, encoding="utf-8")
     (folder / f"{token}.pdf").write_bytes(pdf_export.build_kp_ranking_pdf(
         ranking, building_class, area, averages.considered, averages.excluded,
-        offer_file.filename, history,
+        offer_file.filename, history, averages=averages,
     ))
     current_app.logger.info(
         "Анализ КП: %d подрядчиков, %d разделов, класс %s, %s м²",

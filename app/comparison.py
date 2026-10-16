@@ -9,7 +9,7 @@ today's money.
 """
 
 import re
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace as dataclass_replace
 from datetime import date
 from decimal import Decimal
 
@@ -244,6 +244,19 @@ def project_factor(vat, year_signed, adjustments):
     return factor, notes
 
 
+def without_inflation(adjustments):
+    """The same corrections minus inflation — for удорожание.
+
+    An estimate is priced in its signing year, so inflation brings it to the
+    target year. Удорожание is not: its supplementary agreements were signed
+    later, at the prices of their own time, and the forecast is priced today
+    — and much of it is the price growth itself. Inflating it from the
+    signing year too would count the same growth twice. VAT still applies:
+    it is in every rouble alike.
+    """
+    return dataclass_replace(adjustments, inflation=None)
+
+
 def _money(value):
     return format_number(round(value)) if value is not None else None
 
@@ -280,6 +293,9 @@ def _column(slug, passport, costs, adjustments, extra_notes=()):
     factor, notes = project_factor(
         _source_vat(passport), passport.get("year_signed"), adjustments,
     )
+    vat_factor, _ = project_factor(
+        _source_vat(passport), passport.get("year_signed"), without_inflation(adjustments),
+    )
     area = passport.get("total_area_sqm")
     if not costs:
         notes.insert(0, NOTE_NO_ESTIMATE)
@@ -290,6 +306,8 @@ def _column(slug, passport, costs, adjustments, extra_notes=()):
         "slug": slug,
         "name": passport.get("project_name") or slug,
         "factor": factor,
+        # Для удорожания — без инфляции (см. ``without_inflation``).
+        "vat_factor": vat_factor,
         "area": area if area else None,
         "has_estimate": bool(costs),
         "per_sqm": bool(costs and area),
@@ -297,17 +315,27 @@ def _column(slug, passport, costs, adjustments, extra_notes=()):
     }
 
 
+def _adjusted_costs(column, base, extra):
+    """One project's sections with the corrections applied: the estimate
+    part by the column's full factor, the удорожание part by its VAT-only
+    one (see ``without_inflation``)."""
+    return {
+        key: base.get(key, 0.0) * column["factor"] + extra.get(key, 0.0) * column["vat_factor"]
+        for key in base.keys() | extra.keys()
+    }
+
+
 def _cell(column, costs, key):
-    """One project's figure for one section.
+    """One project's figure for one section, ``costs`` already corrected
+    (``_adjusted_costs``).
 
     Empty is not zero here: a section the estimate doesn't carry has no
     figure, while a section it carries at nought really did cost nothing.
     """
-    amount = costs.get(key)
-    if amount is None:
+    value = costs.get(key)
+    if value is None:
         return {"value": None, "display": "—", "deviation": None, "deviation_display": "",
                 "per_sqm": column["per_sqm"]}
-    value = amount * column["factor"]
     if column["per_sqm"]:
         value = value / column["area"]
     return {"value": value, "display": _money(value), "deviation": None,
@@ -524,36 +552,45 @@ def combine_increase_reports(signed_report, predicted_report):
     )
 
 
-def _apply_increase(slugs, costs_by_slug, reports):
-    """``costs_by_slug`` with every section swapped for its cost-increase
-    figure — the workbook's "стало" where a section was restated, the
-    estimate's own figure everywhere else — so "with additional works"
-    means exactly the same thing here as it does on the удорожание block.
+def _apply_increase(slugs, base_by_slug, extra_by_slug, reports):
+    """``(base_by_slug, extra_by_slug, notes)`` with every section the
+    cost-increase workbook covers brought to its figure — the workbook's
+    "стало" where a section was restated, the estimate's own figure
+    everywhere else — so "with additional works" means exactly the same
+    thing here as it does on the удорожание block.
+
+    The figure stays in two parts: what it is measured from (the estimate,
+    or "было" without one) in ``base`` and the change on top in ``extra`` —
+    they are corrected differently (see ``without_inflation``).
 
     A project with no cost-increase file keeps its estimate figures as they
     are (there is nothing to add them to) and gets ``NOTE_NO_INCREASE`` so
     the unchanged number isn't mistaken for "no additional works happened".
     """
     reports = reports or {}
-    merged = dict(costs_by_slug)
+    base_by_slug, extra_by_slug = dict(base_by_slug), dict(extra_by_slug)
     notes = {}
     for slug in slugs:
-        costs = costs_by_slug.get(slug)
+        costs = base_by_slug.get(slug)
         report = reports.get(slug)
         if report is None:
             if costs:
                 notes[slug] = NOTE_NO_INCREASE
             continue
-        merged[slug] = {
-            **(costs or {}), **{row.key: float(row.current) for row in report.rows},
-        }
-    return merged, notes
+        base = dict(costs or {})
+        extra = dict(extra_by_slug.get(slug) or {})
+        for row in report.rows:
+            base[row.key] = float(row.baseline)
+            extra[row.key] = extra.get(row.key, 0.0) + float(row.delta)
+        base_by_slug[slug], extra_by_slug[slug] = base, extra
+    return base_by_slug, extra_by_slug, notes
 
 
-def _apply_predicted_increase(slugs, costs_by_slug, predicted_increase_by_slug):
-    """``costs_by_slug`` with each project's predicted cost-increase file
-    (``{slug: {section_key: Decimal}}``, straight from
+def _apply_predicted_increase(slugs, base_by_slug, extra_by_slug, predicted_increase_by_slug):
+    """``(extra_by_slug, notes)`` with each project's predicted cost-increase
+    file (``{slug: {section_key: Decimal}}``, straight from
     ``predicted_increase.Report.rows``) added onto the matching sections —
+    into the удорожание part, since a forecast is priced today —
     unlike the old VIS claims registry, this file prices every kind of work
     it covers, not just engineering systems, so each figure lands on its own
     line rather than all of it going to one.
@@ -564,20 +601,19 @@ def _apply_predicted_increase(slugs, costs_by_slug, predicted_increase_by_slug):
     than left looking untouched by coincidence.
     """
     predicted_increase_by_slug = predicted_increase_by_slug or {}
-    merged = dict(costs_by_slug)
+    extra_by_slug = dict(extra_by_slug)
     notes = {}
     for slug in slugs:
-        costs = costs_by_slug.get(slug)
         by_section = predicted_increase_by_slug.get(slug)
         if not by_section:
-            if costs:
+            if base_by_slug.get(slug) or extra_by_slug.get(slug):
                 notes[slug] = NOTE_NO_PREDICTED_INCREASE
             continue
-        costs = dict(costs or {})
+        extra = dict(extra_by_slug.get(slug) or {})
         for key, amount in by_section.items():
-            costs[key] = costs.get(key, 0.0) + float(amount)
-        merged[slug] = costs
-    return merged, notes
+            extra[key] = extra.get(key, 0.0) + float(amount)
+        extra_by_slug[slug] = extra
+    return extra_by_slug, notes
 
 
 def build_section_table(
@@ -599,25 +635,40 @@ def build_section_table(
     independent of ``use_increase``: on top of the swapped "стало" figure
     where both are on, on top of the plain estimate where only this one is.
     """
-    costs_by_slug = _as_float_costs(costs_by_slug)
+    base_by_slug = _as_float_costs(costs_by_slug)
+    extra_by_slug = {}
     increase_notes = {}
     if use_increase:
-        costs_by_slug, increase_notes = _apply_increase(slugs, costs_by_slug, reports)
+        base_by_slug, extra_by_slug, increase_notes = _apply_increase(
+            slugs, base_by_slug, extra_by_slug, reports,
+        )
     predicted_notes = {}
     if use_predicted_increase:
-        costs_by_slug, predicted_notes = _apply_predicted_increase(
-            slugs, costs_by_slug, predicted_increase_by_slug,
+        extra_by_slug, predicted_notes = _apply_predicted_increase(
+            slugs, base_by_slug, extra_by_slug, predicted_increase_by_slug,
         )
-    if not any(costs_by_slug.get(slug) for slug in slugs):
+    if not any(base_by_slug.get(slug) or extra_by_slug.get(slug) for slug in slugs):
         return None
 
     columns = [
         _column(
-            slug, passports[slug], costs_by_slug.get(slug) or {}, adjustments,
+            slug, passports[slug],
+            {**(base_by_slug.get(slug) or {}), **(extra_by_slug.get(slug) or {})},
+            adjustments,
             extra_notes=(increase_notes.get(slug), predicted_notes.get(slug)),
         )
         for slug in slugs
     ]
+    # Already corrected: the estimate part by the full factor, удорожание by
+    # the VAT-only one — one rouble figure per section from here on.
+    costs_by_slug = {
+        column["slug"]: _adjusted_costs(
+            column,
+            base_by_slug.get(column["slug"]) or {},
+            extra_by_slug.get(column["slug"]) or {},
+        )
+        for column in columns
+    }
 
     rows = []
     for key in estimate_sections.CATEGORY_KEYS:
@@ -641,7 +692,7 @@ def build_section_table(
             total.append({"value": None, "display": "—", "deviation": None,
                           "deviation_display": "", "per_sqm": column["per_sqm"]})
             continue
-        value = sum(costs.values()) * column["factor"]
+        value = sum(costs.values())
         if column["per_sqm"]:
             value = value / column["area"]
         total.append({"value": value, "display": _money(value), "deviation": None,
@@ -879,8 +930,11 @@ INCREASE_EPSILON = 1.0
 def _project_increase(slug, passport, report, factor):
     """Удорожание одного проекта — одной строкой для диаграммы.
 
-    Деньги приводятся тем же множителем, что и всё остальное на странице: без
-    этого проекты разных лет складывались бы в общий итог как есть. Процент
+    Деньги приводятся к выбранному НДС, как и всё остальное на странице, но
+    не на инфляцию (см. ``without_inflation``): удорожание подписано позже
+    договора, по ценам своего времени, и во многом само и есть рост цен. И
+    смета, от которой здесь мерен процент, приводится тем же множителем,
+    чтобы процент по сумме оставался настоящим отношением. Процент
     множитель не задевает — он отношение внутри одного проекта, и поправка
     сокращается. Площадь — тоже: квадратный метр 2020 года это квадратный метр
     2026-го, поправляется только то, что в рублях.
@@ -1036,11 +1090,13 @@ def build_increase_summary(slugs, passports, reports, adjustments):
     if not with_data:
         return None
 
-    # Множитель None — включённую поправку к проекту применить нельзя. Его
-    # рубли не идут ни в один итог, как и в таблице средних, а процент идёт:
-    # поправка в нём сокращается, и он верен и без неё.
+    # Только НДС, без инфляции (см. ``without_inflation``). Множитель None —
+    # включённую поправку на НДС к проекту применить нельзя. Его рубли не
+    # идут ни в один итог, как и в таблице средних, а процент идёт: поправка
+    # в нём сокращается, и он верен и без неё.
+    vat_only = without_inflation(adjustments)
     factors = {
-        slug: _project_factor_or_exclude(passports[slug], adjustments)
+        slug: _project_factor_or_exclude(passports[slug], vat_only)
         for slug in with_data
     }
     adjusted = [slug for slug in with_data if factors[slug] is not None]
@@ -1099,6 +1155,8 @@ def build_increase_summary(slugs, passports, reports, adjustments):
         ],
         # Не учтены в рублях: включённую поправку к ним применить нельзя.
         "unadjusted": [p["name"] for p in projects if p["delta"] is None],
+        # Инфляция на странице включена, но к удорожанию не применялась.
+        "inflation_skipped": adjustments.inflation is not None,
     }
 
 

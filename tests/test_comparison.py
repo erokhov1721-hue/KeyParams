@@ -846,6 +846,37 @@ def test_with_the_toggle_on_a_restated_section_uses_its_current_figure():
     assert table["use_increase"] is True
 
 
+def test_with_inflation_the_estimate_is_carried_forward_and_the_increase_is_not():
+    # Смета 2024 года в ценах 2026-го — ×1,21; подписанные 30 и прогноз 20
+    # уже в ценах своего времени и прибавляются как есть.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport(total_area_sqm=None, year_signed="2024")},
+        {"a": {"roof": 100.0, "facade": 200.0}}, INFLATION_10,
+        reports={"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
+        use_increase=True,
+        predicted_increase_by_slug={"a": {"roof": Decimal("20")}},
+        use_predicted_increase=True,
+    )
+
+    roof = next(row for row in table["rows"] if row["key"] == "roof")
+    facade = next(row for row in table["rows"] if row["key"] == "facade")
+    assert roof["cells"][0]["value"] == pytest.approx(100.0 * 1.21 + 30.0 + 20.0)
+    assert facade["cells"][0]["value"] == pytest.approx(200.0 * 1.21)
+    assert table["total"]["cells"][0]["value"] == pytest.approx(300.0 * 1.21 + 50.0)
+
+
+def test_the_increase_still_follows_the_vat_correction():
+    # НДС — в каждом рубле, и в удорожании тоже: 20% → 22%.
+    table = comparison.build_section_table(
+        ["a"], {"a": _passport(total_area_sqm=None, year_signed="2024")},
+        {"a": {"roof": 100.0}}, VAT_22,
+        reports={"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
+        use_increase=True,
+    )
+
+    assert table["total"]["cells"][0]["value"] == pytest.approx(130.0 * 122 / 120)
+
+
 def test_a_project_without_a_cost_increase_file_gets_a_note_when_the_toggle_is_on():
     table = comparison.build_section_table(
         ["a"], {"a": _passport()}, {"a": {"roof": 100.0}}, NONE,
@@ -1180,43 +1211,63 @@ def test_work_no_estimate_ever_priced_is_named_new_work_not_a_dash():
 
 
 def test_the_corrections_move_the_money_and_leave_the_percentage_alone():
-    # Поправка — постоянный множитель внутри проекта, и в отношении «стало» к
-    # смете она сокращается. В рублях — нет, и общий итог по проектам разных
-    # лет без неё складывать нельзя.
+    # Поправка на НДС — постоянный множитель внутри проекта, и в отношении
+    # «стало» к смете она сокращается. В рублях — нет.
     passports = {"a": _passport(year_signed="2020")}
     reports = {"a": _report([("Кровля", 100.0, 200.0)], {"roof": 100.0})}
 
     plain = comparison.build_increase_summary(["a"], passports, reports, NONE)
-    lifted = comparison.build_increase_summary(["a"], passports, reports, INFLATION_10)
+    lifted = comparison.build_increase_summary(["a"], passports, reports, VAT_22)
 
     assert plain["projects"][0]["percent"] == pytest.approx(100.0)
     assert lifted["projects"][0]["percent"] == pytest.approx(100.0)
-    assert lifted["total_delta"] > plain["total_delta"]
+    assert lifted["total_delta"] == pytest.approx(100.0 * 122 / 120)
+
+
+def test_inflation_does_not_touch_the_increase_block():
+    # Удорожание подписано позже договора, по ценам своего времени, и во
+    # многом само и есть рост цен: умножать его на инфляцию от года
+    # подписания — посчитать тот же рост дважды. Проект без года при этом в
+    # рублях учитывается: инфляция к нему здесь не применяется вовсе.
+    passports = {"a": _passport(year_signed="2020"), "b": _passport("Без года", year_signed=None)}
+    reports = {
+        "a": _report([("Кровля", 100.0, 200.0)], {"roof": 100.0}),
+        "b": _report([("Кровля", 100.0, 150.0)], {"roof": 100.0}),
+    }
+
+    summary = comparison.build_increase_summary(["a", "b"], passports, reports, INFLATION_10)
+
+    assert summary["total_delta"] == pytest.approx(150.0)
+    assert summary["weighted_percent"] == pytest.approx(75.0)
+    assert summary["unadjusted"] == []
+    assert summary["inflation_skipped"] is True
 
 
 def test_a_project_the_correction_cannot_reach_keeps_its_percentage_but_not_its_roubles():
-    # Инфляция включена, а года подписания у «Без года» нет: пересчитать его
-    # рубли нельзя, и складывать их как есть с пересчитанными — смешать
-    # деньги разных лет. Процент от поправки не зависит и остаётся.
+    # Поправка на НДС включена, а ставки у «Без ставки» не прочитать:
+    # пересчитать его рубли нельзя, и складывать их как есть с
+    # пересчитанными — смешать разные налоговые базы. Процент от поправки не
+    # зависит и остаётся.
     summary = comparison.build_increase_summary(
         ["a", "b"],
-        {"a": _passport("С годом", year_signed="2025", total_area_sqm=1000.0),
-         "b": _passport("Без года", year_signed=None, total_area_sqm=1000.0)},
+        {"a": _passport("Со ставкой", year_signed="2025", total_area_sqm=1000.0),
+         "b": _passport("Без ставки", year_signed=None, vat="непонятно",
+                        total_area_sqm=1000.0)},
         {
             "a": _report([("Кровля", 100.0, 120.0), ("Фасадные работы", 100.0, 100.0)],
                          {"roof": 100.0, "facade": 100.0}),
             "b": _report([("Кровля", 1000.0, 1400.0), ("Котлован", 100.0, 150.0)],
                          {"roof": 1000.0, "excavation": 100.0}),
         },
-        INFLATION_10,
+        VAT_22,
     )
     left, right = summary["projects"]
 
-    assert summary["unadjusted"] == ["Без года"]
-    # Итоги — только по пересчитанному проекту: 20 ₽ на 200 ₽ сметы, ×1,1.
-    assert summary["total_delta"] == pytest.approx(20.0 * 1.1)
+    assert summary["unadjusted"] == ["Без ставки"]
+    # Итоги — только по пересчитанному проекту: 20 ₽ на 200 ₽ сметы, ×122/120.
+    assert summary["total_delta"] == pytest.approx(20.0 * 122 / 120)
     assert summary["weighted_percent"] == pytest.approx(10.0)
-    assert summary["total_per_sqm"] == pytest.approx(20.0 * 1.1 / 1000.0)
+    assert summary["total_per_sqm"] == pytest.approx(20.0 * 122 / 120 / 1000.0)
     # Средний процент — по обоим.
     assert summary["average_percent"] == pytest.approx((10.0 + 450 / 1100 * 100) / 2)
     # В своей строке у проекта без поправки — процент, но не рубли.
@@ -1231,8 +1282,8 @@ def test_a_project_the_correction_cannot_reach_keeps_its_percentage_but_not_its_
     # Кровля: частота и средний процент — по обоим, рубли — по одному.
     assert works["roof"]["frequency_display"] == "2 из 2"
     assert works["roof"]["avg_percent"] == pytest.approx(30.0)
-    assert works["roof"]["delta"] == pytest.approx(20.0 * 1.1)
-    assert works["roof"]["per_sqm"] == pytest.approx(20.0 * 1.1 / 1000.0)
+    assert works["roof"]["delta"] == pytest.approx(20.0 * 122 / 120)
+    assert works["roof"]["per_sqm"] == pytest.approx(20.0 * 122 / 120 / 1000.0)
     # Котлован есть только у проекта без поправки — суммы у него нет вовсе,
     # а не ноль, и стоит он в конце.
     assert works["excavation"]["delta"] is None
@@ -1245,9 +1296,9 @@ def test_a_project_the_correction_cannot_reach_keeps_its_percentage_but_not_its_
 def test_when_the_correction_reaches_no_project_there_are_no_roubles_at_all():
     summary = comparison.build_increase_summary(
         ["a"],
-        {"a": _passport("Без года", year_signed=None)},
+        {"a": _passport("Без ставки", year_signed=None, vat="непонятно")},
         {"a": _report([("Кровля", 100.0, 130.0)], {"roof": 100.0})},
-        INFLATION_10,
+        VAT_22,
     )
 
     assert summary["total_delta"] is None
@@ -1365,13 +1416,13 @@ def test_a_kind_of_work_is_divided_by_the_area_of_the_projects_that_have_it():
 
 
 def test_the_corrections_move_the_roubles_per_metre_but_not_the_area():
-    # Квадратный метр 2020 года это квадратный метр 2026-го: поправляется
-    # только то, что в рублях.
+    # Квадратный метр с НДС 20% это тот же квадратный метр с НДС 22%:
+    # поправляется только то, что в рублях.
     passports = {"a": _passport(year_signed="2020", total_area_sqm=1000.0)}
     reports = {"a": _report([("Кровля", 100_000.0, 200_000.0)], {"roof": 100_000.0})}
 
     plain = comparison.build_increase_summary(["a"], passports, reports, NONE)
-    lifted = comparison.build_increase_summary(["a"], passports, reports, INFLATION_10)
+    lifted = comparison.build_increase_summary(["a"], passports, reports, VAT_22)
 
     assert plain["total_area"] == lifted["total_area"] == 1000.0
     assert lifted["total_per_sqm"] > plain["total_per_sqm"]

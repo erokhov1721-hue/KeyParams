@@ -208,7 +208,8 @@
     </div>
     <label class="adjust-toggle">
       <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
-      <span>Учитывать инфляцию</span>
+      <span tabindex="0"
+            data-tooltip="Смета приводится к выбранному году от года подписания договора. Удорожание — без поправки на инфляцию: оно подписано позже, по ценам своего времени, и во многом само и есть рост цен.">Учитывать инфляцию</span>
       <input class="adjust-input" type="text" name="inflation" inputmode="decimal"
              value="{{ adjustments.inflation_display }}">
       <span class="adjust-unit">% в год к</span>
@@ -469,10 +470,16 @@
       там есть сумма удорожания, но не процент.
       {% endif %}
     </p>
+    {% if adjustments.inflation is not none %}
+    <p class="sections-sub">
+      Суммы удорожания — без поправки на инфляцию: оно подписано позже
+      договора, по ценам своего времени.
+    </p>
+    {% endif %}
     {% if increase.unadjusted %}
     <p class="sections-sub">
-      Не учтены в суммах в рублях из-за включённой поправки — год подписания
-      или ставка НДС неизвестны: «{{ increase.unadjusted | join('», «') }}».
+      Не учтены в суммах в рублях из-за включённой поправки на НДС — ставка
+      неизвестна: «{{ increase.unadjusted | join('», «') }}».
       Их процент удорожания учтён.
     </p>
     {% endif %}

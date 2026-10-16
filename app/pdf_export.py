@@ -767,11 +767,16 @@ def _increase_block(increase, styles, page_width):
     if increase["without_estimate"]:
         names = "», «".join(_esc(name) for name in increase["without_estimate"])
         sub += f' У «{names}» нет сметы, поэтому там есть сумма удорожания, но не процент.'
+    if increase.get("inflation_skipped"):
+        sub += (
+            ' Суммы удорожания — без поправки на инфляцию: оно подписано позже '
+            'договора, по ценам своего времени.'
+        )
     if increase["unadjusted"]:
         names = "», «".join(_esc(name) for name in increase["unadjusted"])
         sub += (
-            ' Не учтены в суммах в рублях из-за включённой поправки — год '
-            f'подписания или ставка НДС неизвестны: «{names}». Их процент '
+            ' Не учтены в суммах в рублях из-за включённой поправки на НДС — '
+            f'ставка неизвестна: «{names}». Их процент '
             'удорожания учтён.'
         )
 
@@ -1714,12 +1719,14 @@ def _kp_history_block(ranking, history, building_class, styles, page_width):
 
 
 def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
-                         file_name=None, history=None) -> bytes:
+                         file_name=None, history=None, averages=None) -> bytes:
     """«Анализ КП» — рейтинг предложений от лучшего к худшему, в целом и по
     каждому виду работ, тем же оформлением, что и остальные файлы программы.
 
     ``ranking`` — то, что вернул ``kp_analysis.rank``; ``considered`` и
     ``excluded`` — сколько объектов класса вошло в среднюю и какие выпали.
+    ``averages`` — сама ``kp_analysis.ClassAverages``: откуда поправка на
+    инфляцию и объекты без года подписания.
     """
     _ensure_fonts()
     styles = _styles()
@@ -1734,8 +1741,18 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
         f"Класс «{_esc(building_class)}», общая площадь "
         f"{cost_increase.format_number(area)} м². Средняя ₽/м² — по {considered} "
         "объект(ам) этого класса: смета плюс подписанные и планируемые "
-        "удорожания, при НДС 22%."
+        "удорожания, при НДС 22%"
     )
+    inflation = averages.inflation if averages is not None else None
+    if inflation is not None:
+        rate = f"{inflation:g}".replace(".", ",")
+        intro += (
+            f"; смета приведена к ценам {averages.target_year} г. по инфляции "
+            f"{rate}% в год от года подписания договора, удорожание — без неё "
+            "(оно подписано позже, по ценам своего времени)."
+        )
+    else:
+        intro += ", без поправки на инфляцию."
     if file_name:
         intro = f"Файл: {_esc(file_name)}. " + intro
     story = [
@@ -1745,6 +1762,20 @@ def build_kp_ranking_pdf(ranking, building_class, area, considered, excluded,
     if excluded:
         story.append(Paragraph(
             "Не вошли в среднюю — не известна ставка НДС: " + _esc(", ".join(excluded)) + ".",
+            styles["sub"],
+        ))
+    if averages is not None and averages.no_year:
+        story.append(Paragraph(
+            "Не вошли в среднюю — не известен год подписания: "
+            + _esc(", ".join(averages.no_year)) + ".",
+            styles["sub"],
+        ))
+    if inflation is not None and averages.objects:
+        story.append(Paragraph(
+            "Множители смет: " + "; ".join(
+                f"{_esc(obj.name)} ({obj.year}) ×{obj.factor:.3f}".replace(".", ",")
+                for obj in averages.objects
+            ) + ".",
             styles["sub"],
         ))
 

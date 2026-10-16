@@ -4,22 +4,30 @@ from decimal import Decimal
 
 import openpyxl
 
-from app import create_app, kp_analysis, passport as passport_module, routes, storage
+from app import (
+    comparison, create_app, kp_analysis, passport as passport_module, routes, storage,
+)
 from tests.test_kp_analysis import FACADE_ROWS, _offer_workbook
 
 
-def _post(client, data=None, building_class="Бизнес", area="10", filename="КП.xlsx"):
+def _post(client, data=None, building_class="Бизнес", area="10", filename="КП.xlsx",
+          inflation=None):
     form = {"building_class": building_class, "area": area}
+    if inflation is not None:
+        form["inflation"] = inflation
     if data is not None:
         form["offer_file"] = (io.BytesIO(data), filename)
     return client.post("/kp-analysis", data=form, content_type="multipart/form-data")
 
 
-def _make_project(root, name, building_class, area, vat="22%"):
+def _make_project(root, name, building_class, area, vat="22%", year=None):
+    # Год подписания — текущий по умолчанию: поправка на инфляцию тогда ×1, и
+    # цифры тестов не зависят от того, какой сейчас год.
     slug = storage.create_project(root, name)
     passport_module.save_passport(
         {"project_name": name, "building_class": building_class,
-         "total_area_sqm": area, "vat": vat, "ocr_fields": []},
+         "total_area_sqm": area, "vat": vat, "ocr_fields": [],
+         "year_signed": str(year or comparison.default_target_year())},
         storage.passport_path(root, slug),
     )
     return slug
@@ -201,3 +209,48 @@ def test_kp_analysis_with_a_reference_adds_comment_columns_and_compares_to_it(tm
     assert "Расчётная стоимость MR Group" in text
     assert "К расчётной MR" in text
     assert "эталон" in text
+
+
+def test_kp_analysis_carries_older_estimates_forward_by_inflation(tmp_path, monkeypatch):
+    # Смета позапрошлого года при 10% в год — ×1,21: средняя 121 ₽/м², а не
+    # 100. Без года — не входит и названа.
+    client = create_app(tmp_path).test_client()
+    year = comparison.default_target_year()
+    old = _make_project(tmp_path, "Старый", "Бизнес", 10, year=year - 2)
+    no_year = _make_project(tmp_path, "Без года", "Бизнес", 10)
+    path = storage.passport_path(tmp_path, no_year)
+    data = passport_module.load_passport(path)
+    data["year_signed"] = None
+    passport_module.save_passport(data, path)
+    estimates = {old: {"facade": Decimal("1000")}, no_year: {"facade": Decimal("5000")}}
+    monkeypatch.setattr(routes, "_estimate_totals", lambda root, slug: estimates[slug])
+
+    body = _post(client, _offer_workbook(FACADE_ROWS), inflation="10").get_data(as_text=True)
+
+    assert "Не вошли — не известен год подписания: Без года" in body
+    assert f"к ценам {year} г." in body
+    assert "×1,210" in body
+    assert "121" in body
+
+
+def test_kp_analysis_with_zero_inflation_skips_the_correction(tmp_path, monkeypatch):
+    client = create_app(tmp_path).test_client()
+    _make_project(tmp_path, "Старый", "Бизнес", 10, year=2015)
+    monkeypatch.setattr(
+        routes, "_estimate_totals", lambda root, slug: {"facade": Decimal("1000")},
+    )
+
+    body = _post(client, _offer_workbook(FACADE_ROWS), inflation="0").get_data(as_text=True)
+
+    assert "без поправки на инфляцию" in body
+    # Средняя 100 ₽/м², как без поправки: Альфа +10%, Бета +40%.
+    assert "+10,0 %" in body
+
+
+def test_kp_analysis_rejects_an_unreadable_inflation(tmp_path):
+    client = create_app(tmp_path).test_client()
+
+    resp = _post(client, _offer_workbook(FACADE_ROWS), inflation="много")
+
+    assert resp.status_code == 400
+    assert "инфляцию числом" in resp.get_data(as_text=True)
