@@ -169,6 +169,14 @@ def _cover_version(root, slug):
     return int(path.stat().st_mtime) if path else None
 
 
+def _file_date(path):
+    """Дата, когда файл загружен, «16.09.2026» — или None, если его нет."""
+    try:
+        return date.fromtimestamp(path.stat().st_mtime).strftime("%d.%m.%Y")
+    except OSError:
+        return None
+
+
 @bp.app_context_processor
 def inject_sidebar_projects():
     root = _projects_root()
@@ -1279,7 +1287,7 @@ def _concrete_volume_from_estimate(root, slug):
     не подставлять ноль.
     """
     path = storage.estimate_path(root, slug)
-    if not path.exists():
+    if not excel_report.estimate_file_is_current(root, slug):
         return None
     try:
         return estimate_sections.read_concrete_volume(path)
@@ -1328,7 +1336,7 @@ def _facade_area_from_estimate(root, slug):
     раздела сметы, в заголовке которого встречается «фасад». None, если
     сметы нет, её не удалось разобрать, или в ней нет такого раздела."""
     path = storage.estimate_path(root, slug)
-    if not path.exists():
+    if not excel_report.estimate_file_is_current(root, slug):
         return None
     try:
         return estimate_sections.read_facade_area(path)
@@ -1376,7 +1384,7 @@ def _concrete_cost_breakdown(root, slug):
     (металлоконструкции), в рублях — ``(None, None)``, если смету не
     удалось разобрать, её нет, или в ней нет такой позиции."""
     path = storage.estimate_path(root, slug)
-    if not path.exists():
+    if not excel_report.estimate_file_is_current(root, slug):
         return None, None
     try:
         return estimate_sections.read_concrete_cost_breakdown(path)
@@ -1409,6 +1417,25 @@ def _concrete_cost_per_m3(root, slugs, passports):
     return materials_by_slug, works_by_slug
 
 
+def _cost_increase_file_is_current(root, slug):
+    """Загруженный файл удорожания — тот, что надо читать, а не колонка
+    «ИТОГО ДС» импорта: побеждает то, что загружено позже (см.
+    ``master_import.own_file_is_current``)."""
+    return master_import.own_file_is_current(
+        root, slug, storage.cost_increase_path(root, slug),
+        master_import.cost_increase_lines_from_cost_table,
+    )
+
+
+def _predicted_increase_file_is_current(root, slug):
+    """То же, что ``_cost_increase_file_is_current``, для прогнозируемого
+    удорожания и колонки «Предполагаемое ДС»."""
+    return master_import.own_file_is_current(
+        root, slug, storage.predicted_increase_path(root, slug),
+        master_import.predicted_increase_lines_from_cost_table,
+    )
+
+
 def _cost_increase_report(root, slug, estimate_totals=None):
     """Удорожание по видам работ, или None, если читать нечего.
 
@@ -1427,7 +1454,7 @@ def _cost_increase_report(root, slug, estimate_totals=None):
     удорожания важнее: если он есть, импорт даже не смотрится.
     """
     path = storage.cost_increase_path(root, slug)
-    if path.exists():
+    if _cost_increase_file_is_current(root, slug):
         if estimate_totals is None:
             estimate_totals = _estimate_totals(root, slug)
         try:
@@ -1457,7 +1484,7 @@ def _predicted_increase_report(root, slug):
     колонка «Предполагаемое ДС» импорта сводного файла, если он был.
     """
     path = storage.predicted_increase_path(root, slug)
-    if path.exists():
+    if _predicted_increase_file_is_current(root, slug):
         try:
             return predicted_increase.read_report(path)
         except predicted_increase.PredictedIncreaseError as e:
@@ -1485,8 +1512,7 @@ def project_page(slug):
         abort(404)
     data = passport_module.load_passport(path)
     estimate_file = storage.estimate_path(root, slug)
-    has_estimate = estimate_file.exists()
-    increase_file = storage.cost_increase_path(root, slug)
+    has_estimate = excel_report.estimate_file_is_current(root, slug)
     concrete_volume = _concrete_volume(root, slug, data)
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     facade_area = _facade_area(root, slug, data)
@@ -1512,6 +1538,12 @@ def project_page(slug):
         estimate_from_master_import=(
             None if has_estimate else _estimate_from_master_import(root, slug)
         ),
+        # Своя смета загружена, но импорт сводного файла новее — на
+        # странице сказано, почему её не видно.
+        estimate_superseded_on=(
+            _file_date(estimate_file)
+            if not has_estimate and estimate_file.exists() else None
+        ),
         concrete_volume=concrete_volume,
         concrete_coefficient=concrete_coefficient,
         facade_area=facade_area,
@@ -1525,14 +1557,14 @@ def project_page(slug):
         # the "Паспорт договора" card should still offer to show/edit them
         # rather than showing only the upload prompt.
         has_contract_fields=any(data.get(field) for field in passport_module.CONTRACT_FIELDS),
-        has_cost_increase=increase_file.exists(),
+        has_cost_increase=_cost_increase_file_is_current(root, slug),
         cost_increase_report=_cost_increase_report(root, slug),
         format_percent=cost_increase.format_percent,
         format_delta=cost_increase.format_delta,
         cost_increase_problem=cost_increase.PROBLEM_MESSAGES.get(
             request.args.get("increase")
         ),
-        has_predicted_increase=storage.predicted_increase_path(root, slug).exists(),
+        has_predicted_increase=_predicted_increase_file_is_current(root, slug),
         predicted_increase_report=_predicted_increase_report(root, slug),
         predicted_increase_problem=predicted_increase.PROBLEM_MESSAGES.get(
             request.args.get("predicted_increase")
@@ -1602,7 +1634,7 @@ def project_pdf(slug):
     if not path.exists():
         abort(404)
     data = passport_module.load_passport(path)
-    has_estimate = storage.estimate_path(root, slug).exists()
+    has_estimate = excel_report.estimate_file_is_current(root, slug)
     concrete_volume = _concrete_volume(root, slug, data)
     concrete_coefficient = passport_module.concrete_coefficient(data, concrete_volume)
     facade_area = _facade_area(root, slug, data)

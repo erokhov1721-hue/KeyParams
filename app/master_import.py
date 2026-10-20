@@ -694,6 +694,34 @@ def load_cost_table(root, slug):
         return None
 
 
+def own_file_is_current(root, slug, path, read_from_import):
+    """Whether the project's own uploaded file at ``path`` (смета,
+    удорожание, прогноз) is the one to read — rather than the same kind of
+    figures from the portfolio import.
+
+    Whichever was uploaded last wins. The import used to be only a
+    fallback for a project with no file of its own, so an own file kept
+    winning however stale it was: «Форум»'s смета and удорожание from
+    16.09 went on showing on the сводка по удорожанию after the portfolio
+    file was re-imported on 20.10 with different figures. Now a newer
+    import takes over — but only where it actually has figures of that
+    kind (``read_from_import(cost_table)`` returns something), since an
+    import with no удорожание column says nothing against an удорожание
+    file.
+    """
+    if not path.exists():
+        return False
+    try:
+        imported_at = storage.master_import_path(root, slug).stat().st_mtime_ns
+        uploaded_at = path.stat().st_mtime_ns
+    except OSError:
+        return True
+    if uploaded_at >= imported_at:
+        return True
+    cost_table = load_cost_table(root, slug)
+    return cost_table is None or not read_from_import(cost_table)
+
+
 def _row_amount(row, column_key):
     value = row["values"].get(column_key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):

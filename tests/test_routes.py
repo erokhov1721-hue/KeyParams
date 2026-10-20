@@ -5064,3 +5064,82 @@ def test_kp_contractor_objects_table_has_a_year_column():
     body = Path("app/templates/kp_analysis.html").read_text(encoding="utf-8")
     head = body[body.index('<th class="kp-name">Класс</th>'):]
     assert head.index("Год") < head.index("₽/м²")
+
+
+# --- A later portfolio import replaces older files of the project's own -----
+#
+# «Форум» on the server: its own смета and удорожание were uploaded on
+# 16.09, the portfolio file re-imported on 20.10 — and the сводка по
+# удорожанию kept showing the September figures, since an own file used to
+# win no matter how old it was.
+
+def _make_older_than_the_import(tmp_path, slug, path):
+    import os
+    from app import storage
+
+    imported = storage.master_import_path(tmp_path, slug).stat().st_mtime
+    os.utime(path, (imported - 3600, imported - 3600))
+
+
+_FACADE_ROW = {
+    "number": "8", "label": "Фасад",
+    "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": 1_200_000.0,
+               "Предполагаемое ДС": 1_300_000.0},
+}
+
+
+def test_a_later_import_replaces_an_older_cost_increase_file(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ФайлСтарееИмпорта", [_FACADE_ROW])
+    _upload_increase(client, slug, _increase_bytes([("Фасад", 1_000_000.0, 1_555_555.0)]))
+    _make_older_than_the_import(tmp_path, slug, storage.cost_increase_path(tmp_path, slug))
+
+    for page in (f"/projects/{slug}", "/investors"):
+        body = client.get(page).get_data(as_text=True)
+        assert passport_module.format_number(1_200_000.0) in body, page
+        assert passport_module.format_number(555_555.0) not in body, page
+        assert "прочитать его не удалось" not in body
+
+
+def test_a_later_import_replaces_an_older_estimate(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "СметаСтарееИмпорта", [{
+        "number": "5", "label": "Ж/Б конструкции",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+    }])
+    path = storage.estimate_path(tmp_path, slug)
+    path.write_bytes(_offer_with_concrete_quantity(321.0))
+    _make_older_than_the_import(tmp_path, slug, path)
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(500.0) in body        # объём из импорта
+    assert passport_module.format_number(321.0) not in body
+    assert 'class="estimate-table"' not in body                # старая смета не показана
+    assert "старее" in body                                     # и сказано почему
+
+    summary = client.get("/investors").get_data(as_text=True)
+    assert passport_module.format_number(1_000_000.0) in summary
+
+
+def test_an_older_own_file_still_counts_when_the_import_has_nothing_of_that_kind(tmp_path):
+    from app import passport as passport_module, storage
+
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "ИмпортБезУдорожания", [{
+        "number": "8", "label": "Фасад",
+        "values": {"Объем": 500.0, "ДГП": 1_000_000.0, "ИТОГО ДС": None, "Предполагаемое ДС": None},
+    }])
+    _upload_increase(client, slug, _increase_bytes([("Фасад", 1_000_000.0, 1_555_555.0)]))
+    _make_older_than_the_import(tmp_path, slug, storage.cost_increase_path(tmp_path, slug))
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert passport_module.format_number(1_555_555.0) in body

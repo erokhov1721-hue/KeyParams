@@ -211,6 +211,18 @@ def _totals_and_sources(sections):
     return totals, sources
 
 
+def estimate_file_is_current(root, slug):
+    """Whether the project's own смета is the one to read, not the
+    portfolio import's — see ``master_import.own_file_is_current``. Shared
+    by everything that reads the смета (sections, concrete volume, facade
+    area, the sheet itself), so none of them can show last month's смета
+    beside this month's import."""
+    return master_import.own_file_is_current(
+        root, slug, storage.estimate_path(root, slug),
+        master_import.estimate_sections_from_cost_table,
+    )
+
+
 def estimate_costs(root, slug):
     """``({line: total}, {line: [section names]}, [unmatched section names])``
     from the project's estimate.
@@ -223,11 +235,12 @@ def estimate_costs(root, slug):
     Where the project has no real смета to read (or it parsed to nothing
     usable), the portfolio Excel import's own cost table is tried next, if
     the project has one — see ``master_import.estimate_sections_from_cost_table``.
-    A real смета always wins outright where it has anything at all; the two
+    A real смета wins outright where it has anything at all — unless the
+    import is newer (see ``master_import.own_file_is_current``); the two
     are never merged section by section.
     """
     path = storage.estimate_path(root, slug)
-    if path.exists():
+    if estimate_file_is_current(root, slug):
         try:
             sections, unmatched = estimate_sections.read_sections_with_warnings(path)
         except estimate_sections.EstimateSectionsError:
