@@ -785,3 +785,185 @@ def test_load_cost_table_round_trips_what_apply_import_wrote(tmp_path):
 def test_load_cost_table_is_none_when_never_imported(tmp_path):
     slug = storage.create_project(tmp_path, "Без импорта")
     assert master_import.load_cost_table(tmp_path, slug) is None
+
+
+# --- Matching workbook blocks to existing projects: real mix-ups seen on
+# the server after importing «ГП для AI_НДС 20%» ----------------------------
+
+def _parsed_block(raw_name, total_area):
+    lines = [part.strip() for part in raw_name.split(" / ")]
+    return {
+        "raw_name": raw_name,
+        "name_candidates": lines,
+        "passport": {"total_area_sqm": total_area},
+        "cost_table": {"primary_version": "Протокол ОУ", "columns": [], "rows": []},
+    }
+
+
+def _area_of_project_named(root, name):
+    for slug in storage.list_project_slugs(root):
+        data = passport_module.load_passport(storage.passport_path(root, slug))
+        if data["project_name"] == name:
+            return data.get("total_area_sqm")
+    raise AssertionError(f"no project named {name!r}")
+
+
+def test_apply_import_does_not_swap_two_blocks_sharing_a_name_line(tmp_path):
+    # Both blocks' second line is «Силикатный»: the ЖК block used to land in
+    # whichever existing project came first that contained «Силикатный» —
+    # the БЦ one — and the БЦ block then took the ЖК project.
+    for name in ("БЦ JOIS / Силикатный", "ЖК JOIS 1 / Силикатный"):
+        slug = storage.create_project(tmp_path, name)
+        passport_module.save_passport(
+            passport_module.build_passport(name), storage.passport_path(tmp_path, slug),
+        )
+
+    report = master_import.apply_import(tmp_path, [
+        _parsed_block("ЖК JOIS 1 / Силикатный", 131940.5),
+        _parsed_block("БЦ JOIS / Силикатный", 130556.5),
+    ])
+
+    assert [r["action"] for r in report] == ["updated", "updated"]
+    assert _area_of_project_named(tmp_path, "ЖК JOIS 1 / Силикатный") == 131940.5
+    assert _area_of_project_named(tmp_path, "БЦ JOIS / Силикатный") == 130556.5
+
+
+def test_apply_import_prefers_the_project_with_the_same_name(tmp_path):
+    # «ЖК CITYZEN» (prefix stripped: «CITYZEN») is contained in the other
+    # project's name too — the one actually named like the block must win.
+    for name in ("Cityzen Tr. 1 UB8b / Тушино", "ТУШИНО 1 / ЖК CITYZEN"):
+        slug = storage.create_project(tmp_path, name)
+        passport_module.save_passport(
+            passport_module.build_passport(name), storage.passport_path(tmp_path, slug),
+        )
+
+    master_import.apply_import(tmp_path, [_parsed_block("ТУШИНО 1 / ЖК CITYZEN", 149164.7)])
+
+    assert _area_of_project_named(tmp_path, "ТУШИНО 1 / ЖК CITYZEN") == 149164.7
+    assert _area_of_project_named(tmp_path, "Cityzen Tr. 1 UB8b / Тушино") is None
+
+
+@pytest.mark.parametrize("block_name, existing_name", [
+    # A school is not the residential stage whose short name its own
+    # name merely contains.
+    ("City Bay 3 очередь 2 этап Школа / Волоколамское ш.", "City bay 3"),
+    ("Метрополия 2 очередь 2 Этап Школа", "Метрополия 2 очередь 2 Этап"),
+    # «МЫ.С» is a brand shared by several objects, not a project's name.
+    ("МЫ.С / UB 1 и 2", "ЛИКИНО / 12 Этап ИЖС Коттеджы / МЫ.С"),
+])
+def test_apply_import_never_overwrites_a_merely_similar_project(tmp_path, block_name, existing_name):
+    slug = storage.create_project(tmp_path, existing_name)
+    passport_module.save_passport(
+        passport_module.build_passport(existing_name), storage.passport_path(tmp_path, slug),
+    )
+
+    report = master_import.apply_import(tmp_path, [_parsed_block(block_name, 16465.0)])
+
+    assert report[0]["action"] == "created"
+    assert report[0]["slug"] != slug
+    assert _area_of_project_named(tmp_path, existing_name) is None
+
+
+def test_apply_import_does_not_match_on_a_line_two_blocks_share(tmp_path):
+    # An existing project named just «Силикатный» can't tell which of the
+    # two Силикатный blocks it is — neither may claim it.
+    slug = storage.create_project(tmp_path, "Силикатный")
+    passport_module.save_passport(
+        passport_module.build_passport("Силикатный"), storage.passport_path(tmp_path, slug),
+    )
+
+    report = master_import.apply_import(tmp_path, [
+        _parsed_block("ЖК JOIS 1 / Силикатный", 1.0),
+        _parsed_block("БЦ JOIS / Силикатный", 2.0),
+    ])
+
+    assert [r["action"] for r in report] == ["created", "created"]
+
+
+# --- Reading amounts out of a block whose columns differ from the usual ----
+
+def test_estimate_skips_a_row_with_no_дгп_when_the_block_has_дгп():
+    # «Рублевская»: «Металлические конструкции» priced only in «Протокол ОУ»
+    # (350 млн) — dropped from ДГП, not missing from it. Counting it put the
+    # смета 900 млн above the block's own printed ДГП total.
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["Объем", "Протокол ОУ", "ДГП"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"Протокол ОУ": 1621.55, "ДГП": 1942.62}},
+            {"number": "6", "label": "Металлические конструкции",
+             "values": {"Протокол ОУ": 350.2, "ДГП": None}},
+        ],
+    }
+
+    sections = master_import.estimate_sections_from_cost_table(table)
+
+    assert [s.amount for s in sections] == [Decimal("1942.62")]
+
+
+def test_estimate_falls_back_to_протокол_оу_when_the_block_has_no_дгп_at_all():
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["Объем", "Протокол ОУ", "ДГП"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"Протокол ОУ": 100.0, "ДГП": None}},
+            {"number": "8", "label": "Фасад",
+             "values": {"Протокол ОУ": 50.0, "ДГП": 0}},
+        ],
+    }
+
+    sections = master_import.estimate_sections_from_cost_table(table)
+
+    assert sorted(s.amount for s in sections) == [Decimal("50.0"), Decimal("100.0")]
+
+
+def test_cost_increase_reads_a_lone_дс_column_when_there_is_no_итого_дс():
+    # «Nicole 2»: one amendment column headed just «ДС», no «ИТОГО ДС».
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["Объем", "Протокол ОУ", "ДГП", "ДС", "ДС, руб/м²", "Предполагаемое ДС"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"ДГП": 963.15, "ДС": 162.13, "ДС, руб/м²": 5.6}},
+        ],
+    }
+
+    lines = master_import.cost_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("162.13")]
+
+
+def test_predicted_increase_reads_a_column_with_a_longer_header():
+    # «Рублевская»: «Предполагаемое ДС ДС16 на согласовании».
+    key = "Предполагаемое ДС ДС16 на согласовании"
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["Объем", "ДГП", key, f"{key}, руб/м²"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"ДГП": 1942.62, key: 28.91, f"{key}, руб/м²": 1.0}},
+        ],
+    }
+
+    lines = master_import.predicted_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("28.91")]
+
+
+def test_predicted_increase_prefers_the_plain_column_over_a_team_estimate():
+    # «ВЕРЕЙСКАЯ UB9»: both «Предполагаемое ДС от команды проекта» and
+    # «Предполагаемое ДС»; the plain one is the figure the sheet totals.
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["ДГП", "Предполагаемое ДС от команды проекта", "Предполагаемое ДС"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"Предполагаемое ДС от команды проекта": 1.0, "Предполагаемое ДС": 2.0}},
+        ],
+    }
+
+    lines = master_import.predicted_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("2.0")]

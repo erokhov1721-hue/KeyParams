@@ -238,7 +238,7 @@ def _primary_version_total(cost_table):
     Some blocks have no agreed «Протокол ОУ» amount yet (the amendment is
     still pending) but do have a «ДГП» figure on the same row — «ДГП» is
     used there instead of leaving «Цена работ» blank, the same fallback
-    already applied to «смета» (see ``estimate_row_amount``). A block with
+    already applied to «смета» (see ``estimate_column_key``). A block with
     no agreement at all prints its «Протокол ОУ» cell as a literal 0 rather
     than leaving it empty, so 0 is treated the same as "missing" here —
     a real contract is never actually priced at zero.
@@ -514,30 +514,80 @@ def _match_key(name):
     return _NON_WORD_RE.sub("", text)
 
 
-def match_existing_slug(name_candidates, project_names):
+def _full_key(name_candidates):
+    return _match_key(" ".join(c for c in name_candidates if c))
+
+
+def _line_keys(name_candidates):
+    return {key for key in (_match_key(c) for c in name_candidates if c) if key}
+
+
+def _slug_named(key, project_names):
+    for slug, existing_name in project_names.items():
+        if existing_name and _match_key(existing_name) == key:
+            return slug
+    return None
+
+
+def match_existing_slug(name_candidates, project_names, shared_line_keys=frozenset(),
+                        whole_name_only=False):
     """The slug in ``project_names`` (``{slug: project_name}``) that
     ``name_candidates`` refers to, or None if it names a project that
     doesn't exist yet.
 
-    The workbook's own name for a project splits across two lines in no
-    consistent order (a short code then the familiar name, or the other
-    way around), so every candidate line is tried. A match only counts
-    when one normalised name contains the other in full — a partial,
-    coincidental overlap would silently overwrite an unrelated project,
-    while a missed match only costs a harmless extra project to clean up
-    by hand, so the conservative failure mode is preferred here.
+    Only an equal normalised name counts — first the block's whole name
+    (all its lines together), then any single line of it on its own,
+    since the workbook splits a name across two lines in no consistent
+    order and a project may have been created under just one of them.
+    Containment of one name in the other used to count too, and on the
+    real portfolio sheet it silently wrote one object's figures into
+    another: «City Bay 3 ... Школа» contains «City bay 3», «ЖК JOIS 1 /
+    Силикатный» and «БЦ JOIS / Силикатный» both contain «Силикатный»,
+    «МЫ.С» is in every Ликино stage's name. A missed match only costs a
+    duplicate project to clean up by hand; a wrong one overwrites a real
+    project's data, so the strict rule is the right failure mode.
+
+    ``shared_line_keys`` are lines that more than one block of the same
+    workbook carries (a district, a brand) — they name no single project,
+    so they never match on their own. ``whole_name_only`` skips the
+    single-line step altogether; see ``apply_import`` for why.
     """
-    keys = [key for key in (_match_key(c) for c in name_candidates if c) if key]
-    for slug, existing_name in project_names.items():
-        if not existing_name:
-            continue
-        existing_key = _match_key(existing_name)
-        if not existing_key:
-            continue
-        for key in keys:
-            if key in existing_key or existing_key in key:
-                return slug
+    slug = _slug_named(_full_key(name_candidates), project_names)
+    if slug is not None or whole_name_only:
+        return slug
+    for key in sorted(_line_keys(name_candidates) - set(shared_line_keys)):
+        slug = _slug_named(key, project_names)
+        if slug is not None:
+            return slug
     return None
+
+
+def _plan_matches(parsed_projects, project_names):
+    """For each parsed block, in order, the existing slug it updates or
+    None to create a new one — every whole-name match settled first,
+    across the whole workbook, before any single-line match is tried, so
+    a looser match from an earlier block can never take the project a
+    later block is named exactly like. Each slug is claimed at most once.
+    """
+    line_counts = {}
+    for parsed in parsed_projects:
+        for key in _line_keys(parsed["name_candidates"]):
+            line_counts[key] = line_counts.get(key, 0) + 1
+    shared = {key for key, count in line_counts.items() if count > 1}
+
+    pool = dict(project_names)
+    plan = [None] * len(parsed_projects)
+    for whole_name_only in (True, False):
+        for i, parsed in enumerate(parsed_projects):
+            if plan[i] is not None:
+                continue
+            slug = match_existing_slug(
+                parsed["name_candidates"], pool, shared, whole_name_only=whole_name_only,
+            )
+            if slug is not None:
+                plan[i] = slug
+                del pool[slug]
+    return plan
 
 
 def apply_import(root, parsed_projects) -> list:
@@ -570,28 +620,23 @@ def apply_import(root, parsed_projects) -> list:
     Returns one report entry per project: ``{"name", "slug", "action"}``,
     ``action`` being ``"created"`` or ``"updated"``.
     """
-    # A snapshot of projects that existed *before* this run — not updated as
-    # the loop below creates new ones. Two sheet entries can share one name
-    # candidate by coincidence (two different buildings of the same "ЖК SET"
-    # brand, two phases both on "Волоколамское ш."); matching against a
-    # growing pool would let the second such entry silently fold itself into
-    # the first, losing one of two real projects. A slug is also dropped
-    # from the pool the moment it's matched, so it can't absorb a second,
-    # unrelated entry later in the same run either.
-    unmatched_existing = {
+    # Matched against a snapshot of projects that existed *before* this run,
+    # all at once before anything is written (see ``_plan_matches``) — so
+    # neither a project this run creates nor the order blocks come in can
+    # decide which existing project another block lands in.
+    existing_names = {
         slug: passport_module.load_passport(storage.passport_path(root, slug)).get("project_name")
         for slug in storage.list_project_slugs(root)
     }
+    plan = _plan_matches(parsed_projects, existing_names)
     report = []
-    for parsed in parsed_projects:
-        slug = match_existing_slug(parsed["name_candidates"], unmatched_existing)
+    for parsed, slug in zip(parsed_projects, plan):
         if slug is None:
             name = parsed["raw_name"]
             slug = storage.create_project(root, name)
             passport_data = passport_module.build_passport(name)
             action = "created"
         else:
-            del unmatched_existing[slug]
             passport_data = passport_module.load_passport(storage.passport_path(root, slug))
             action = "updated"
         for field, value in parsed["passport"].items():
@@ -656,29 +701,38 @@ def _row_amount(row, column_key):
     return value
 
 
-def estimate_row_amount(row):
-    """The row's own «смета» figure — «ДГП» where the block has one, else
-    «Протокол ОУ».
+def estimate_column_key(cost_table):
+    """The column the «смета» figures come from — «ДГП» if the block has
+    one anywhere, else «Протокол ОУ».
 
-    A handful of freshly-imported blocks turned out to have no «ДГП» on a
-    single row of theirs — the amendment isn't agreed yet, only the
-    original tender price is — and without this fallback the whole
-    project showed no смета at all on the sводка по удорожанию, despite
-    «Протокол ОУ» sitting right there with a real number. «ДГП» stays
-    preferred wherever it does have a value, for the same reason the
-    module comment above gives: it is the amount actually built into the
-    current contract.
+    Decided once for the whole block, never row by row. A block still
+    waiting on its amendment has no «ДГП» at all, and without the fallback
+    the whole project showed no смета on the сводка по удорожанию despite
+    «Протокол ОУ» sitting right there. But in a block that does have
+    «ДГП», an empty «ДГП» cell means that work was dropped from the
+    contract, not that its figure is missing: «Рублевская» priced
+    «Металлические конструкции» (350 млн) and «Благоустройство» only in
+    «Протокол ОУ», and borrowing those per row put the смета 900 млн above
+    the sheet's own «ДГП» total.
     """
-    amount = _row_amount(row, ESTIMATE_COST_COLUMN_KEY)
-    if amount is not None:
-        return amount
-    return _row_amount(row, PRIMARY_VERSION_LABEL)
+    for row in cost_table["rows"]:
+        if estimate_sections.is_total_marker(row["label"]):
+            continue
+        if _row_amount(row, ESTIMATE_COST_COLUMN_KEY):
+            return ESTIMATE_COST_COLUMN_KEY
+    return PRIMARY_VERSION_LABEL
+
+
+def estimate_row_amount(row, column_key):
+    """The row's own «смета» figure from ``column_key`` — see
+    ``estimate_column_key`` for which column that is."""
+    return _row_amount(row, column_key)
 
 
 def estimate_sections_from_cost_table(cost_table):
     """``[estimate_sections.Section, ...]`` from the table's own «ДГП»
-    column (falling back to «Протокол ОУ» per row — see
-    ``estimate_row_amount``), one per row — classified into a вид работ by
+    column (or «Протокол ОУ» for a block with no «ДГП» at all — see
+    ``estimate_column_key``), one per row — classified into a вид работ by
     ``estimate_sections.classify`` exactly the way a real смета's row names
     are, so a row this doesn't recognise (the bank-guarantee lines, the
     «Итого» row itself) is simply left out, the same as an unclassified
@@ -694,6 +748,7 @@ def estimate_sections_from_cost_table(cost_table):
     (see its own use of ``is_total_marker``), just reached from a different
     row shape.
     """
+    column_key = estimate_column_key(cost_table)
     sections = []
     for row in cost_table["rows"]:
         if estimate_sections.is_total_marker(row["label"]):
@@ -701,7 +756,7 @@ def estimate_sections_from_cost_table(cost_table):
         key = estimate_sections.classify(row["label"])
         if key is None:
             continue
-        amount = estimate_row_amount(row)
+        amount = estimate_row_amount(row, column_key)
         if amount is None:
             continue
         sections.append(estimate_sections.Section(
@@ -738,8 +793,47 @@ def facade_area_from_cost_table(cost_table):
     return _volume_for_category(cost_table, "facade", "фасад")
 
 
-def _amount_lines_from_cost_table(cost_table, column_key, line_cls):
-    """See ``estimate_sections_from_cost_table`` for why «Итого» rows are
+def _version_columns(cost_table):
+    """The block's own version columns, without the «..., руб/м²» ones
+    that only repeat a version per square meter."""
+    return [
+        key for key in cost_table.get("columns", [])
+        if not key.endswith(", руб/м²")
+    ]
+
+
+def _cost_increase_column_keys(cost_table):
+    """«ИТОГО ДС» where the block has it; otherwise every «ДС ...» column
+    it does have, to be added up — «Nicole 2» carries its one amendment
+    in a column headed just «ДС», with no «ИТОГО ДС» after it, and read
+    as «ИТОГО ДС» only it showed no удорожание at all.
+    """
+    columns = _version_columns(cost_table)
+    if COST_INCREASE_COLUMN_KEY in columns:
+        return [COST_INCREASE_COLUMN_KEY]
+    return [key for key in columns if key.upper().startswith("ДС")]
+
+
+def _predicted_increase_column_keys(cost_table):
+    """«Предполагаемое ДС» where the block has a column headed exactly
+    that — «ВЕРЕЙСКАЯ UB9» also has «Предполагаемое ДС от команды
+    проекта», which the sheet's own totals don't use. Otherwise the one
+    column whose header starts that way («Рублевская»: «Предполагаемое ДС
+    ДС16 на согласовании»); none if there are several, since then there's
+    no telling which one is meant.
+    """
+    columns = _version_columns(cost_table)
+    if PREDICTED_INCREASE_COLUMN_KEY in columns:
+        return [PREDICTED_INCREASE_COLUMN_KEY]
+    prefix = PREDICTED_INCREASE_COLUMN_KEY.lower()
+    matching = [key for key in columns if key.lower().startswith(prefix)]
+    return matching if len(matching) == 1 else []
+
+
+def _amount_lines_from_cost_table(cost_table, column_keys, line_cls):
+    """One line per classified row: the sum of its ``column_keys`` cells
+    that hold a number, no line where none does. See
+    ``estimate_sections_from_cost_table`` for why «Итого» rows are
     excluded before ``classify`` runs, not left to it alone."""
     lines = []
     for row in cost_table["rows"]:
@@ -748,26 +842,29 @@ def _amount_lines_from_cost_table(cost_table, column_key, line_cls):
         key = estimate_sections.classify(row["label"])
         if key is None:
             continue
-        amount = _row_amount(row, column_key)
-        if amount is None:
+        amounts = [_row_amount(row, column_key) for column_key in column_keys]
+        amounts = [Decimal(str(a)) for a in amounts if a is not None]
+        if not amounts:
             continue
-        lines.append(line_cls(row["label"], Decimal(str(amount))))
+        lines.append(line_cls(row["label"], sum(amounts)))
     return lines
 
 
 def cost_increase_lines_from_cost_table(cost_table):
-    """``[cost_increase.AmountLine, ...]`` from the «ИТОГО ДС» column —
-    the same shape ``cost_increase.build_report`` already accepts for a
-    real «Итого ДС»-style удорожание file."""
+    """``[cost_increase.AmountLine, ...]`` from the «ИТОГО ДС» column (see
+    ``_cost_increase_column_keys``) — the same shape
+    ``cost_increase.build_report`` already accepts for a real «Итого
+    ДС»-style удорожание file."""
     return _amount_lines_from_cost_table(
-        cost_table, COST_INCREASE_COLUMN_KEY, cost_increase.AmountLine,
+        cost_table, _cost_increase_column_keys(cost_table), cost_increase.AmountLine,
     )
 
 
 def predicted_increase_lines_from_cost_table(cost_table):
     """``[predicted_increase.Line, ...]`` from the «Предполагаемое ДС»
-    column — the same shape ``predicted_increase.build_report`` already
-    accepts for a real прогнозируемое удорожание file."""
+    column (see ``_predicted_increase_column_keys``) — the same shape
+    ``predicted_increase.build_report`` already accepts for a real
+    прогнозируемое удорожание file."""
     return _amount_lines_from_cost_table(
-        cost_table, PREDICTED_INCREASE_COLUMN_KEY, predicted_increase.Line,
+        cost_table, _predicted_increase_column_keys(cost_table), predicted_increase.Line,
     )
