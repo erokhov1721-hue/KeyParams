@@ -935,6 +935,45 @@ def test_cost_increase_reads_a_lone_дс_column_when_there_is_no_итого_дс
     assert [line.amount for line in lines] == [Decimal("162.13")]
 
 
+def test_cost_increase_does_not_count_the_parts_of_предполагаемое_дс_as_signed():
+    # «CITY BAY 6»: «ДС» is the signed total (empty so far); «ДС1» and
+    # «ДС Пересчет ...» after it are what «Предполагаемое ДС» is made of.
+    recount = "ДС Пересчет разницы м/у Протоколом ОУ и ДГП"
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["Объем", "Протокол ОУ", "ДГП", "ДС", "ДС1", recount, "Предполагаемое ДС"],
+        "rows": [
+            {"number": "3", "label": "Устройство котлована",
+             "values": {"ДГП": 293.18, "ДС": None, "ДС1": 22.8, recount: 0.5,
+                        "Предполагаемое ДС": 23.3}},
+            {"number": "8", "label": "Фасад",
+             "values": {"ДГП": 5823.57, "ДС": 10.0, "ДС1": None, recount: 147.92,
+                        "Предполагаемое ДС": 147.92}},
+        ],
+    }
+
+    signed = master_import.cost_increase_lines_from_cost_table(table)
+    predicted = master_import.predicted_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in signed] == [Decimal("10.0")]
+    assert [line.amount for line in predicted] == [Decimal("23.3"), Decimal("147.92")]
+
+
+def test_cost_increase_adds_up_numbered_дс_columns_with_no_total_of_their_own():
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["ДГП", "ДС №1", "ДС №2", "Предполагаемое ДС"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"ДГП": 100.0, "ДС №1": 1.5, "ДС №2": 2.5}},
+        ],
+    }
+
+    lines = master_import.cost_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("4.0")]
+
+
 def test_predicted_increase_reads_a_column_with_a_longer_header():
     # «Рублевская»: «Предполагаемое ДС ДС16 на согласовании».
     key = "Предполагаемое ДС ДС16 на согласовании"
@@ -967,3 +1006,122 @@ def test_predicted_increase_prefers_the_plain_column_over_a_team_estimate():
     lines = master_import.predicted_increase_lines_from_cost_table(table)
 
     assert [line.amount for line in lines] == [Decimal("2.0")]
+
+
+def test_names_stay_on_their_row_when_only_the_rows_below_them_move_up(tmp_path):
+    # The 22%-VAT workbook of 11.11: the empty row under the names is gone,
+    # so the header sits one row higher — but the names are where they were.
+    row = master_import.FIRST_COST_ROW
+    wb = _portfolio_workbook(
+        [(row, "5", "Ж/Б конструкции")],
+        [(
+            "BELL\nЯмского поля",
+            {master_import.ROW_GENERAL_CONTRACTOR: "АНТТЕК", master_import.ROW_TOTAL_AREA: 88657.9},
+            ["Объем", "ДГП"],
+            {row: [1, 200.0]},
+        )],
+    )
+    ws = wb.active
+    ws.cell(row=master_import.PROJECT_NAME_ROW, column=master_import.NUMBER_COLUMN, value="Проекты")
+    ws.cell(row=master_import.ROW_VERSION_HEADER, column=master_import.NUMBER_COLUMN, value="№")
+    ws.delete_rows(master_import.PROJECT_NAME_ROW + 1)
+
+    projects = master_import.parse_workbook(_save_and_reload(wb, tmp_path))
+
+    assert [p["raw_name"] for p in projects] == ["BELL / Ямского поля"]
+    assert projects[0]["passport"]["general_contractor"] == "АНТТЕК"
+    assert projects[0]["passport"]["total_area_sqm"] == 88657.9
+    assert projects[0]["cost_table"]["rows"][0]["values"] == {"Объем": 1, "ДГП": 200.0}
+
+
+def test_estimate_includes_what_is_contracted_past_the_general_contractor():
+    # «Рублевская»: «Прямые договора СМР» sums the direct contractors'
+    # columns before it; the two schools head theirs «Прочие договора».
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["ДГП", "АРМО-ГРУПП", "Р-Инжиниринг", "Прямые договора СМР",
+                    "ДГП+ДС+Предполагаемое ДС+Прочие Договора"],
+        "rows": [
+            {"number": "5", "label": "Ж/Б конструкции",
+             "values": {"ДГП": 100.0, "АРМО-ГРУПП": 30.0, "Р-Инжиниринг": 20.0,
+                        "Прямые договора СМР": 50.0,
+                        "ДГП+ДС+Предполагаемое ДС+Прочие Договора": 150.0}},
+            {"number": "8", "label": "Фасад",
+             "values": {"ДГП": None, "Прямые договора СМР": 7.5}},
+            {"number": "9", "label": "Кровли", "values": {"ДГП": 3.0}},
+        ],
+    }
+
+    sections = master_import.estimate_sections_from_cost_table(table)
+
+    assert [s.amount for s in sections] == [Decimal("150.0"), Decimal("7.5"), Decimal("3.0")]
+
+
+@pytest.mark.parametrize("header", ["Прочие договора", "Прочиее договора"])
+def test_estimate_reads_other_contracts_however_the_sheet_spells_them(header):
+    row = {"number": "13", "label": "Благоустройство", "values": {"ДГП": 10.0, header: 1.5}}
+
+    assert master_import.estimate_row_amount(row, "ДГП") == 11.5
+
+
+def test_cost_increase_reads_the_one_total_headed_longer_than_итого_дс():
+    # «City Bay 3 ... Школа»: the amendments to the contract and to the
+    # other contracts, then their total — which no longer reads «ИТОГО ДС».
+    total = "ИТОГО ДС ДГП+ДС прочие договора"
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["ДГП", "Прочие договора", "ДС прочие договора", "ДС ДГП", total],
+        "rows": [
+            {"number": "9", "label": "Кровли",
+             "values": {"ДГП": 46.1, "ДС прочие договора": None, "ДС ДГП": 50.7, total: 54.9}},
+        ],
+    }
+
+    lines = master_import.cost_increase_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("54.9")]
+
+
+def _shifted_block_workbook():
+    """«SLAVA 4» as the 22%-VAT workbook of 11.11 carries it: «ДГП» and its
+    figures pasted one row too high, so the header row holds the «Итого»
+    amount where the column's name belongs."""
+    row = master_import.FIRST_COST_ROW
+    wb = _portfolio_workbook(
+        [(row, "5", "Ж/Б конструкции")],
+        [
+            ("SLAVA 4 очередь", {master_import.ROW_TOTAL_AREA: 141823.4},
+             ["Объем", "Протокол ОУ", 18090000000.0, "ДГП+ДС"], {row: [1, 0, 232.2, 261.6]}),
+            ("BELL", {master_import.ROW_TOTAL_AREA: 88657.9}, ["Объем", "ДГП"], {row: [1, 200.0]}),
+        ],
+    )
+    wb.active.cell(row=master_import.ROW_VERSION_HEADER - 1, column=master_import.LABEL_COLUMN + 4,
+                   value="ДГП")
+    return wb
+
+
+def test_a_block_with_a_number_for_a_column_name_is_flagged(tmp_path):
+    slava, bell = master_import.parse_workbook(_save_and_reload(_shifted_block_workbook(), tmp_path))
+
+    assert "problem" not in bell
+    assert "вместо названия колонки" in slava["problem"]
+
+
+def test_a_flagged_block_leaves_its_project_untouched(tmp_path):
+    slug = storage.create_project(tmp_path, "SLAVA 4 очередь")
+    passport_data = passport_module.build_passport("SLAVA 4 очередь")
+    passport_data["total_area_sqm"] = 1.0
+    passport_module.save_passport(passport_data, storage.passport_path(tmp_path, slug))
+    storage.master_import_path(tmp_path, slug).write_text('{"kept": true}', encoding="utf-8")
+    parsed = master_import.parse_workbook(_save_and_reload(_shifted_block_workbook(), tmp_path))
+
+    report = master_import.apply_import(tmp_path, parsed)
+
+    assert [(r["name"], r["action"]) for r in report] == [
+        ("SLAVA 4 очередь", "skipped"), ("BELL", "created"),
+    ]
+    assert report[0]["problem"] == parsed[0]["problem"]
+    assert storage.master_import_path(tmp_path, slug).read_text(encoding="utf-8") == '{"kept": true}'
+    kept = passport_module.load_passport(storage.passport_path(tmp_path, slug))
+    assert kept["total_area_sqm"] == 1.0
+    assert len(storage.list_project_slugs(tmp_path)) == 2

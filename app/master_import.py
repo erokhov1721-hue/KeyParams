@@ -37,6 +37,8 @@ SHEET_NAME_PREFIX = "Проекты_НДС"
 SHEET_NAME = f"{SHEET_NAME_PREFIX} 20%"
 
 PROJECT_NAME_ROW = 4
+# What ``NUMBER_COLUMN`` says on the names' own row — see ``_detect_name_row``.
+NAME_ROW_MARKER = "проекты"
 FIRST_PROJECT_COLUMN = 3
 
 # The "№" / work-type-name columns are shared by the whole sheet, one pair
@@ -179,6 +181,30 @@ def _parse_passport(grid, col):
         "aboveground_area_sqm": _cell(grid, ROW_ABOVEGROUND_AREA, col),
         "total_area_sqm": _cell(grid, ROW_TOTAL_AREA, col),
     }
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _misplaced_header_problem(grid, start, end):
+    """Why this block can't be trusted, in words for the import report —
+    or None if its header row holds what a header row should.
+
+    A column is named in text; a number there means the block's columns
+    don't sit on the rows this parser reads them from. «SLAVA 4» in the
+    22%-VAT workbook of 11.11 had «ДГП» and «ИТОГО ДС» pasted one row too
+    high, the «Итого» amount landing where the name belongs: read as is,
+    the block had no «ДГП» at all, and importing it replaced the object's
+    correct figures with an empty смета.
+    """
+    for col in range(start, end):
+        if _is_number(_cell(grid, ROW_VERSION_HEADER, col)):
+            return (
+                "в строке заголовков таблицы стоит число вместо названия колонки — "
+                "похоже, часть колонок блока сдвинута на строку"
+            )
+    return None
 
 
 def _cost_columns(grid, start, end):
@@ -368,20 +394,24 @@ def _contract_fields_from_cost_table(cost_table):
     }
 
 
-def _parse_project_block(grid, start, end, cover=None):
-    raw_name = _cell(grid, PROJECT_NAME_ROW, start)
+def _parse_project_block(grid, start, end, cover=None, name_row=PROJECT_NAME_ROW):
+    raw_name = _cell(grid, name_row, start)
     lines = [line.strip() for line in str(raw_name).splitlines() if line.strip()]
     passport = _parse_passport(grid, start)
     cost_table = _parse_cost_table(grid, start, end)
     passport["contract_price_rub"] = _primary_version_total(cost_table)
     passport.update(_contract_fields_from_cost_table(cost_table))
-    return {
+    block = {
         "raw_name": " / ".join(lines) if lines else str(raw_name).strip(),
         "name_candidates": lines or [str(raw_name).strip()],
         "passport": passport,
         "cost_table": cost_table,
         "cover": cover,
     }
+    problem = _misplaced_header_problem(grid, start, end)
+    if problem is not None:
+        block["problem"] = problem
+    return block
 
 
 def _covers_by_start(ws, starts):
@@ -455,6 +485,25 @@ def _detect_row_offset(grid):
     return 0
 
 
+def _detect_name_row(grid):
+    """The row the project names are on, in ``grid`` as already reindexed
+    by ``_apply_row_offset`` — the one ``NUMBER_COLUMN`` labels «Проекты»,
+    or ``PROJECT_NAME_ROW`` where nothing is labelled so.
+
+    The names don't always move with the rows under them. The first
+    22%-VAT workbook had lost a row above the names, so they shifted up
+    together with everything else; the one of 11.11 lost the empty row
+    right *below* them instead — same header at row 23, names still at
+    row 4 — and, read one row too high, came back as a sheet with no
+    projects in it at all.
+    """
+    col = NUMBER_COLUMN - 1
+    for row_idx, line in enumerate(grid[:ROW_VERSION_HEADER], start=1):
+        if col < len(line) and str(line[col] or "").strip().lower() == NAME_ROW_MARKER:
+            return row_idx
+    return PROJECT_NAME_ROW
+
+
 def _apply_row_offset(grid, offset):
     """``grid``, reindexed so every fixed ``ROW_*`` constant keeps pointing
     at the right sheet row despite ``offset`` (see ``_detect_row_offset``).
@@ -490,15 +539,16 @@ def parse_workbook(file) -> list:
     ))
     grid = _apply_row_offset(grid, _detect_row_offset(grid))
 
+    name_row = _detect_name_row(grid)
     starts = [
         col for col in range(FIRST_PROJECT_COLUMN, max_column + 1)
-        if _cell(grid, PROJECT_NAME_ROW, col) not in (None, "")
+        if _cell(grid, name_row, col) not in (None, "")
     ]
     covers = _covers_by_start(ws, starts)
     blocks = []
     for i, start in enumerate(starts):
         end = starts[i + 1] if i + 1 < len(starts) else max_column + 1
-        blocks.append(_parse_project_block(grid, start, end, covers.get(start)))
+        blocks.append(_parse_project_block(grid, start, end, covers.get(start), name_row))
     return blocks
 
 
@@ -617,8 +667,14 @@ def apply_import(root, parsed_projects) -> list:
     signed contract-terms protocol — a single, authoritative document this
     portfolio-wide summary sheet shouldn't second-guess.
 
-    Returns one report entry per project: ``{"name", "slug", "action"}``,
-    ``action`` being ``"created"`` or ``"updated"``.
+    A block the parser flagged (``"problem"`` — see
+    ``_misplaced_header_problem``) writes nothing at all: its figures
+    aren't where they're read from, and the project it names keeps
+    whatever it had.
+
+    Returns one report entry per block: ``{"name", "slug", "action"}``,
+    ``action`` being ``"created"``, ``"updated"``, or ``"skipped"`` — the
+    last with ``slug`` None and the reason under ``"problem"``.
     """
     # Matched against a snapshot of projects that existed *before* this run,
     # all at once before anything is written (see ``_plan_matches``) — so
@@ -631,6 +687,12 @@ def apply_import(root, parsed_projects) -> list:
     plan = _plan_matches(parsed_projects, existing_names)
     report = []
     for parsed, slug in zip(parsed_projects, plan):
+        if parsed.get("problem"):
+            report.append({
+                "name": parsed["raw_name"], "slug": None, "action": "skipped",
+                "problem": parsed["problem"],
+            })
+            continue
         if slug is None:
             name = parsed["raw_name"]
             slug = storage.create_project(root, name)
@@ -675,6 +737,7 @@ def apply_import(root, parsed_projects) -> list:
 # into the current contract, where «Протокол ОУ» is the original one.
 ESTIMATE_COST_COLUMN_KEY = "ДГП"
 COST_INCREASE_COLUMN_KEY = "ИТОГО ДС"
+SIGNED_TOTAL_COLUMN_KEY = "ДС"
 PREDICTED_INCREASE_COLUMN_KEY = "Предполагаемое ДС"
 
 
@@ -751,10 +814,34 @@ def estimate_column_key(cost_table):
     return PRIMARY_VERSION_LABEL
 
 
+_OTHER_CONTRACTS_RE = re.compile(r"^(прочи\w*|прямые)\s+договора(\s|$)", re.IGNORECASE)
+
+
+def _is_other_contracts_column(key):
+    """«Прочие договора» / «Прямые договора СМР» — what the object's work
+    costs under contracts signed past the general contractor. Not the
+    «ДС прочие договора» next to it (those contracts' own amendments, part
+    of the block's signed total), nor the «..., руб/м²» repeat."""
+    return bool(_OTHER_CONTRACTS_RE.match(key)) and not key.endswith(", руб/м²")
+
+
 def estimate_row_amount(row, column_key):
-    """The row's own «смета» figure from ``column_key`` — see
-    ``estimate_column_key`` for which column that is."""
-    return _row_amount(row, column_key)
+    """The row's own «смета» figure: ``column_key`` (see
+    ``estimate_column_key`` for which column that is) plus whatever the
+    block prices under other contracts.
+
+    «Рублевская» builds 7.5 млрд of its 12.9 through «Прямые договора СМР»
+    — work taken out of the general contract and signed directly — and
+    both schools carry a «Прочие договора» column. The sheet's own total
+    adds them to «ДГП», and counts their amendments in with the signed
+    ones, so they are part of the base the increase is measured from;
+    read without them «Рублевская» came out 7.5 млрд short of the sheet
+    and its increase at 56% of a base that was a quarter of the object.
+    """
+    amounts = [_row_amount(row, column_key)]
+    amounts += [_row_amount(row, key) for key in row["values"] if _is_other_contracts_column(key)]
+    amounts = [a for a in amounts if a is not None]
+    return sum(amounts) if amounts else None
 
 
 def estimate_sections_from_cost_table(cost_table):
@@ -831,14 +918,31 @@ def _version_columns(cost_table):
 
 
 def _cost_increase_column_keys(cost_table):
-    """«ИТОГО ДС» where the block has it; otherwise every «ДС ...» column
-    it does have, to be added up — «Nicole 2» carries its one amendment
-    in a column headed just «ДС», with no «ИТОГО ДС» after it, and read
-    as «ИТОГО ДС» only it showed no удорожание at all.
+    """«ИТОГО ДС» where the block has it (or its one column headed
+    «ИТОГО ДС ...»); failing that the column headed just «ДС»; failing
+    that every «ДС ...» column it does have, added up.
+
+    «Nicole 2» carries its one amendment in a column headed just «ДС»,
+    with no «ИТОГО ДС» after it, and read as «ИТОГО ДС» only it showed no
+    удорожание at all. The 22%-VAT workbook then made the plain «ДС» the
+    signed total of every block, and in «CITY BAY 6» followed it with
+    «ДС1» and «ДС Пересчет ...» — the amendments still being agreed, which
+    the sheet adds up into «Предполагаемое ДС». Summing every «ДС ...»
+    column there counted that 1.9 млрд twice, once as signed and once as
+    predicted, 1.9 млрд over the sheet's own total.
     """
     columns = _version_columns(cost_table)
     if COST_INCREASE_COLUMN_KEY in columns:
         return [COST_INCREASE_COLUMN_KEY]
+    # «City Bay 3 ... Школа»: «ИТОГО ДС ДГП+ДС прочие договора» — the one
+    # total, under a longer header. Several such («Фили Сити 2» has one per
+    # contractor) say nothing about which is the block's own.
+    prefix = COST_INCREASE_COLUMN_KEY.lower()
+    totals = [key for key in columns if key.lower().startswith(prefix)]
+    if len(totals) == 1:
+        return totals
+    if SIGNED_TOTAL_COLUMN_KEY in columns:
+        return [SIGNED_TOTAL_COLUMN_KEY]
     return [key for key in columns if key.upper().startswith("ДС")]
 
 

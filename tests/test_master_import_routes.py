@@ -125,3 +125,28 @@ def test_project_page_does_not_show_the_raw_imported_table(tmp_path):
     assert resp.status_code == 200
     assert "Импортировано из сводного файла" not in body
     assert storage.master_import_path(tmp_path, slug).exists()
+
+
+def test_run_master_import_says_which_block_it_skipped_and_why(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = master_import.SHEET_NAME
+    ws.cell(row=master_import.PROJECT_NAME_ROW, column=5, value="SLAVA 4 очередь")
+    ws.cell(row=master_import.ROW_VERSION_HEADER, column=5, value="Объем")
+    ws.cell(row=master_import.ROW_VERSION_HEADER, column=6, value=18090000000.0)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    resp = client.post(
+        "/master-import",
+        data={"workbook_file": (io.BytesIO(buf.getvalue()), "portfolio.xlsx")},
+        content_type="multipart/form-data",
+    )
+    body = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert "1 пропущено" in body
+    assert "Пропущен" in body and "вместо названия колонки" in body
+    assert storage.list_project_slugs(tmp_path) == []

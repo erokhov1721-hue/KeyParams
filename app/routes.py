@@ -905,11 +905,14 @@ def run_master_import():
     report = master_import.apply_import(root, parsed)
     created = [r["name"] for r in report if r["action"] == "created"]
     updated = [r["name"] for r in report if r["action"] == "updated"]
+    skipped = [r for r in report if r["action"] == "skipped"]
     _log_upload(
         root, f"Импорт из сводного файла «{xlsx_file.filename}»",
-        [f"Создано: {len(created)}, обновлено: {len(updated)}"]
+        [f"Создано: {len(created)}, обновлено: {len(updated)}"
+         + (f", пропущено: {len(skipped)}" if skipped else "")]
         + [f"+ создан: {name}" for name in created]
-        + [f"~ обновлён: {name}" for name in updated],
+        + [f"~ обновлён: {name}" for name in updated]
+        + [f"! пропущен: {r['name']} — {r['problem']}" for r in skipped],
     )
     current_app.logger.info(
         "Импорт из сводного файла: %d проектов (создано %d, обновлено %d)",
