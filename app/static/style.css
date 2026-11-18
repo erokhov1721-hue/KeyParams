@@ -2498,13 +2498,13 @@ select option {
    сжимается меньше min-width, а прокручивается вбок. */
 .investor-summary-table {
   table-layout: fixed;
-  min-width: 1050px;
+  min-width: 1280px;
 }
 
-.investor-summary-table .col-w-label { width: 22%; }
-.investor-summary-table .col-w-money { width: 10.5%; }
-.investor-summary-table .col-w-sqm { width: 6.5%; }
-.investor-summary-table .col-w-pct { width: 10%; }
+.investor-summary-table .col-w-label { width: 18%; }
+.investor-summary-table .col-w-money { width: 9.4%; }
+.investor-summary-table .col-w-sqm { width: 5.6%; }
+.investor-summary-table .col-w-pct { width: 7%; }
 
 /* Заголовки в шапке переносятся одинаково в обеих таблицах — иначе в
    таблице разделов длинное «Прогнозируемое удорожание» или «% удорожания»
@@ -2530,11 +2530,15 @@ select option {
 }
 
 .investor-summary-table .group-smeta { background: var(--blue-dim); }
+/* Прочие прямые договора — та же база, что и смета (удорожание меряется от
+   обеих вместе), поэтому и подложка та же, синяя. */
+.investor-summary-table .group-other { background: var(--blue-dim); }
 .investor-summary-table .group-signed { background: var(--amber-dim); }
 .investor-summary-table .group-forecast { background: var(--purple-dim); }
 .investor-summary-table .group-total { background: var(--accent-dim); }
 
 .investor-summary-table .group-th.group-smeta { color: var(--blue); }
+.investor-summary-table .group-th.group-other { color: var(--blue); }
 .investor-summary-table .group-th.group-signed { color: var(--amber); }
 .investor-summary-table .group-th.group-forecast { color: var(--purple); }
 .investor-summary-table .group-th.group-total { color: var(--accent); }

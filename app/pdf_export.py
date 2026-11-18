@@ -1251,12 +1251,14 @@ def build_class_average_pdf(result, project_name) -> bytes:
 # --- сводка по удорожанию ----------------------------------------------------
 
 #  Группа  → (заголовок, стиль заголовка, цвет подложки под обеими строками
-#  шапки этой группы). Тот же порядок и те же четыре цвета, что на экране
+#  шапки этой группы). Тот же порядок и те же цвета, что на экране (прочие
+#  прямые договора — синие, как смета: это та же база удорожания)
 #  (investor_summary.html: .group-smeta/.group-signed/.group-forecast/
 #  .group-total) — так строка PDF-файла и колонка на экране узнаются с
 #  одного взгляда, даже когда файл открыт рядом с браузером.
 _INVESTOR_SUMMARY_GROUPS = (
     ("Смета", "head_group_blue", BLUE),
+    ("Прочие прямые договора", "head_group_blue", BLUE),
     ("Подписанное удорожание", "head_group_amber", AMBER),
     ("Прогнозируемое удорожание", "head_group_purple", PURPLE),
     ("Итоговая стоимость", "head_group_accent", ACCENT),
@@ -1270,15 +1272,17 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
     на экране; отличается только тем, что тут её рисует reportlab, а не
     CSS ``colspan``/``rowspan``.
     """
-    label_w = min(170.0, page_width * 0.22)
+    label_w = min(135.0, page_width * 0.172)
     rest_total = page_width - label_w
     # «Всего» шире «₽/м²»: 27 710 828 200 ₽ против 118 012 — вдвое больше
     # знаков, и половина ширины колонки под шестизначное число выглядела бы
     # пустой тратой места на 12-значное. Общая площадь объекта — первой
     # колонкой после названия, как на экране, шириной с «₽/м²»: число того
-    # же порядка.
-    unit = rest_total / (1.0 + len(_INVESTOR_SUMMARY_GROUPS) * (1.5 + 1.0))
-    money_w, sqm_w = unit * 1.5, unit * 1.0
+    # же порядка. Пропорция подобрана под пять групп на альбомном листе:
+    # в «Всего» целиком, без переноса, встаёт 101 412 499 714 ₽ жирным, в
+    # узкой — «площадь, м²» из шапки.
+    unit = rest_total / (1.0 + len(_INVESTOR_SUMMARY_GROUPS) * (1.63 + 1.0))
+    money_w, sqm_w = unit * 1.63, unit * 1.0
     col_widths = [label_w, sqm_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS)
 
     group_row = [
@@ -1300,6 +1304,8 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
             Paragraph(row["area_display"], styles["cell_right"]),
             Paragraph(row["estimate_display"], styles["cell_right"]),
             Paragraph(row["estimate_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(row["other_display"], styles["cell_right"]),
+            Paragraph(row["other_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["signed_display"], styles["cell_right"]),
             Paragraph(row["signed_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["predicted_display"], styles["cell_right"]),
@@ -1324,6 +1330,11 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
             [
                 Paragraph(total["estimate_display"], styles["cell_right"]),
                 Paragraph(f'{total["estimate_count"]} из {total["count"]}', styles["note"]),
+            ],
+            "",
+            [
+                Paragraph(total["other_display"], styles["cell_right"]),
+                Paragraph(f'{total["other_count"]} из {total["count"]}', styles["note"]),
             ],
             "",
             [
@@ -1356,8 +1367,8 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
         ("VALIGN", (0, 2), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
     for index, (_title, _head_style, color) in enumerate(_INVESTOR_SUMMARY_GROUPS):
         col = 2 + index * 2
@@ -1382,7 +1393,8 @@ def _investor_detail_pdf_block(row, styles, page_width):
     if evt:
         colour = RED if evt["is_overrun"] else (ACCENT if evt["is_savings"] else MUTED)
         story.append(Paragraph(
-            f'Смета → итоговая стоимость: <font color="{_hex(colour)}">'
+            f'{"Смета и прочие прямые договора" if row["other"] is not None else "Смета"}'
+            f' → итоговая стоимость: <font color="{_hex(colour)}">'
             f'{evt["percent_display"]} ({evt["overrun_display"]})</font>',
             styles["sub"],
         ))
@@ -1418,8 +1430,8 @@ def _investor_detail_pdf_block(row, styles, page_width):
     label_w = min(150.0, page_width * 0.2)
     pct_w = 42.0
     rest_total = page_width - label_w - pct_w
-    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.3 + 0.85))
-    money_w, sqm_w = unit * 1.3, unit * 0.85
+    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.4 + 0.75))
+    money_w, sqm_w = unit * 1.4, unit * 0.75
     col_widths = [label_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS) + [pct_w]
 
     group_row = [Paragraph("Раздел", styles["head"])]
@@ -1439,6 +1451,8 @@ def _investor_detail_pdf_block(row, styles, page_width):
             Paragraph(_esc(section["label"]), styles["cell"]),
             Paragraph(section["estimate_display"], styles["cell_right"]),
             Paragraph(section["estimate_per_sqm_display"], styles["cell_muted_right"]),
+            Paragraph(section["other_display"], styles["cell_right"]),
+            Paragraph(section["other_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(section["signed_display"], styles["cell_right"]),
             Paragraph(section["signed_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(section["predicted_display"], styles["cell_right"]),
@@ -1451,6 +1465,8 @@ def _investor_detail_pdf_block(row, styles, page_width):
         Paragraph("Объект целиком", styles["cell_label"]),
         Paragraph(row["estimate_display"], styles["cell_right"]),
         Paragraph(row["estimate_per_sqm_display"], styles["cell_muted_right"]),
+        Paragraph(row["other_display"], styles["cell_right"]),
+        Paragraph(row["other_per_sqm_display"], styles["cell_muted_right"]),
         Paragraph(row["signed_display"], styles["cell_right"]),
         Paragraph(row["signed_per_sqm_display"], styles["cell_muted_right"]),
         Paragraph(row["predicted_display"], styles["cell_right"]),
@@ -1474,8 +1490,8 @@ def _investor_detail_pdf_block(row, styles, page_width):
         ("BACKGROUND", (0, -1), (-1, -1), HEAD_BG),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
     for index, (_title, _head_style, color) in enumerate(_INVESTOR_SUMMARY_GROUPS):
         col = 1 + index * 2
@@ -1509,8 +1525,10 @@ def build_investor_summary_pdf(table, detail_row=None) -> bytes:
     story = [
         Paragraph("Сводка по удорожанию", styles["title"]),
         Paragraph(
-            "По каждому объекту: смета, подписанное и прогнозируемое "
-            "удорожание из файла объекта. Итоговая стоимость — их сумма.",
+            "По каждому объекту: смета, прочие прямые договора (работы помимо "
+            "договора генподряда), подписанное и прогнозируемое удорожание из "
+            "файла объекта. Итоговая стоимость — их сумма; процент удорожания "
+            "считается от сметы вместе с прочими прямыми договорами.",
             styles["sub"],
         ),
         _investor_summary_table_block(

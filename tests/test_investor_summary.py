@@ -675,3 +675,133 @@ def test_the_total_row_sums_the_known_areas():
     )
     assert table["total"]["area_display"] == "3 500"
     assert table["total"]["area_count"] == 2
+
+
+def _other_report(rows):
+    """Прочие прямые договора по видам работ — отчёт той же формы, что и
+    прогнозируемое удорожание (вид работ и сумма), и собирается так же."""
+    return _predicted_report(rows)
+
+
+def test_other_contracts_get_their_own_column_and_stay_out_of_the_estimate():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"facade": 400.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        other_contracts_reports_by_slug={"a": _other_report([("Фасад", 100), ("Кровли", 50)])},
+        area_by_slug={"a": 10.0},
+    )
+    row = table["rows"][0]
+    assert row["estimate"] == 400.0
+    assert row["other"] == 150.0
+    assert row["other_display"] == "150 ₽"
+    assert row["other_per_sqm"] == 15.0
+
+
+def test_an_object_without_other_contracts_gets_a_dash_there():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"facade": 400.0}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+    )
+    row = table["rows"][0]
+    assert row["other"] is None
+    assert row["other_display"] == "—"
+
+
+def test_total_cost_adds_other_contracts_to_the_estimate_and_both_increases():
+    estimate = {"facade": Decimal("400")}
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": estimate},
+        cost_increase_reports_by_slug={"a": _report([("Фасад", 400, 430)], estimate)},
+        predicted_increase_by_slug={"a": Decimal("20")},
+        other_contracts_reports_by_slug={"a": _other_report([("Фасад", 100)])},
+    )
+    assert table["rows"][0]["total_cost"] == 400.0 + 100.0 + 30.0 + 20.0
+
+
+def test_percent_is_measured_from_the_estimate_together_with_other_contracts():
+    # «Рублевская»: 3,5 млрд по договору генподряда и 7,5 млрд прямых
+    # договоров. Удорожание в процентах — от всей этой базы, а не от трети.
+    estimate = {"facade": Decimal("400")}
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": estimate},
+        cost_increase_reports_by_slug={"a": _report([("Фасад", 400, 450)], estimate)},
+        predicted_increase_by_slug={},
+        other_contracts_reports_by_slug={"a": _other_report([("Кровли", 600)])},
+    )
+    evt = table["rows"][0]["estimate_vs_total"]
+    assert round(evt["percent"], 6) == 5.0
+    assert evt["overrun_display"] == "+50 ₽"
+
+
+def test_other_contracts_without_an_estimate_do_not_make_a_total_cost():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={},
+        other_contracts_reports_by_slug={"a": _other_report([("Кровли", 600)])},
+    )
+    assert table["rows"][0]["total_cost"] is None
+
+
+def test_total_row_sums_other_contracts_and_counts_the_objects_that_have_them():
+    estimate = {"facade": Decimal("400")}
+    table = investor_summary.build_table(
+        ["a", "b"], {"a": "Объект А", "b": "Объект Б"},
+        estimate_totals_by_slug={"a": estimate, "b": {"roof": Decimal("600")}},
+        cost_increase_reports_by_slug={"a": _report([("Фасад", 400, 450)], estimate), "b": None},
+        predicted_increase_by_slug={},
+        other_contracts_reports_by_slug={"a": _other_report([("Кровли", 1000)])},
+    )
+    total = table["total"]
+    assert total["other_display"] == "1 000 ₽"
+    assert total["other_count"] == 1
+    assert total["total_cost_display"] == "2 050 ₽"
+    # 50 удорожания на базу 400 + 1000 + 600.
+    assert round(total["estimate_vs_total"]["percent"], 6) == 2.5
+
+
+def test_increasing_section_carries_its_own_share_of_other_contracts():
+    estimate = {"facade": Decimal("400"), "roof": Decimal("100")}
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": estimate},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={"a": Decimal("60")},
+        predicted_increase_reports_by_slug={"a": _predicted_report([("Фасад", 50), ("Кровли", 10)])},
+        other_contracts_reports_by_slug={"a": _other_report([("Фасад", 100)])},
+        area_by_slug={"a": 10.0},
+    )
+    facade, roof = table["rows"][0]["increasing_sections"]
+    assert facade["other"] == 100.0
+    assert facade["other_display"] == "100 ₽"
+    assert facade["other_per_sqm_display"] == "10"
+    assert facade["current"] == 550.0
+    assert round(facade["percent"], 6) == 10.0
+    assert roof["other"] is None
+    assert roof["other_display"] == "—"
+    assert roof["current"] == 110.0
+
+
+def test_waterfall_starts_from_the_estimate_with_other_contracts_where_there_are_some():
+    table = investor_summary.build_table(
+        ["a"], {"a": "Объект А"},
+        estimate_totals_by_slug={"a": {"facade": Decimal("400"), "roof": Decimal("100")}},
+        cost_increase_reports_by_slug={"a": None},
+        predicted_increase_by_slug={"a": Decimal("60")},
+        predicted_increase_reports_by_slug={"a": _predicted_report([("Фасад", 50), ("Кровли", 10)])},
+        other_contracts_reports_by_slug={"a": _other_report([("Фасад", 100)])},
+    )
+    facade, roof = table["rows"][0]["waterfall_groups"]
+    assert facade["bases"] == [
+        {"label": "Смета", "value": 400.0},
+        {"label": "Смета и прочие договора", "value": 500.0},
+    ]
+    assert facade["dgpAmount"] == 500.0
+    assert roof["bases"] == [{"label": "Смета", "value": 100.0}]

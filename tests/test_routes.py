@@ -2230,7 +2230,8 @@ def test_concrete_volume_falls_back_to_the_estimate_once_the_manual_value_is_cle
     assert passport_module.format_number(500.0) in body   # снова из сметы
 
 
-def _apply_master_import_with_rows(tmp_path, project_name, rows, total_area_sqm=1000.0):
+def _apply_master_import_with_rows(tmp_path, project_name, rows, total_area_sqm=1000.0,
+                                   columns=("Объем", "ДГП", "ИТОГО ДС", "Предполагаемое ДС")):
     from app import master_import
 
     parsed = [{
@@ -2244,7 +2245,7 @@ def _apply_master_import_with_rows(tmp_path, project_name, rows, total_area_sqm=
         },
         "cost_table": {
             "primary_version": "Протокол ОУ",
-            "columns": ["Объем", "ДГП", "ИТОГО ДС", "Предполагаемое ДС"],
+            "columns": list(columns),
             "rows": rows,
         },
     }]
@@ -3414,6 +3415,80 @@ def test_investor_summary_shows_estimate_signed_and_predicted_from_master_import
     assert passport_module.format_number(10_000_000.0) in body   # смета
     assert passport_module.format_number(11_000_000.0) in body   # подписанное
     assert passport_module.format_number(12_000_000.0) in body   # прогнозируемое
+
+
+_OTHER_CONTRACTS_ROW = {
+    "number": "8", "label": "Фасад",
+    "values": {
+        "Объем": 500.0, "ДГП": 10_000_000.0, "Прочие прямые договора": 3_000_000.0,
+        "ИТОГО ДС": 1_000_000.0, "Предполагаемое ДС": 2_000_000.0,
+    },
+}
+
+
+_OTHER_CONTRACTS_COLUMNS = (
+    "Объем", "ДГП", "Прочие прямые договора", "ИТОГО ДС", "Предполагаемое ДС",
+)
+
+
+def test_investor_summary_shows_other_contracts_and_counts_them_in_the_total(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    _apply_master_import_with_rows(
+        tmp_path, "СПрочими", [_OTHER_CONTRACTS_ROW], columns=_OTHER_CONTRACTS_COLUMNS,
+    )
+
+    body = client.get("/investors").get_data(as_text=True)
+
+    from app import passport as passport_module
+    assert "Прочие прямые договора" in body
+    assert f"{passport_module.format_number(10_000_000)} ₽" in body   # смета — без прочих
+    assert f"{passport_module.format_number(3_000_000)} ₽" in body    # прочие прямые договора
+    assert f"{passport_module.format_number(16_000_000)} ₽" in body   # итог: 10 + 3 + 1 + 2
+    # 3 млн удорожания на базу 13 млн, а не на 10.
+    assert "+23,1" in body
+
+
+def test_investor_summary_pdf_builds_with_other_contracts(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(
+        tmp_path, "СПрочими", [_OTHER_CONTRACTS_ROW], columns=_OTHER_CONTRACTS_COLUMNS,
+    )
+
+    whole = client.get("/investors/pdf")
+    one = client.get(f"/investors/pdf?slug={slug}")
+
+    assert whole.status_code == 200 and whole.data.startswith(b"%PDF")
+    assert one.status_code == 200 and one.data.startswith(b"%PDF")
+
+
+def test_project_page_shows_other_contracts_in_their_own_accordion(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(
+        tmp_path, "СПрочими", [_OTHER_CONTRACTS_ROW], columns=_OTHER_CONTRACTS_COLUMNS,
+    )
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    from app import passport as passport_module
+    assert "<span>Прочие прямые договора</span>" in body
+    panel = body[body.index("<span>Прочие прямые договора</span>"):body.index("<span>Удорожание объекта</span>")]
+    assert passport_module.format_number(3_000_000.0) in panel
+    assert "Фасад" in panel
+
+
+def test_project_page_has_no_other_contracts_accordion_without_such_a_column(tmp_path):
+    app = create_app(tmp_path)
+    client = app.test_client()
+    slug = _apply_master_import_with_rows(tmp_path, "БезПрочих", [{
+        "number": "8", "label": "Фасад", "values": {"Объем": 500.0, "ДГП": 10_000_000.0},
+    }])
+
+    body = client.get(f"/projects/{slug}").get_data(as_text=True)
+
+    assert "<span>Прочие прямые договора</span>" not in body
 
 
 def test_kp_analysis_page_offers_the_upload_form(tmp_path):

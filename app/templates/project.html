@@ -373,6 +373,56 @@
       </div>
     </div>
 
+    {# Прочие прямые договора — то, что строится мимо договора генподряда.
+       Гармошка есть только у объекта, у которого такая колонка есть в
+       сводном файле: своего файла у этих сумм нет, загружать сюда нечего. #}
+    {% if other_contracts_report %}
+    {% set report = other_contracts_report %}
+    <div class="accordion" data-accordion>
+      <button type="button" class="accordion-header" aria-expanded="false">
+        <span>Прочие прямые договора</span>
+        <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="accordion-panel" hidden>
+        <p class="increase-basis">
+          Работы по договорам, заключённым помимо договора генподряда — из
+          импорта сводного файла (колонка «{{ other_contracts_title }}»). В
+          смету объекта эти суммы не входят; в итоговую стоимость в сводке
+          по удорожанию — входят. Дополнительные соглашения к этим договорам
+          учтены в удорожании объекта ниже.
+        </p>
+        <div class="sections-table-wrap">
+          <table class="sections-table increase-table">
+            <thead>
+              <tr>
+                <th class="sections-label-col">Вид работ</th>
+                <th>Сумма, руб.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in report.rows %}
+              <tr>
+                <td class="sections-label-col">
+                  <span class="sections-label" title="{{ row.sources | join('; ') }}">{{ row.label }}</span>
+                </td>
+                <td>{{ format_number(row.amount) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td class="sections-label-col">{{ report.total.label }}</td>
+                <td>{{ format_number(report.total.amount) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     {# Как и предупреждение по протоколу — снаружи гармошки: внутри закрытой
        панели его бы никто не прочитал, а сказать нужно именно то, что замена
        не состоялась. #}

@@ -1034,9 +1034,9 @@ def test_names_stay_on_their_row_when_only_the_rows_below_them_move_up(tmp_path)
     assert projects[0]["cost_table"]["rows"][0]["values"] == {"Объем": 1, "ДГП": 200.0}
 
 
-def test_estimate_includes_what_is_contracted_past_the_general_contractor():
-    # «Рублевская»: «Прямые договора СМР» sums the direct contractors'
-    # columns before it; the two schools head theirs «Прочие договора».
+def test_estimate_leaves_out_what_is_contracted_past_the_general_contractor():
+    # «Рублевская»: «Прямые договора СМР» sums the direct contractors
+    # before it. Shown on its own, next to the смета — not in it.
     table = {
         "primary_version": "Протокол ОУ",
         "columns": ["ДГП", "АРМО-ГРУПП", "Р-Инжиниринг", "Прямые договора СМР",
@@ -1053,15 +1053,45 @@ def test_estimate_includes_what_is_contracted_past_the_general_contractor():
     }
 
     sections = master_import.estimate_sections_from_cost_table(table)
+    other = master_import.other_contracts_lines_from_cost_table(table)
 
-    assert [s.amount for s in sections] == [Decimal("150.0"), Decimal("7.5"), Decimal("3.0")]
+    assert [s.amount for s in sections] == [Decimal("100.0"), Decimal("3.0")]
+    assert [(line.name, line.amount) for line in other] == [
+        ("Ж/Б конструкции", Decimal("50.0")), ("Фасад", Decimal("7.5")),
+    ]
+    assert master_import.other_contracts_title(table) == "Прямые договора СМР"
 
 
-@pytest.mark.parametrize("header", ["Прочие договора", "Прочиее договора"])
-def test_estimate_reads_other_contracts_however_the_sheet_spells_them(header):
-    row = {"number": "13", "label": "Благоустройство", "values": {"ДГП": 10.0, header: 1.5}}
+@pytest.mark.parametrize("header", [
+    "Прочие прямые договора", "Прочие договора", "Прочиее договора", "Прямые договора СМР",
+])
+def test_other_contracts_are_read_however_the_sheet_heads_them(header):
+    table = {
+        "primary_version": "Протокол ОУ",
+        "columns": ["ДГП", header, f"{header}, руб/м²", "ДС прочие договора",
+                    "Предполагаемое ДС по Прочим Договорам", "ИТОГО ДС ДГП+ДС прочие договора",
+                    "ДГП+ДС+Предполагаемое ДС+Прочие Договора"],
+        "rows": [{
+            "number": "13", "label": "Благоустройство",
+            "values": {"ДГП": 10.0, header: 1.5, f"{header}, руб/м²": 0.1,
+                       "ДС прочие договора": 4.0, "Предполагаемое ДС по Прочим Договорам": 5.0,
+                       "ИТОГО ДС ДГП+ДС прочие договора": 6.0,
+                       "ДГП+ДС+Предполагаемое ДС+Прочие Договора": 26.5},
+        }],
+    }
 
-    assert master_import.estimate_row_amount(row, "ДГП") == 11.5
+    lines = master_import.other_contracts_lines_from_cost_table(table)
+
+    assert [line.amount for line in lines] == [Decimal("1.5")]
+    assert master_import.estimate_row_amount(table["rows"][0], "ДГП") == 10.0
+    assert master_import.other_contracts_title(table) == header
+
+
+def test_a_block_without_other_contracts_has_no_such_lines_and_no_title():
+    table = _cost_table(_SAMPLE_ROWS)
+
+    assert master_import.other_contracts_lines_from_cost_table(table) == []
+    assert master_import.other_contracts_title(table) is None
 
 
 def test_cost_increase_reads_the_one_total_headed_longer_than_итого_дс():

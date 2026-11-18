@@ -1,8 +1,10 @@
-"""Сводка для инвесторов: смета, подписанное и прогнозируемое удорожание
-по каждому объекту, и итоговая прогнозная стоимость — их сумма.
+"""Сводка для инвесторов: смета, прочие прямые договора, подписанное и
+прогнозируемое удорожание по каждому объекту, и итоговая прогнозная
+стоимость — их сумма.
 
-Ничего здесь не читает файлы и не знает про Flask — три словаря (смета,
-отчёт по удорожанию, отчёт по прогнозируемому удорожанию) уже собраны в
+Ничего здесь не читает файлы и не знает про Flask — словари (смета, прочие
+прямые договора, отчёт по удорожанию, отчёт по прогнозируемому удорожанию)
+уже собраны в
 другом месте (``app.routes``, теми же функциями, что читают их для страницы
 объекта и страницы сравнения), этот модуль только сводит их в строки
 таблицы.
@@ -14,6 +16,9 @@ from . import cost_increase, estimate_sections
 from .passport import format_number
 
 TOTAL_LABEL = "Итого"
+# Подпись опорной строки графика у раздела с прочими прямыми договорами —
+# короткий ярлык для неё заведён в app/static/waterfall.js (SHORT_LABELS).
+BASE_WITH_OTHER_LABEL = "Смета и прочие договора"
 
 
 def _money(value):
@@ -60,6 +65,28 @@ def _estimate_total(estimate_totals):
     return float(sum(estimate_totals.values()))
 
 
+def _other_contracts(report):
+    """Прочие прямые договора объекта — то, что строится мимо договора
+    генподряда («Рублевская»: 7,5 млрд из 12,9). ``None``, если таких
+    договоров у объекта нет: прочерк в колонке, а не ноль.
+    """
+    if report is None or not report.rows:
+        return None
+    return float(report.total.amount)
+
+
+def _base(estimate, other):
+    """От чего меряется удорожание объекта — смета вместе с прочими
+    прямыми договорами. Сводная таблица считает так же: её итог — «ДГП»
+    плюс прочие договора плюс ДС, и ДС прочих договоров стоят в одном ряду
+    с ДС к договору генподряда. Без сметы базы нет, как нет и итоговой
+    стоимости (см. ``_total_cost``).
+    """
+    if estimate is None:
+        return None
+    return estimate + (other or 0.0)
+
+
 def _signed_overrun(report):
     """Подписанное удорожание — «стало минус смета» из файла удорожания
     объекта. ``None``, если файла нет, или его дельта посчитана не против
@@ -84,7 +111,7 @@ def _percent(baseline, current):
     return (float(current) / float(baseline) - 1.0) * 100.0
 
 
-def _increasing_sections(report, predicted_report, estimate_totals, area):
+def _increasing_sections(report, predicted_report, estimate_totals, area, other_report=None):
     """Разделы сметы, которые дорожают — смета, подписанное и прогнозируемое
     удорожание порознь (та же разбивка, что и у объекта целиком в таблице
     выше), в том порядке, в каком разделы идут в самой смете, сверху вниз:
@@ -108,6 +135,10 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
     раздела берётся отдельно как база: раздел, которого в смете нет,
     стартует с нуля, и любая прогнозируемая сумма по нему — целиком
     новая работа.
+
+    Прочие прямые договора раздела (``other_report``) — часть той же базы:
+    итог раздела и процент считаются от сметы вместе с ними, как и у
+    объекта целиком.
     """
     has_signed = report is not None and report.from_estimate
     has_predicted = predicted_report is not None
@@ -127,6 +158,11 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
             predicted_amounts[row.key] = predicted_amounts.get(row.key, Decimal("0")) + row.amount
             labels[row.key] = row.label
 
+    other_amounts = {}
+    if other_report is not None:
+        for row in other_report.rows:
+            other_amounts[row.key] = other_amounts.get(row.key, Decimal("0")) + row.amount
+
     keys = set(signed_amounts) | set(predicted_amounts)
     totals = {
         key: signed_amounts.get(key, Decimal("0")) + predicted_amounts.get(key, Decimal("0"))
@@ -137,8 +173,9 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
         if amount <= 0:
             continue
         baseline = estimate_totals.get(key, Decimal("0"))
-        current = baseline + amount
-        candidates.append((key, baseline, current, _percent(baseline, current)))
+        base = baseline + other_amounts.get(key, Decimal("0"))
+        current = base + amount
+        candidates.append((key, baseline, current, _percent(base, current)))
     estimate_order = {key: index for index, key in enumerate(estimate_totals)}
     standard_order = {key: index for index, key in enumerate(estimate_sections.CATEGORY_KEYS)}
     candidates.sort(key=lambda item: (
@@ -151,6 +188,8 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
     for key, baseline, current, percent in candidates:
         signed = float(signed_amounts.get(key, Decimal("0"))) if has_signed else None
         predicted = float(predicted_amounts.get(key, Decimal("0"))) if has_predicted else None
+        other = float(other_amounts[key]) if key in other_amounts else None
+        other_per_sqm = _per_sqm(other, area)
         estimate_per_sqm = _per_sqm(float(baseline), area)
         signed_per_sqm = _per_sqm(signed, area)
         predicted_per_sqm = _per_sqm(predicted, area)
@@ -163,6 +202,8 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
             # числа отсюда напрямую, вместо того чтобы разбирать их обратно
             # из "12 345 ₽".
             "estimate": float(baseline),
+            "other": other,
+            "base": float(baseline) + (other or 0.0),
             "signed": signed,
             "predicted": predicted,
             "current": float(current),
@@ -173,6 +214,8 @@ def _increasing_sections(report, predicted_report, estimate_totals, area):
             "current_per_sqm": current_per_sqm,
             "estimate_display": _money(float(baseline)),
             "estimate_per_sqm_display": _money_per_sqm(estimate_per_sqm),
+            "other_display": _money(other),
+            "other_per_sqm_display": _money_per_sqm(other_per_sqm),
             "signed_display": _money(signed),
             "signed_per_sqm_display": _money_per_sqm(signed_per_sqm),
             "predicted_display": _money(predicted),
@@ -188,6 +231,9 @@ def _estimate_vs_total(estimate, total_cost):
     """Смета против итоговой стоимости — для полосы под таблицей, когда на
     странице выбран один объект. ``None``, если смета или итоговая
     стоимость неизвестны: сравнивать тогда не с чем.
+
+    ``estimate`` здесь — база удорожания целиком (``_base``): у объекта с
+    прочими прямыми договорами это смета вместе с ними.
     """
     if estimate is None or total_cost is None:
         return None
@@ -204,10 +250,11 @@ def _estimate_vs_total(estimate, total_cost):
     }
 
 
-def _total_cost(estimate, signed, predicted):
-    """Итоговая стоимость — смета плюс подписанное и прогнозируемое
-    удорожание, из тех двух, что известны: отсутствие файла удорожания не
-    должно превращать всю итоговую стоимость в прочерк.
+def _total_cost(estimate, signed, predicted, other=None):
+    """Итоговая стоимость — смета плюс прочие прямые договора, плюс
+    подписанное и прогнозируемое удорожание, из тех, что известны:
+    отсутствие файла удорожания не должно превращать всю итоговую
+    стоимость в прочерк.
 
     Без сметы — ``None``: удорожание без базы, к которой оно прибавляется,
     стоимостью объекта не является. Иначе один прогноз встал бы в колонку
@@ -216,7 +263,7 @@ def _total_cost(estimate, signed, predicted):
     """
     if estimate is None:
         return None
-    return estimate + sum(v for v in (signed, predicted) if v is not None)
+    return estimate + sum(v for v in (other, signed, predicted) if v is not None)
 
 
 def _sum_known(rows, key):
@@ -235,7 +282,9 @@ def _per_sqm(value, area):
 # Форма, которую ждёт статический app/static/waterfall.js для одной группы
 # водопадной диаграммы «Разделы сметы, которые дорожают»: опорная строка
 # («Смета») плюс пары «дельта → нарастающий итог» для подписанного и
-# прогнозируемого удорожания. ``nativeUnit: "rub"`` говорит движку, что
+# прогнозируемого удорожания. У раздела с прочими прямыми договорами опорных
+# строк две — «Смета» и «Смета и прочие договора», — и приросты идут от
+# второй. ``nativeUnit: "rub"`` говорит движку, что
 # значения уже в рублях (не в процентах, как у его собственного тестового
 # набора) — переключатель единиц «%»/«на м²» тогда переводит их через
 # ``dgpAmount``/``areaSqm``, а не наоборот.
@@ -243,7 +292,10 @@ def _waterfall_groups(sections, area):
     return [
         {
             "name": section["label"],
-            "bases": [{"label": "Смета", "value": section["estimate"]}],
+            "bases": [{"label": "Смета", "value": section["estimate"]}] + (
+                [{"label": BASE_WITH_OTHER_LABEL, "value": section["base"]}]
+                if section["other"] is not None else []
+            ),
             "deltas": [
                 {
                     "deltaLabel": "Подписанное удорожание",
@@ -259,25 +311,29 @@ def _waterfall_groups(sections, area):
                 },
             ],
             "nativeUnit": "rub",
-            "dgpAmount": section["estimate"],
+            "dgpAmount": section["base"],
             "areaSqm": area,
         }
         for section in sections
     ]
 
 
-def _row(slug, label, estimate_totals, report, predicted, predicted_report, area, completed=False):
+def _row(slug, label, estimate_totals, report, predicted, predicted_report, area, completed=False,
+         other_report=None):
     estimate = _estimate_total(estimate_totals)
+    other = _other_contracts(other_report)
+    base = _base(estimate, other)
     signed = _signed_overrun(report)
     # Прогноз приходит ``Decimal`` из отчёта по прогнозируемому удорожанию —
     # тот же перевод, что и у сметы и у подписанного удорожания выше.
     predicted = float(predicted) if predicted is not None else None
-    total_cost = _total_cost(estimate, signed, predicted)
+    total_cost = _total_cost(estimate, signed, predicted, other)
     estimate_per_sqm = _per_sqm(estimate, area)
+    other_per_sqm = _per_sqm(other, area)
     predicted_per_sqm = _per_sqm(predicted, area)
     signed_per_sqm = _per_sqm(signed, area)
     total_per_sqm = _per_sqm(total_cost, area)
-    sections = _increasing_sections(report, predicted_report, estimate_totals, area)
+    sections = _increasing_sections(report, predicted_report, estimate_totals, area, other_report)
     return {
         "slug": slug,
         "label": label,
@@ -292,6 +348,13 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
         "estimate_display": _money(estimate),
         "estimate_per_sqm": estimate_per_sqm,
         "estimate_per_sqm_display": _money_per_sqm(estimate_per_sqm),
+        "other": other,
+        "other_display": _money(other),
+        "other_per_sqm": other_per_sqm,
+        "other_per_sqm_display": _money_per_sqm(other_per_sqm),
+        # База удорожания — смета вместе с прочими прямыми договорами: от
+        # неё процент объекта, и её же складывает «Итого» для портфельного.
+        "base": base,
         "predicted": predicted,
         "predicted_display": _money(predicted),
         "predicted_per_sqm": predicted_per_sqm,
@@ -304,7 +367,7 @@ def _row(slug, label, estimate_totals, report, predicted, predicted_report, area
         "total_cost_display": _money(total_cost),
         "total_per_sqm": total_per_sqm,
         "total_per_sqm_display": _money_per_sqm(total_per_sqm),
-        "estimate_vs_total": _estimate_vs_total(estimate, total_cost),
+        "estimate_vs_total": _estimate_vs_total(base, total_cost),
         "has_increase_data": predicted_report is not None or (
             report is not None and report.from_estimate
         ),
@@ -319,6 +382,8 @@ def _total_row(rows):
     areas = [row["area"] for row in rows if row["area"]]
     area_total, area_count = (sum(areas) if areas else None), len(areas)
     estimate_total, estimate_count = _sum_known(rows, "estimate")
+    other_total, other_count = _sum_known(rows, "other")
+    base_total, _base_count = _sum_known(rows, "base")
     predicted_total, predicted_count = _sum_known(rows, "predicted")
     signed_total, signed_count = _sum_known(rows, "signed")
     total_cost_total, total_cost_count = _sum_known(rows, "total_cost")
@@ -329,6 +394,8 @@ def _total_row(rows):
         "area_count": area_count,
         "estimate_display": _money(estimate_total),
         "estimate_count": estimate_count,
+        "other_display": _money(other_total),
+        "other_count": other_count,
         "predicted_display": _money(predicted_total),
         "predicted_count": predicted_count,
         "signed_display": _money(signed_total),
@@ -340,14 +407,14 @@ def _total_row(rows):
         # объектам: итоговая стоимость есть ровно у тех, у кого есть смета
         # (см. ``_total_cost``), так что удорожание объекта без сметы не
         # ложится поверх чужих смет.
-        "estimate_vs_total": _estimate_vs_total(estimate_total, total_cost_total),
+        "estimate_vs_total": _estimate_vs_total(base_total, total_cost_total),
     }
 
 
 def build_table(slugs, project_names, estimate_totals_by_slug,
                  cost_increase_reports_by_slug, predicted_increase_by_slug,
                  predicted_increase_reports_by_slug=None, area_by_slug=None,
-                 completed_by_slug=None):
+                 completed_by_slug=None, other_contracts_reports_by_slug=None):
     """Строки инвесторской сводки, отсортированные по названию объекта, и
     итоговая строка под ними.
 
@@ -361,10 +428,14 @@ def build_table(slugs, project_names, estimate_totals_by_slug,
     разделам — для карточки объекта, какие разделы дорожают. ``area_by_slug``
     — ``{slug: total_area_sqm | None}``, для ₽/м² там же. ``completed_by_slug``
     — ``{slug: bool}``, отметка «проект завершён» с его паспорта.
+    ``other_contracts_reports_by_slug`` — ``{slug: predicted_increase.Report
+    | None}``: прочие прямые договора объекта по видам работ, отчёт той же
+    формы, что и у прогнозируемого удорожания.
     """
     predicted_increase_reports_by_slug = predicted_increase_reports_by_slug or {}
     area_by_slug = area_by_slug or {}
     completed_by_slug = completed_by_slug or {}
+    other_contracts_reports_by_slug = other_contracts_reports_by_slug or {}
     rows = [
         _row(
             slug, project_names.get(slug, slug),
@@ -372,6 +443,7 @@ def build_table(slugs, project_names, estimate_totals_by_slug,
             predicted_increase_by_slug.get(slug),
             predicted_increase_reports_by_slug.get(slug), area_by_slug.get(slug),
             completed_by_slug.get(slug, False),
+            other_contracts_reports_by_slug.get(slug),
         )
         for slug in slugs
     ]

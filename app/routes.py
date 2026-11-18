@@ -388,6 +388,32 @@ def _predicted_increase_reports(root, slugs):
     return {slug: _predicted_increase_report(root, slug) for slug in slugs}
 
 
+def _other_contracts_report(root, slug):
+    """Прочие прямые договора объекта по видам работ, или None, если их у
+    объекта нет: колонка «Прочие прямые договора» (она же «Прочие договора»,
+    «Прямые договора СМР») импорта сводного файла — то, что строится мимо
+    договора генподряда. Своего файла у этих сумм нет, источник один.
+
+    Отчёт той же формы, что и у прогнозируемого удорожания — вид работ и
+    сумма, — и собирается тем же ``predicted_increase.build_report``.
+    """
+    cost_table = master_import.load_cost_table(root, slug)
+    if cost_table is None:
+        return None
+    lines = master_import.other_contracts_lines_from_cost_table(cost_table)
+    if not lines:
+        return None
+    report = predicted_increase.build_report(lines)
+    return report if report.rows else None
+
+
+def _other_contracts_title(root, slug):
+    """Как эти договора названы в самом сводном файле — заголовком над их
+    таблицей на странице объекта. None, если колонки нет."""
+    cost_table = master_import.load_cost_table(root, slug)
+    return master_import.other_contracts_title(cost_table) if cost_table else None
+
+
 def _predicted_increase_by_section(reports):
     """``{slug: {section_key: Decimal}}`` from ``_predicted_increase_reports``
     — what ``comparison.build_section_table`` adds onto each section."""
@@ -598,6 +624,7 @@ def _investor_summary_table(root, slugs):
         predicted_reports,
         {slug: passports[slug].get("total_area_sqm") for slug in slugs},
         {slug: bool(passports[slug].get("completed")) for slug in slugs},
+        {slug: _other_contracts_report(root, slug) for slug in slugs},
     )
 
 
@@ -1569,6 +1596,8 @@ def project_page(slug):
         ),
         has_predicted_increase=_predicted_increase_file_is_current(root, slug),
         predicted_increase_report=_predicted_increase_report(root, slug),
+        other_contracts_report=_other_contracts_report(root, slug),
+        other_contracts_title=_other_contracts_title(root, slug),
         predicted_increase_problem=predicted_increase.PROBLEM_MESSAGES.get(
             request.args.get("predicted_increase")
         ),

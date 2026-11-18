@@ -814,34 +814,57 @@ def estimate_column_key(cost_table):
     return PRIMARY_VERSION_LABEL
 
 
-_OTHER_CONTRACTS_RE = re.compile(r"^(прочи\w*|прямые)\s+договора(\s|$)", re.IGNORECASE)
-
-
-def _is_other_contracts_column(key):
-    """«Прочие договора» / «Прямые договора СМР» — what the object's work
-    costs under contracts signed past the general contractor. Not the
-    «ДС прочие договора» next to it (those contracts' own amendments, part
-    of the block's signed total), nor the «..., руб/м²» repeat."""
-    return bool(_OTHER_CONTRACTS_RE.match(key)) and not key.endswith(", руб/м²")
-
-
 def estimate_row_amount(row, column_key):
-    """The row's own «смета» figure: ``column_key`` (see
-    ``estimate_column_key`` for which column that is) plus whatever the
-    block prices under other contracts.
+    """The row's own «смета» figure from ``column_key`` — see
+    ``estimate_column_key`` for which column that is.
 
-    «Рублевская» builds 7.5 млрд of its 12.9 through «Прямые договора СМР»
-    — work taken out of the general contract and signed directly — and
-    both schools carry a «Прочие договора» column. The sheet's own total
-    adds them to «ДГП», and counts their amendments in with the signed
-    ones, so they are part of the base the increase is measured from;
-    read without them «Рублевская» came out 7.5 млрд short of the sheet
-    and its increase at 56% of a base that was a quarter of the object.
+    The general contract alone. What the block prices under other
+    contracts is read apart from it, by
+    ``other_contracts_lines_from_cost_table``: for a week those were added
+    in here, and «Рублевская» then compared at three times its own
+    contract per square metre against every other object.
     """
-    amounts = [_row_amount(row, column_key)]
-    amounts += [_row_amount(row, key) for key in row["values"] if _is_other_contracts_column(key)]
-    amounts = [a for a in amounts if a is not None]
-    return sum(amounts) if amounts else None
+    return _row_amount(row, column_key)
+
+
+# «Прочие прямые договора», «Прочие договора» (and the sheet's own typo,
+# «Прочиее договора»), «Прямые договора СМР» — the header changes from one
+# workbook to the next and between blocks of the same one.
+_OTHER_CONTRACTS_RE = re.compile(
+    r"^(прочи\w*(\s+прямые)?|прямые)\s+договора(\s|$)", re.IGNORECASE,
+)
+
+
+def _other_contracts_column_keys(cost_table):
+    """The block's columns pricing work contracted past the general
+    contractor — «Рублевская» builds 7.5 млрд of its 12.9 that way, both
+    schools carry such a column too. Not «ДС прочие договора» or
+    «Предполагаемое ДС по Прочим Договорам» next to it: those are these
+    contracts' amendments, which the sheet already counts in the block's
+    signed and predicted totals.
+    """
+    return [key for key in _version_columns(cost_table) if _OTHER_CONTRACTS_RE.match(key)]
+
+
+def other_contracts_title(cost_table):
+    """What the block itself calls its other contracts, for the heading
+    over them — or None if it has none."""
+    keys = _other_contracts_column_keys(cost_table)
+    return keys[0] if keys else None
+
+
+def other_contracts_lines_from_cost_table(cost_table):
+    """``[predicted_increase.Line, ...]`` — one per kind of work priced
+    under other contracts, ``[]`` for a block with no such column.
+
+    The same kind-of-work-and-amount shape as the predicted increase, so
+    ``predicted_increase.build_report`` adds these up by kind of work the
+    same way. The sheet's own total is «ДГП» plus this, plus the signed
+    and the predicted increase.
+    """
+    return _amount_lines_from_cost_table(
+        cost_table, _other_contracts_column_keys(cost_table), predicted_increase.Line,
+    )
 
 
 def estimate_sections_from_cost_table(cost_table):
