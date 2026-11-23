@@ -131,6 +131,9 @@ def _objects(passports, costs_by_slug, adjustments):
             "building_class": passport.get("building_class") or None,
             "area": area,
             "year": comparison.parse_year(passport.get("year_signed")),
+            # Завершённый объект: его цифры уже не изменятся. У объекта в
+            # работе удорожание ещё не всё — часть допов впереди.
+            "completed": bool(passport.get("completed")),
             "costs": {key: amount * factor for key, amount in costs.items()},
             "total": total,
             # Объект, к которому включённая поправка неприменима (нет года
@@ -819,8 +822,22 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
 
     # Удорожание: типичная для класса доля к смете — те же суммы, что в
     # «Сводке по удорожанию», по всем объектам класса, где они известны.
+    #
+    # Удорожание объекта в работе ещё не всё: часть допов впереди, и он
+    # тянул бы типичную долю вниз. Поэтому, если в классе хватает
+    # завершённых объектов, удорожание и зоны риска берутся только по ним;
+    # не хватает — по всем, и страница говорит, что цифра, скорее всего,
+    # занижена. Смета от статуса не зависит: цена договора известна сразу.
     class_slugs = [obj["slug"] for obj in objects if obj["building_class"] == building_class]
-    shares = _increase_shares(class_slugs, summary_rows_by_slug)
+    all_shares = _increase_shares(class_slugs, summary_rows_by_slug)
+    completed_slugs = [
+        obj["slug"] for obj in objects
+        if obj["building_class"] == building_class and obj["completed"]
+    ]
+    completed_shares = _increase_shares(completed_slugs, summary_rows_by_slug)
+    completed_only = len(completed_shares) >= MIN_GROUP
+    shares = completed_shares if completed_only else all_shares
+    increase_slugs = completed_slugs if completed_only else class_slugs
     increase = final = final_low = final_high = None
     share_mid = share_low = share_high = None
     if shares:
@@ -836,7 +853,7 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
 
     increase_by_slug = increase_by_slug or {}
     risks = _risk_rows(
-        works, _work_increase_shares(class_slugs, costs_by_slug, increase_by_slug),
+        works, _work_increase_shares(increase_slugs, costs_by_slug, increase_by_slug),
         total, increase,
     )
 
@@ -857,7 +874,11 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
         "reserve_with_extra_display": _money(reserve * area + reserve_extra),
         "steady_count": sum(1 for row in risks if row["steady"]),
         "risks": risks,
-        "risk_objects": sum(1 for slug in class_slugs if slug in increase_by_slug),
+        "risk_objects": sum(1 for slug in increase_slugs if slug in increase_by_slug),
+        "increase_completed_only": completed_only,
+        "increase_completed_count": len(completed_shares),
+        "increase_all_count": len(all_shares),
+        "increase_all_share_display": _plain_percent(median(all_shares)) if all_shares else None,
         "risk_alert_count": sum(1 for row in risks if row["level"] == LEVEL_ALERT),
         "area_display": _area(area),
         "confidence": confidence,
@@ -910,6 +931,7 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
         "analogs": [
             {
                 "slug": obj["slug"], "name": obj["name"], "year": obj["year"],
+                "completed": obj["completed"],
                 "area_display": _area(obj["area"]),
                 "rate_display": _per_sqm(obj["rate"]),
                 "weight_display": f"{round(_area_weight(obj['area'], area) * 100)} %",

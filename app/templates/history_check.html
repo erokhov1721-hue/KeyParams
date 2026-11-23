@@ -209,8 +209,13 @@
       <span class="history-tile-label">Типичное удорожание в классе</span>
       {% if forecast.increase_share_display %}
       <span class="history-tile-value">+{{ forecast.increase_display }}</span>
-      <span class="history-tile-sub">{{ forecast.increase_share_display }} к смете — середина по {{ forecast.increase_count }} объектам</span>
+      <span class="history-tile-sub">{{ forecast.increase_share_display }} к смете — середина по {{ forecast.increase_count }} {{ 'завершённым объектам' if forecast.increase_completed_only else 'объектам' }}</span>
       <span class="history-tile-sub">обычно от {{ forecast.increase_range_display }}</span>
+      {% if forecast.increase_completed_only %}
+      <span class="history-tile-sub">по всем {{ forecast.increase_all_count }}, включая объекты в работе, — {{ forecast.increase_all_share_display }}: у них допы ещё не все</span>
+      {% else %}
+      <span class="history-tile-sub">завершённых объектов с удорожанием в классе {{ forecast.increase_completed_count }} — мало, взяты и объекты в работе; у них допы ещё не все, цифра скорее занижена</span>
+      {% endif %}
       {% else %}
       <span class="history-tile-value">—</span>
       <span class="history-tile-sub">данных об удорожании в классе нет</span>
@@ -319,7 +324,7 @@
   {% if forecast.risks %}
   <h3 class="pair-subtitle">
     Зоны риска: где ждать удорожание
-    <span class="sections-sub">как дорожали виды работ у {{ forecast.risk_objects }} прошлых объектов класса «{{ forecast.building_class }}» и сколько это для нового объекта</span>
+    <span class="sections-sub">как дорожали виды работ у {{ forecast.risk_objects }} {{ 'завершённых' if forecast.increase_completed_only else 'прошлых' }} объектов класса «{{ forecast.building_class }}» и сколько это для нового объекта</span>
   </h3>
   <div class="sections-table-wrap">
     <table class="sections-table history-table">
@@ -493,6 +498,7 @@
           <th>Год договора</th>
           <th>Площадь</th>
           <th>Цена за м²</th>
+          <th>Статус</th>
           <th>Вес</th>
         </tr>
       </thead>
@@ -503,6 +509,7 @@
           <td class="sections-value"><span class="sections-number">{{ row.year or '—' }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.area_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.rate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number{{ '' if row.completed else ' history-note' }}">{{ 'завершён' if row.completed else 'в работе' }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.weight_display }}</span></td>
         </tr>
         {% endfor %}

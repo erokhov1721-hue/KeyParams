@@ -530,3 +530,53 @@ def test_an_extra_every_object_pays_is_named_a_steady_one():
     kinds = {row["key"]: row["kind"] for row in forecast["risks"]}
     assert kinds == {"facade": "постоянная добавка", "roof": "обычно не дорожает"}
     assert forecast["steady_count"] == 1
+
+
+# --- статус «Завершён»: удорожание объекта в работе ещё не всё ---
+
+def _with_status(count_done, count_open, done_share, open_share):
+    passports, costs, summary, increase = {}, {}, {}, {}
+    for i in range(count_done + count_open):
+        slug = f"p{i}"
+        done = i < count_done
+        passports[slug] = _passport(f"Объект {i}")
+        passports[slug]["completed"] = done
+        costs[slug] = {"facade": 100_000.0, "roof": 20_000.0}
+        share = done_share if done else open_share
+        summary[slug] = _summary_row(120.0, 120.0 * share / 100.0)
+        increase[slug] = {"facade": 120_000.0 * share / 100.0}
+    return passports, costs, summary, increase
+
+
+def test_increase_is_taken_from_completed_objects_when_there_are_enough():
+    passports, costs, summary, increase = _with_status(4, 6, 30.0, 10.0)
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, summary, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    assert forecast["increase_completed_only"] is True
+    assert forecast["increase_share_display"] == "30,0 %"
+    assert forecast["increase_count"] == 4
+    # По всем десяти, вместе с объектами в работе, вышло бы 10 %.
+    assert forecast["increase_all_share_display"] == "10,0 %"
+    assert forecast["increase_all_count"] == 10
+    assert forecast["risk_objects"] == 4
+    assert forecast["risks"][0]["grew_display"] == "4 из 4"
+    # Смета от статуса не зависит — по всем десяти объектам.
+    assert forecast["training_count"] == 10
+    assert sum(1 for row in forecast["analogs"] if row["completed"]) == 4
+
+
+def test_with_few_completed_objects_the_increase_falls_back_to_all_of_them():
+    passports, costs, summary, increase = _with_status(3, 5, 30.0, 10.0)
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, summary, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    assert forecast["increase_completed_only"] is False
+    assert forecast["increase_completed_count"] == 3
+    assert forecast["increase_count"] == 8
+    assert forecast["increase_share_display"] == "10,0 %"
+    assert forecast["risk_objects"] == 8
