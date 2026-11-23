@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Проверка по истории{% endblock %}
+{% block main_extra_class %}container-wide{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Проверка по истории</h1>
+    <p class="page-sub">
+      Каждый объект сопоставлен с остальными объектами своего класса.
+      Подсвечено то, что выбивается из обычного ряда: жёлтым — заметно,
+      красным — сильно. Сравнение идёт с серединой класса — значением, выше и
+      ниже которого объектов поровну: один странный объект её не сдвигает.
+    </p>
+  </div>
+</div>
+
+{% if not has_projects %}
+<div class="card empty-state">
+  <p class="empty-title">Проверять пока нечего</p>
+  <p class="empty-sub">Заведите хотя бы несколько проектов одного класса.</p>
+  <a class="btn btn-primary" href="{{ url_for('main.new_project_form') }}">+ Создать проект</a>
+</div>
+{% else %}
+
+{% macro project_link(row) %}
+<a class="history-link" href="{{ url_for('main.project_page', slug=row.slug) }}">{{ row.name }}</a>
+{% endmacro %}
+
+{% macro mark(level) %}
+{% if level == 'alert' %}<span class="history-mark is-alert" title="Сильное отклонение"></span>
+{% elif level == 'warn' %}<span class="history-mark is-warn" title="Заметное отклонение"></span>
+{% elif level == 'ok' %}<span class="history-mark is-ok" title="В пределах обычного"></span>
+{% else %}<span class="history-mark is-none" title="Без оценки"></span>{% endif %}
+{% endmacro %}
+
+<div class="card sections-card">
+  <form class="adjust-form" method="get" action="{{ url_for('main.history_check_page') }}">
+    <input type="hidden" name="set" value="1">
+    <label class="adjust-toggle">
+      <span>Класс</span>
+      <select name="class" class="object-picker-select history-class-select" onchange="this.form.submit()">
+        <option value="">Все классы</option>
+        {% for row in report.classes %}
+        <option value="{{ row.building_class }}" {{ 'selected' if row.building_class == report.building_class }}>
+          {{ row.building_class }} ({{ row.count }})
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="adjust-radio-group">
+      <span class="adjust-radio-group-label">НДС</span>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="own" {{ 'checked' if adjustments.vat_mode == 'own' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Суммы как в договоре, каждая со своей ставкой НДС.">своя ставка</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="net" {{ 'checked' if adjustments.vat_mode == 'net' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Из суммы каждого проекта вычитается его собственная ставка НДС.">без НДС</span>
+      </label>
+      <label class="adjust-radio">
+        <input type="radio" name="vat_mode" value="custom" {{ 'checked' if adjustments.vat_mode == 'custom' }}>
+        <span class="adjust-radio-label" tabindex="0"
+              data-tooltip="Все проекты приводятся к одной ставке — так объекты с 20 % и 22 % сравниваются честно.">единая ставка</span>
+        <input class="adjust-input" type="text" name="vat" inputmode="decimal" value="{{ adjustments.vat_display }}">
+        <span class="adjust-unit">%</span>
+      </label>
+    </div>
+    <label class="adjust-toggle">
+      <input type="checkbox" name="inflation_on" value="1" {{ 'checked' if adjustments.inflation is not none }}>
+      <span>Учитывать инфляцию</span>
+      <input class="adjust-input" type="text" name="inflation" inputmode="decimal" value="{{ adjustments.inflation_display }}">
+      <span class="adjust-unit">% в год к</span>
+      <input class="adjust-input adjust-year" type="text" name="year" inputmode="numeric" value="{{ adjustments.target_year }}">
+    </label>
+    <button type="submit" class="btn btn-secondary">Применить</button>
+  </form>
+
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Класс</th>
+          <th>Объектов</th>
+          <th>Из них в сравнении</th>
+          <th>Середина класса, ₽/м²</th>
+          <th class="history-text-col">Надёжность сравнения</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.classes %}
+        <tr class="{{ 'history-row-current' if row.building_class == report.building_class }}">
+          <td class="sections-label-col"><span class="sections-label">{{ row.building_class }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.count }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.compared }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.median_display }}</span></td>
+          <td class="history-text-col">
+            {% if row.confidence == 'confident' %}достаточно объектов
+            {% else %}<span class="history-note">{{ row.confidence_label }}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="history-tabs" role="tablist">
+  <button type="button" class="history-tab is-active" data-tab="data" role="tab">
+    Пробелы в данных <span class="history-tab-count">{{ report.counts.data }}</span>
+  </button>
+  <button type="button" class="history-tab" data-tab="objects" role="tab">
+    Объекты <span class="history-tab-count">{{ report.counts.objects }}</span>
+  </button>
+  <button type="button" class="history-tab" data-tab="works" role="tab">
+    Виды работ <span class="history-tab-count">{{ report.counts.works }}</span>
+  </button>
+  <button type="button" class="history-tab" data-tab="increase" role="tab">
+    Удорожание <span class="history-tab-count">{{ report.counts.increase }}</span>
+  </button>
+</div>
+
+<div class="card sections-card history-panel" data-panel="data">
+  <div class="sections-head">
+    <h2 class="chart-title">Пробелы и странности в данных</h2>
+    <p class="sections-sub">
+      То, из-за чего объект либо не попадает в сравнение, либо попадает с
+      неверной цифрой. С этого стоит начинать: остальные отчёты верны
+      настолько, насколько верны площадь, класс и год.
+    </p>
+  </div>
+  {% if report.data %}
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Объект</th>
+          <th class="history-text-col">Класс</th>
+          <th class="history-text-col">Что не так</th>
+          <th class="history-text-col">Чем это мешает</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.data %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{{ mark(row.level) }}</td>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="history-text-col">{{ row.building_class }}</td>
+          <td class="history-text-col">{{ row.problem }}</td>
+          <td class="history-text-col"><span class="history-note">{{ row.effect }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="history-empty">Замечаний к данным нет.</p>
+  {% endif %}
+</div>
+
+<div class="card sections-card history-panel" data-panel="objects" hidden>
+  <div class="sections-head">
+    <h2 class="chart-title">Объекты против своего класса</h2>
+    <p class="sections-sub">
+      Цена за м² по смете против середины класса. Жёлтым — отклонение от
+      {{ report.thresholds.object[0] | int }} %, красным — от
+      {{ report.thresholds.object[1] | int }} %. В классах, где меньше
+      {{ report.thresholds.min_group }} объектов с известной ценой, цифры
+      показаны без оценки.
+    </p>
+  </div>
+  {% if report.objects %}
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Объект</th>
+          <th class="history-text-col">Класс</th>
+          <th>Год</th>
+          <th>Площадь</th>
+          <th>Цена за м²</th>
+          <th>Середина класса</th>
+          <th>Отклонение</th>
+          <th class="history-text-col">Примечание</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.objects %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{{ mark(row.level) }}</td>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="history-text-col">{{ row.building_class }}</td>
+          <td class="sections-value"><span class="sections-number">{{ row.year or '—' }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.area_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.rate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.median_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-deviation">{{ row.deviation_display }}</span></td>
+          <td class="history-text-col"><span class="history-note">{{ row.note }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="history-empty">Объектов с указанным классом нет.</p>
+  {% endif %}
+</div>
+
+<div class="card sections-card history-panel" data-panel="works" hidden>
+  <div class="sections-head">
+    <h2 class="chart-title">Виды работ, которые выбиваются</h2>
+    <p class="sections-sub">
+      Цена вида работ за м² против середины по объектам класса, где такой
+      вид работ есть. Показаны только отклонения: жёлтым — от
+      {{ report.thresholds.work[0] | int }} %, красным — от
+      {{ report.thresholds.work[1] | int }} %. «Вес в рублях» — сколько это
+      отклонение даёт на весь объект; по нему строки и упорядочены.
+    </p>
+  </div>
+  {% if report.works %}
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Объект</th>
+          <th class="history-text-col">Класс</th>
+          <th class="history-text-col">Вид работ</th>
+          <th>Цена за м²</th>
+          <th>Середина класса</th>
+          <th>Отклонение</th>
+          <th>Вес в рублях</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.works %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{{ mark(row.level) }}</td>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="history-text-col">{{ row.building_class }}</td>
+          <td class="history-text-col" title="{{ row.work_label }}">{{ row.work_label | truncate(48) }}</td>
+          <td class="sections-value"><span class="sections-number">{{ row.own_display }}</span></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ row.median_display }}</span>
+            <span class="avg-count-note">по {{ row.group_count }} объектам</span>
+          </td>
+          <td class="sections-value"><span class="sections-number history-deviation">{{ row.deviation_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.impact_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="history-empty">Выбивающихся видов работ не найдено.</p>
+  {% endif %}
+</div>
+
+<div class="card sections-card history-panel" data-panel="increase" hidden>
+  <div class="sections-head">
+    <h2 class="chart-title">Удорожание против своего класса</h2>
+    <p class="sections-sub">
+      Подписанное и прогнозируемое удорожание в процентах к смете (вместе с
+      прочими прямыми договорами) — те же суммы, что в «Сводке по
+      удорожанию». Жёлтым — отличие от середины класса на
+      {{ report.thresholds.increase[0] | int }} процентных пунктов и больше,
+      красным — на {{ report.thresholds.increase[1] | int }}. Объекты без
+      данных об удорожании в отчёт не входят.
+    </p>
+  </div>
+  {% if report.increase %}
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Объект</th>
+          <th class="history-text-col">Класс</th>
+          <th>Удорожание</th>
+          <th>К смете</th>
+          <th>Середина класса</th>
+          <th>Отличие</th>
+          <th class="history-text-col">Примечание</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.increase %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{{ mark(row.level) }}</td>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="history-text-col">{{ row.building_class }}</td>
+          <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.share_display }}</span></td>
+          <td class="sections-value">
+            <span class="sections-number">{{ row.median_display }}</span>
+            <span class="avg-count-note">по {{ row.group_count }} объектам</span>
+          </td>
+          <td class="sections-value"><span class="sections-number history-deviation">{{ row.deviation_display }}</span></td>
+          <td class="history-text-col"><span class="history-note">{{ row.note }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="history-empty">Данных об удорожании нет.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+  // Вкладки: четыре отчёта на одной странице, видна одна. Выбранная
+  // запоминается в адресе (#objects), чтобы после «Применить» страница
+  // открылась на том же отчёте. Без скриптов видна первая вкладка.
+  (function () {
+    var tabs = document.querySelectorAll('.history-tab');
+    var panels = document.querySelectorAll('.history-panel');
+    if (!tabs.length) return;
+    function show(name) {
+      var found = false;
+      panels.forEach(function (panel) {
+        var on = panel.getAttribute('data-panel') === name;
+        panel.hidden = !on;
+        found = found || on;
+      });
+      if (!found) return;
+      tabs.forEach(function (tab) {
+        var on = tab.getAttribute('data-tab') === name;
+        tab.classList.toggle('is-active', on);
+        tab.setAttribute('aria-selected', String(on));
+      });
+      document.querySelectorAll('.adjust-form').forEach(function (form) {
+        form.action = form.action.split('#')[0] + '#' + name;
+      });
+    }
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var name = tab.getAttribute('data-tab');
+        history.replaceState(null, '', '#' + name);
+        show(name);
+      });
+    });
+    if (location.hash) show(location.hash.slice(1));
+  })();
+
+  // Набрали ставку в «единая ставка» — значит, её и имели в виду.
+  (function () {
+    var group = document.querySelector('.adjust-radio-group');
+    if (!group) return;
+    var customRadio = group.querySelector('input[value="custom"]');
+    var customInput = group.querySelector('.adjust-input');
+    if (!customRadio || !customInput) return;
+    customInput.addEventListener('input', function () { customRadio.checked = true; });
+  })();
+</script>
+{% endblock %}

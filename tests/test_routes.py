@@ -5218,3 +5218,75 @@ def test_an_older_own_file_still_counts_when_the_import_has_nothing_of_that_kind
     body = client.get(f"/projects/{slug}").get_data(as_text=True)
 
     assert passport_module.format_number(1_555_555.0) in body
+
+
+# --- проверка по истории ---
+
+def _history_class(root, rates, building_class="Бизнес"):
+    return [
+        _project_with_offer(
+            root, f"Объект{i}", [("6. Фасадные работы", rate * 1000.0)],
+            building_class=building_class,
+        )
+        for i, rate in enumerate(rates)
+    ]
+
+
+def test_the_sidebar_links_to_the_history_check(tmp_path):
+    client = create_app(tmp_path).test_client()
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert "Проверка по истории" in body
+    assert 'href="/history-check"' in body
+
+
+def test_history_check_flags_the_object_that_stands_out_of_its_class(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000, 1500])
+
+    body = client.get("/history-check").get_data(as_text=True)
+
+    assert "Объекты против своего класса" in body
+    assert "+50,0 %" in body
+    assert 'class="history-row is-alert"' in body
+
+
+def test_history_check_says_so_when_a_class_has_too_few_objects(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 3000])
+
+    body = client.get("/history-check").get_data(as_text=True)
+
+    assert "мало объектов для сравнения" in body
+    assert 'class="history-row is-alert"' not in body
+
+
+def test_history_check_lists_an_object_without_a_class_among_the_data_gaps(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _project_with_offer(tmp_path, "Безклассовый", [("6. Фасадные работы", 1_000_000.0)])
+
+    body = client.get("/history-check").get_data(as_text=True)
+
+    assert "Не указан класс объекта" in body
+    assert "Безклассовый" in body
+
+
+def test_history_check_starts_with_inflation_on_and_remembers_when_it_is_switched_off(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000])
+
+    first = client.get("/history-check").get_data(as_text=True)
+    switched_off = client.get("/history-check?set=1&vat_mode=own").get_data(as_text=True)
+
+    assert 'name="inflation_on" value="1" checked' in first
+    assert 'name="inflation_on" value="1" checked' not in switched_off
+
+
+def test_history_check_on_an_empty_base_offers_to_create_a_project(tmp_path):
+    client = create_app(tmp_path).test_client()
+
+    response = client.get("/history-check")
+
+    assert response.status_code == 200
+    assert "Проверять пока нечего" in response.get_data(as_text=True)

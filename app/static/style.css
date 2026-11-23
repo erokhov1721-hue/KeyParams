@@ -4669,3 +4669,107 @@ tbody .label-area.is-empty {
 .upload-log-download:hover {
   color: var(--text-100);
 }
+
+/* --- Проверка по истории --------------------------------------------------
+   Четыре отчёта на вкладках; строка с отклонением помечена кружком слева и
+   слабой заливкой — жёлтой или красной, теми же цветами, что у предупреждений
+   на остальных страницах. */
+.history-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.history-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-800);
+  color: var(--text-500);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history-tab:hover {
+  color: var(--text-100);
+}
+
+.history-tab.is-active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.history-tab-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-700);
+  color: var(--text-100);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.history-class-select {
+  min-width: 180px;
+}
+
+.history-table .history-mark-col {
+  width: 28px;
+  padding-right: 0;
+}
+
+.history-table .history-text-col {
+  text-align: left;
+  white-space: normal;
+}
+
+.history-mark {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.history-mark.is-alert { background: var(--red); }
+.history-mark.is-warn { background: var(--amber); }
+.history-mark.is-ok { background: var(--accent); }
+
+.history-row.is-alert > td { background: var(--red-dim); }
+.history-row.is-warn > td { background: var(--amber-dim); }
+.history-row.is-alert .history-deviation { color: var(--red); font-weight: 700; }
+.history-row.is-warn .history-deviation { color: var(--amber); font-weight: 700; }
+
+.history-row-current > td {
+  font-weight: 700;
+}
+
+.history-link {
+  color: var(--text-100);
+  font-weight: 600;
+  border-bottom: 1px dashed var(--border);
+}
+
+.history-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.history-note {
+  color: var(--text-500);
+  font-size: 13px;
+}
+
+.history-empty {
+  margin: 8px 0 4px;
+  color: var(--text-500);
+  font-size: 14px;
+}

@@ -15,7 +15,7 @@ from flask import (
 from . import (
     auth, chart_render, comparison, corrections, cost_increase, estimate, estimate_sections,
     excel_report,
-    extractors, investor_summary, kp_analysis, master_import, passport as passport_module,
+    extractors, history_check, investor_summary, kp_analysis, master_import, passport as passport_module,
     pdf_export, pdf_reader, predicted_increase, project_filter, storage, upload_guard, upload_log,
     workbook_cache,
 )
@@ -625,6 +625,49 @@ def _investor_summary_table(root, slugs):
         {slug: passports[slug].get("total_area_sqm") for slug in slugs},
         {slug: bool(passports[slug].get("completed")) for slug in slugs},
         {slug: _other_contracts_report(root, slug) for slug in slugs},
+    )
+
+
+def _history_check_adjustments():
+    """К чему привести цены на странице «Проверка по истории».
+
+    Зашли на страницу впервые (в адресе нет отметки ``set``) — поправки уже
+    включены: единая ставка НДС и инфляция к сегодняшнему году. Без них
+    объект 2018 года рядом с объектом 2026-го всегда выглядел бы
+    подозрительно дешёвым, и страница подсвечивала бы возраст договора, а не
+    странности в цене. Дальше — что выбрано в форме, включая «ничего».
+    """
+    if request.args.get("set"):
+        return comparison.adjustments_from_args(request.args)
+    return comparison.Adjustments(
+        vat_rate=comparison.DEFAULT_VAT_RATE, inflation=comparison.DEFAULT_INFLATION,
+    )
+
+
+@bp.route("/history-check", methods=["GET"])
+def history_check_page():
+    """Проверка по истории: все объекты разом против остальных объектов
+    своего класса — пробелы в данных, цена за м², виды работ, удорожание.
+    Сметы и удорожание читаются теми же функциями, что у «Сравнить со
+    средним» и «Сводки по удорожанию».
+    """
+    root = _projects_root()
+    slugs = storage.list_project_slugs(root)
+    passports = {slug: _safe_passport(root, slug) for slug in slugs}
+    adjustments = _history_check_adjustments()
+    summary = _investor_summary_table(root, slugs) if slugs else None
+    report = history_check.build(
+        passports,
+        _section_costs(root, slugs),
+        adjustments,
+        {row["slug"]: row for row in summary["rows"]} if summary else {},
+        request.args.get("class") or None,
+    )
+    return render_template(
+        "history_check.html",
+        report=report,
+        adjustments=adjustments,
+        has_projects=bool(slugs),
     )
 
 
