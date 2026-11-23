@@ -39,8 +39,6 @@
     {# Прогноз на вкладке «Новый объект» не должен пропадать от «Применить». #}
     <input type="hidden" name="new_class" value="{{ forecast.building_class or '' }}">
     <input type="hidden" name="new_area" value="{{ new_area_text }}">
-    <input type="hidden" name="fc_low" value="{{ low_growth_text }}">
-    <input type="hidden" name="fc_high" value="{{ high_growth_text }}">
     <label class="adjust-toggle">
       <span>Класс</span>
       <select name="class" class="object-picker-select history-class-select" onchange="this.form.submit()">
@@ -166,13 +164,6 @@
              value="{{ new_area_text }}" placeholder="например, 120 000">
       <span class="adjust-unit">м²</span>
     </label>
-    <label class="adjust-toggle">
-      <span data-tooltip="Для прогноза на годы вперёд. Основной сценарий — ставка инфляции вверху страницы.">Рост цен в год: низкий</span>
-      <input class="adjust-input" type="text" name="fc_low" inputmode="decimal" value="{{ low_growth_text }}">
-      <span class="adjust-unit">%, высокий</span>
-      <input class="adjust-input" type="text" name="fc_high" inputmode="decimal" value="{{ high_growth_text }}">
-      <span class="adjust-unit">%</span>
-    </label>
     <button type="submit" class="btn btn-primary">Рассчитать</button>
   </form>
 
@@ -285,7 +276,7 @@
         </tr>
         <tr class="history-total-row">
           <td class="sections-label-col">
-            <span class="sections-label">Итоговая стоимость — основной сценарий, {{ forecast.horizon.main_rate_display }} в год</span>
+            <span class="sections-label">Итоговая стоимость — рост цен {{ forecast.horizon.main_rate_display }} в год</span>
           </td>
           {% for column in forecast.horizon.columns %}
           <td class="sections-value"><span class="sections-number">{{ column.final_display }}</span></td>
@@ -297,23 +288,12 @@
           <td class="sections-value"><span class="sections-number history-note">{{ column.final_per_sqm_display }}</span></td>
           {% endfor %}
         </tr>
-        <tr>
-          <td class="sections-label-col"><span class="sections-label">Итоговая — низкий рост цен, {{ forecast.horizon.low_rate_display }} в год</span></td>
-          {% for column in forecast.horizon.columns %}
-          <td class="sections-value"><span class="sections-number">{{ column.low_display }}</span></td>
-          {% endfor %}
-        </tr>
-        <tr>
-          <td class="sections-label-col"><span class="sections-label">Итоговая — высокий рост цен, {{ forecast.horizon.high_rate_display }} в год</span></td>
-          {% for column in forecast.horizon.columns %}
-          <td class="sections-value"><span class="sections-number">{{ column.high_display }}</span></td>
-          {% endfor %}
-        </tr>
       </tbody>
     </table>
   </div>
   <p class="sections-sub history-accuracy">
-    Рост цен считается до года подписания договора. На годы самой стройки он
+    Ставка роста цен — инфляция, заданная вверху страницы. Рост считается до
+    года подписания договора. На годы самой стройки он
     отдельно не накручивается: типичное удорожание класса — это и есть то, на
     сколько прошлые объекты подорожали за время стройки, рост цен в нём уже
     учтён.

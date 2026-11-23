@@ -5335,10 +5335,12 @@ def test_history_check_forecast_shows_the_cost_for_later_years_of_signing(tmp_pa
 
     body = client.get(
         "/history-check?set=1&vat_mode=own&inflation_on=1&inflation=10&year=2025"
-        "&new_class=Бизнес&new_area=1000&fc_low=5&fc_high=20",
+        "&new_class=Бизнес&new_area=1000",
     ).get_data(as_text=True)
 
     assert "Если договор подписать позже" in body
     assert "<th>2028</th>" in body
     assert "1 331 000 ₽" in body      # 1 000 000 × 1,1³
-    assert "1 728 000 ₽" in body      # высокий сценарий: × 1,2³
+    # Низкий и высокий сценарии с формы убраны: одна ставка — инфляция страницы.
+    assert "fc_low" not in body
+    assert "низкий рост цен" not in body
