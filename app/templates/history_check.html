@@ -39,6 +39,8 @@
     {# Прогноз на вкладке «Новый объект» не должен пропадать от «Применить». #}
     <input type="hidden" name="new_class" value="{{ forecast.building_class or '' }}">
     <input type="hidden" name="new_area" value="{{ new_area_text }}">
+    <input type="hidden" name="fc_low" value="{{ low_growth_text }}">
+    <input type="hidden" name="fc_high" value="{{ high_growth_text }}">
     <label class="adjust-toggle">
       <span>Класс</span>
       <select name="class" class="object-picker-select history-class-select" onchange="this.form.submit()">
@@ -164,6 +166,13 @@
              value="{{ new_area_text }}" placeholder="например, 120 000">
       <span class="adjust-unit">м²</span>
     </label>
+    <label class="adjust-toggle">
+      <span data-tooltip="Для прогноза на годы вперёд. Основной сценарий — ставка инфляции вверху страницы.">Рост цен в год: низкий</span>
+      <input class="adjust-input" type="text" name="fc_low" inputmode="decimal" value="{{ low_growth_text }}">
+      <span class="adjust-unit">%, высокий</span>
+      <input class="adjust-input" type="text" name="fc_high" inputmode="decimal" value="{{ high_growth_text }}">
+      <span class="adjust-unit">%</span>
+    </label>
     <button type="submit" class="btn btn-primary">Рассчитать</button>
   </form>
 
@@ -233,6 +242,124 @@
     прошлые объекты уложились в {{ forecast.extreme_display }}.
     Прогноз знает только класс и площадь: этажность, подземная часть,
     уровень отделки и участок в нём не учтены.
+  </p>
+  {% endif %}
+
+  <h3 class="pair-subtitle">
+    Если договор подписать позже
+    <span class="sections-sub">та же стоимость в ценах года подписания договора с генподрядчиком</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table history-horizon-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Год подписания договора</th>
+          {% for column in forecast.horizon.columns %}
+          <th>{{ column.year }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">Рост цен к {{ forecast.horizon.columns[0].year }} году</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number history-note">{{ column.growth_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">Смета — цена договора</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number">{{ column.estimate_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">Типичное удорожание за время стройки</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number">{{ column.increase_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr class="history-total-row">
+          <td class="sections-label-col">
+            <span class="sections-label">Итоговая стоимость — основной сценарий, {{ forecast.horizon.main_rate_display }} в год</span>
+          </td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number">{{ column.final_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">то же за м²</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number history-note">{{ column.final_per_sqm_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">Итоговая — низкий рост цен, {{ forecast.horizon.low_rate_display }} в год</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number">{{ column.low_display }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="sections-label-col"><span class="sections-label">Итоговая — высокий рост цен, {{ forecast.horizon.high_rate_display }} в год</span></td>
+          {% for column in forecast.horizon.columns %}
+          <td class="sections-value"><span class="sections-number">{{ column.high_display }}</span></td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sections-sub history-accuracy">
+    Рост цен считается до года подписания договора. На годы самой стройки он
+    отдельно не накручивается: типичное удорожание класса — это и есть то, на
+    сколько прошлые объекты подорожали за время стройки, рост цен в нём уже
+    учтён.
+    {% if not forecast.horizon.has_increase %}Данных об удорожании в классе нет — «итоговая» здесь равна смете.{% endif %}
+    {% if forecast.prices_as_signed %}Инфляция вверху страницы выключена: первый столбец — в ценах прошлых договоров как есть, а не в сегодняшних.{% endif %}
+  </p>
+
+  {% if forecast.risks %}
+  <h3 class="pair-subtitle">
+    Зоны риска: где ждать удорожание
+    <span class="sections-sub">как дорожали виды работ у {{ forecast.risk_objects }} прошлых объектов класса «{{ forecast.building_class }}» и сколько это для нового объекта</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Вид работ</th>
+          <th>Дорожал у объектов</th>
+          <th>Обычно, к своей смете</th>
+          <th>У каждого четвёртого — больше чем</th>
+          <th>Ожидаемая доплата</th>
+          <th>Это к смете объекта</th>
+          <th>Доля всего удорожания</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forecast.risks %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{{ mark(row.level) }}</td>
+          <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}{% if not row.common %} <span class="history-note">(редкий)</span>{% endif %}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.grew_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-deviation">{{ row.typical_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-note">{{ row.high_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.points_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.part_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sections-sub history-accuracy">
+    Красным — виды работ, которые дорожали у двух третей объектов и больше и
+    дают доплату от 2 % всей сметы; жёлтым — доплата от 0,75 % сметы. Серая
+    точка — объектов меньше четырёх, вывод делать рано. «Обычно» — середина
+    по объектам класса, где этот вид работ был в смете; объект, где он не
+    подорожал, тоже учтён. Рубли разложены так, чтобы вместе давать типичное
+    удорожание класса{% if forecast.increase_display %} — {{ forecast.increase_display }}{% endif %}.
+    Удорожание предсказывается заметно хуже самой сметы: это ориентир, куда
+    смотреть, а не точная сумма.
   </p>
   {% endif %}
 

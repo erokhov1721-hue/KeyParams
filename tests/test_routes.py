@@ -5327,3 +5327,18 @@ def test_history_check_asks_for_the_area_when_it_is_not_a_number(tmp_path):
 
     assert response.status_code == 200
     assert "Укажите общую площадь нового объекта числом" in response.get_data(as_text=True)
+
+
+def test_history_check_forecast_shows_the_cost_for_later_years_of_signing(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000, 1000])
+
+    body = client.get(
+        "/history-check?set=1&vat_mode=own&inflation_on=1&inflation=10&year=2025"
+        "&new_class=Бизнес&new_area=1000&fc_low=5&fc_high=20",
+    ).get_data(as_text=True)
+
+    assert "Если договор подписать позже" in body
+    assert "<th>2028</th>" in body
+    assert "1 331 000 ₽" in body      # 1 000 000 × 1,1³
+    assert "1 728 000 ₽" in body      # высокий сценарий: × 1,2³

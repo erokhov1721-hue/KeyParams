@@ -397,6 +397,44 @@ def test_forecast_prices_are_brought_to_the_target_year():
     assert round(forecast["total"], 2) == round(120_000.0 * 1.21, 2)
 
 
+def test_horizon_grows_the_estimate_to_the_year_of_signing_and_adds_the_increase():
+    passports, costs = _forecast_base()
+    summary = {f"p{i}": _summary_row(100.0, 20.0) for i in range(6)}
+    adjustments = comparison.Adjustments(inflation=10.0, target_year=2024)
+    for passport in passports.values():
+        passport["year_signed"] = 2024
+
+    forecast = history_check.build_forecast(
+        passports, costs, adjustments, summary, "Бизнес", 1000.0, 5.0, 20.0,
+    )
+
+    columns = forecast["horizon"]["columns"]
+    assert [column["year"] for column in columns] == [2024, 2025, 2026, 2027]
+    assert columns[0]["estimate_display"] == forecast["total_display"] == "120 000 ₽"
+    assert columns[0]["final_display"] == forecast["final_display"] == "144 000 ₽"
+    assert columns[2]["estimate_display"] == "145 200 ₽"     # 120 000 × 1,1²
+    assert columns[2]["increase_display"] == "29 040 ₽"      # 20 % к смете того года
+    assert columns[2]["final_display"] == "174 240 ₽"
+    assert columns[2]["low_display"] == "158 760 ₽"          # 120 000 × 1,05² × 1,2
+    assert columns[2]["high_display"] == "207 360 ₽"         # 120 000 × 1,2² × 1,2
+    assert columns[2]["growth_display"] == "+21,0 %"
+
+
+def test_horizon_without_increase_data_carries_the_estimate_alone():
+    passports, costs = _forecast_base()
+    adjustments = comparison.Adjustments(inflation=10.0, target_year=2024)
+    for passport in passports.values():
+        passport["year_signed"] = 2024
+
+    horizon = history_check.build_forecast(
+        passports, costs, adjustments, None, "Бизнес", 1000.0,
+    )["horizon"]
+
+    assert horizon["has_increase"] is False
+    assert horizon["columns"][1]["final_display"] == horizon["columns"][1]["estimate_display"]
+    assert horizon["columns"][1]["estimate_display"] == "132 000 ₽"
+
+
 def test_weighted_quantile_matches_the_plain_median_for_equal_weights():
     pairs = [(value, 1.0) for value in (10.0, 20.0, 30.0, 40.0)]
 
@@ -410,3 +448,51 @@ def test_weighted_quantile_follows_the_heavier_values():
     pairs = [(10.0, 1.0), (20.0, 1.0), (100.0, 10.0)]
 
     assert history_check._weighted_quantile(pairs, 0.5) > 60.0
+
+
+# --- зоны риска: где ждать удорожание ---
+
+def test_risk_zones_rank_work_types_by_the_money_they_usually_add():
+    passports, costs = _forecast_base()
+    summary = {f"p{i}": _summary_row(100.0, 20.0) for i in range(6)}
+    # Фасад дорожает на 20 % у всех, кровля — на 10 % у одного из шести.
+    increase = {f"p{i}": {"facade": 20_000.0} for i in range(6)}
+    increase["p0"]["roof"] = 2_000.0
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, summary, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    risks = forecast["risks"]
+    assert [row["key"] for row in risks] == ["facade", "roof"]
+    assert risks[0]["grew_display"] == "6 из 6"
+    assert risks[0]["typical_display"] == "+20,0 %"
+    assert risks[0]["level"] == "alert"
+    # Всё типичное удорожание класса (20 % от 120 000) приходится на фасад.
+    assert risks[0]["amount_display"] == forecast["increase_display"] == "24 000 ₽"
+    assert risks[1]["grew_display"] == "1 из 6"
+    assert risks[1]["level"] == "ok"
+    assert forecast["risk_objects"] == 6
+    assert forecast["risk_alert_count"] == 1
+
+
+def test_risk_zones_count_only_objects_with_increase_data():
+    passports, costs = _forecast_base()
+    increase = {f"p{i}": {"facade": 30_000.0} for i in range(3)}
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    facade = forecast["risks"][0]
+    assert facade["grew_display"] == "3 из 3"
+    assert facade["level"] == "none"      # трёх объектов мало для вывода
+    assert forecast["risk_objects"] == 3
+
+
+def test_forecast_without_increase_by_work_type_has_no_risk_zones():
+    passports, costs = _forecast_base()
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert forecast["risks"] == []

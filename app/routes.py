@@ -644,6 +644,36 @@ def _history_check_adjustments():
     )
 
 
+def _history_growth_rate(name, default):
+    """Ставка роста цен для сценария прогноза на годы вперёд — из адреса
+    страницы; нечитаемая или вне разумных границ заменяется обычной."""
+    value = comparison._percent_in_range(request.args.get(name), *comparison.INFLATION_RANGE)
+    return default if value is None else value
+
+
+def _history_increase_by_section(root, slugs, costs):
+    """``{slug: {вид работ: доплата, ₽}}`` — подписанное и прогнозируемое
+    удорожание объекта, сложенные по видам работ; из этого «Проверка по
+    истории» строит зоны риска. Объекта, у которого нет ни того, ни
+    другого, в словаре нет: «данных нет» и «не подорожало» — разное.
+    """
+    signed = _increase_reports(root, slugs, costs)
+    predicted = _predicted_increase_reports(root, slugs)
+    result = {}
+    for slug in slugs:
+        signed_report, predicted_report = signed.get(slug), predicted.get(slug)
+        if not signed_report and not predicted_report:
+            continue
+        extra = {}
+        for row in (signed_report.rows if signed_report else []):
+            if row.delta is not None:
+                extra[row.key] = extra.get(row.key, 0.0) + float(row.delta)
+        for row in (predicted_report.rows if predicted_report else []):
+            extra[row.key] = extra.get(row.key, 0.0) + float(row.amount)
+        result[slug] = extra
+    return result
+
+
 @bp.route("/history-check", methods=["GET"])
 def history_check_page():
     """Проверка по истории: все объекты разом против остальных объектов
@@ -663,16 +693,22 @@ def history_check_page():
     )
     # Прогноз для нового объекта: класс и площадь — из формы на вкладке.
     new_area_text = (request.args.get("new_area") or "").strip()
+    low_growth = _history_growth_rate("fc_low", history_check.DEFAULT_LOW_GROWTH)
+    high_growth = _history_growth_rate("fc_high", history_check.DEFAULT_HIGH_GROWTH)
     forecast = history_check.build_forecast(
         passports, costs, adjustments, summary_rows,
         request.args.get("new_class") or None,
         extractors.parse_number(new_area_text) if new_area_text else None,
+        low_growth, high_growth,
+        _history_increase_by_section(root, slugs, costs),
     )
     return render_template(
         "history_check.html",
         report=report,
         forecast=forecast,
         new_area_text=new_area_text,
+        low_growth_text=comparison._percent_text(low_growth),
+        high_growth_text=comparison._percent_text(high_growth),
         adjustments=adjustments,
         has_projects=bool(slugs),
     )

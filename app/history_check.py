@@ -454,6 +454,23 @@ AREA_BANDWIDTH = 1.0
 # доли объектов; реже — через резерв на редкие работы.
 COMMON_SHARE = 0.5
 
+# Прогноз на годы вперёд: сколько лет показывать (считая год, к которому
+# приведены цены) и какие ставки роста цен брать для низкого и высокого
+# сценария, если на странице не заданы свои.
+HORIZON_YEARS = 4
+DEFAULT_LOW_GROWTH = 8.0
+DEFAULT_HIGH_GROWTH = 15.0
+
+# Зоны риска — в каких видах работ ждать удорожания. Вид работ «вырос» у
+# объекта, если доплата по нему больше этой доли его сметы, %.
+RISK_GREW_PERCENT = 0.5
+# Красная зона: ожидаемая доплата по виду работ не меньше стольких процентов
+# всей сметы объекта, и росла она не меньше чем у двух третей объектов.
+# Жёлтая — доплата заметна, но меньше или случается реже.
+RISK_ALERT_POINTS = 2.0
+RISK_WARN_POINTS = 0.75
+RISK_OFTEN_SHARE = 2.0 / 3.0
+
 FORECAST_NO_CLASS = "no_class"
 FORECAST_NO_AREA = "no_area"
 FORECAST_FEW = "few"
@@ -581,6 +598,78 @@ def _increase_shares(slugs, summary_rows_by_slug):
     return shares
 
 
+def _work_increase_shares(slugs, costs_by_slug, increase_by_slug):
+    """``{вид работ: [доплата к смете этого вида работ, %]}`` — по одному
+    числу на каждый объект из ``slugs``, у которого известно удорожание и
+    этот вид работ есть в смете. Объект, где вид работ не дорожал, даёт 0:
+    «не выросло» — тоже опыт, и выбрасывать его значит завышать риск."""
+    shares = {}
+    for slug in slugs:
+        extra = increase_by_slug.get(slug)
+        if extra is None:
+            continue
+        for key, base in (costs_by_slug.get(slug) or {}).items():
+            base = float(base or 0.0)
+            if base > 0:
+                shares.setdefault(key, []).append(float(extra.get(key) or 0.0) / base * 100.0)
+    return shares
+
+
+def _risk_rows(works, shares_by_key, total, increase):
+    """Зоны риска: по каждому виду работ прогноза — как часто и на сколько
+    он дорожал у прошлых объектов класса и сколько это в рублях для нового.
+
+    Рубли по видам работ разложены так, чтобы вместе давать типичное
+    удорожание класса (``increase``): сумма «типичных» доплат по отдельным
+    работам сама по себе с ним не сходится, а проверка на прошлых объектах
+    показала, что удорожание объекта целиком класс предсказывает не хуже.
+    """
+    rows = []
+    for work in works:
+        shares = shares_by_key.get(work["key"]) or []
+        if not shares:
+            continue
+        pairs = [(share, 1.0) for share in shares]
+        typical = median(shares)
+        weight = 1.0 if work["common"] else work["frequency"]
+        rows.append({
+            "key": work["key"], "label": work["label"], "common": work["common"],
+            "count": len(shares),
+            "grew": sum(1 for share in shares if share > RISK_GREW_PERCENT),
+            "typical": typical,
+            "high": _weighted_quantile(pairs, 0.75),
+            "raw": max(work["amount"] * weight * typical / 100.0, 0.0),
+        })
+    raw_total = sum(row["raw"] for row in rows)
+    scale = increase / raw_total if increase and raw_total else 1.0
+    for row in rows:
+        amount = row["raw"] * scale
+        points = amount / total * 100.0 if total else 0.0
+        often = row["grew"] >= row["count"] * RISK_OFTEN_SHARE
+        if row["count"] < MIN_GROUP:
+            level = LEVEL_NONE
+        elif points >= RISK_ALERT_POINTS and often:
+            level = LEVEL_ALERT
+        elif points >= RISK_WARN_POINTS:
+            level = LEVEL_WARN
+        else:
+            level = LEVEL_OK
+        row.update({
+            "amount": amount,
+            "level": level,
+            "grew_display": f"{row['grew']} из {row['count']}",
+            "typical_display": cost_increase.format_percent(row["typical"]),
+            "high_display": cost_increase.format_percent(row["high"]),
+            "amount_display": _money(amount),
+            "points_display": _plain_percent(points),
+            "part_display": (
+                _plain_percent(amount / increase * 100.0) if increase else EMPTY
+            ),
+        })
+    rows.sort(key=lambda row: -row["amount"])
+    return rows
+
+
 def _plain_percent(value):
     return f"{value:.1f}".replace(".", ",").replace("-", "−") + " %"
 
@@ -591,12 +680,61 @@ def _money_range(low, high):
     return f"{_money(low)} – {_money(high)}"
 
 
+def _horizon(total, area, share, base_year, main_rate, low_rate, high_rate):
+    """Тот же прогноз, если договор подписать не в ``base_year``, а через
+    год, два, три: смета растёт со ставкой сценария, типичное удорожание
+    класса (``share``, % к смете) добавляется поверх.
+
+    Рост цен считается только до года подписания. На годы самой стройки он
+    не накручивается: удорожание класса — это и есть то, на сколько прошлые
+    объекты подорожали за время стройки, рост цен в нём уже сидит, и второй
+    раз его считать нельзя.
+    """
+    factor = 1.0 + (share or 0.0) / 100.0
+    columns = []
+    for step in range(HORIZON_YEARS):
+        def grown(rate):
+            return total * (1.0 + rate / 100.0) ** step
+
+        estimate = grown(main_rate)
+        final = estimate * factor
+        columns.append({
+            "year": base_year + step,
+            "estimate_display": _money(estimate),
+            "increase_display": _money(final - estimate) if share is not None else EMPTY,
+            "final_display": _money(final),
+            "final_per_sqm_display": _per_sqm(final / area),
+            "low_display": _money(grown(low_rate) * factor),
+            "high_display": _money(grown(high_rate) * factor),
+            "growth_display": (
+                cost_increase.format_percent(((1.0 + main_rate / 100.0) ** step - 1.0) * 100.0)
+                if step else "сегодня"
+            ),
+        })
+    return {
+        "columns": columns,
+        "main_rate_display": _plain_percent(main_rate),
+        "low_rate_display": _plain_percent(low_rate),
+        "high_rate_display": _plain_percent(high_rate),
+        "has_increase": share is not None,
+    }
+
+
 def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=None,
-                   building_class=None, area=None):
+                   building_class=None, area=None, low_growth=DEFAULT_LOW_GROWTH,
+                   high_growth=DEFAULT_HIGH_GROWTH, increase_by_slug=None):
     """Прогноз стоимости нового объекта класса ``building_class`` площадью
     ``area`` м² — по видам работ, с диапазоном и с проверкой на прошлых
     объектах. Цены — в тех же поправках (``adjustments``), что и остальная
     страница: с инфляцией это цена договора, подписанного в целевом году.
+
+    ``low_growth`` и ``high_growth`` — ставки роста цен, % в год, для
+    низкого и высокого сценария прогноза на годы вперёд; основной сценарий —
+    ставка инфляции самой страницы.
+
+    ``increase_by_slug`` — ``{slug: {вид работ: доплата, ₽}}``, подписанное
+    и прогнозируемое удорожание прошлых объектов по видам работ; из него
+    строятся зоны риска. Объекта без данных об удорожании в словаре нет.
 
     Всегда возвращает словарь; ``problem`` в нём — почему прогноза нет
     (не выбран класс, не задана площадь, в классе мало объектов).
@@ -631,6 +769,7 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
             "key": row["key"],
             "label": estimate_sections.CATEGORY_LABELS[row["key"]],
             "common": row["common"],
+            "frequency": row["frequency"],
             "frequency_display": f"{row['count']} из {len(training)}",
             "rate": row["rate"],
             "rate_display": _per_sqm(row["rate"]),
@@ -676,8 +815,17 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
             final_low = likely_low * (1.0 + share_low / 100.0)
             final_high = likely_high * (1.0 + share_high / 100.0)
 
+    increase_by_slug = increase_by_slug or {}
+    risks = _risk_rows(
+        works, _work_increase_shares(class_slugs, costs_by_slug, increase_by_slug),
+        total, increase,
+    )
+
     confidence = _confidence(len(training))
     result.update({
+        "risks": risks,
+        "risk_objects": sum(1 for slug in class_slugs if slug in increase_by_slug),
+        "risk_alert_count": sum(1 for row in risks if row["level"] == LEVEL_ALERT),
         "area_display": _area(area),
         "confidence": confidence,
         "confidence_label": CONFIDENCE_LABELS[confidence],
@@ -719,6 +867,13 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
         "final_display": _money(final),
         "final_per_sqm_display": _per_sqm(final / area) if final is not None else EMPTY,
         "final_likely_display": _money_range(final_low, final_high),
+        "horizon": _horizon(
+            total, area, share_mid, adjustments.target_year,
+            adjustments.inflation if adjustments.inflation is not None
+            else comparison.DEFAULT_INFLATION,
+            low_growth, high_growth,
+        ),
+        "prices_as_signed": adjustments.inflation is None,
         "analogs": [
             {
                 "slug": obj["slug"], "name": obj["name"], "year": obj["year"],
