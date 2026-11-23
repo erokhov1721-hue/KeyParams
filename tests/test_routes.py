@@ -5290,3 +5290,40 @@ def test_history_check_on_an_empty_base_offers_to_create_a_project(tmp_path):
 
     assert response.status_code == 200
     assert "Проверять пока нечего" in response.get_data(as_text=True)
+
+
+def test_history_check_forecasts_a_new_object_by_work_type(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000, 1000])
+
+    body = client.get(
+        "/history-check?set=1&vat_mode=own&new_class=Бизнес&new_area=2 000",
+    ).get_data(as_text=True)
+
+    assert "Сколько будет стоить новый объект" in body
+    assert "Итого смета" in body
+    assert "Фасад" in body
+    assert "2 000 000 ₽" in body      # 1000 ₽/м² × 2000 м²
+    assert "Проверка на прошлых объектах" in body
+
+
+def test_history_check_refuses_a_forecast_for_a_class_with_too_few_objects(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000])
+
+    body = client.get(
+        "/history-check?set=1&vat_mode=own&new_class=Бизнес&new_area=2000",
+    ).get_data(as_text=True)
+
+    assert "прогноз был бы" in body
+    assert "Итого смета" not in body
+
+
+def test_history_check_asks_for_the_area_when_it_is_not_a_number(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000])
+
+    response = client.get("/history-check?set=1&new_class=Бизнес&new_area=много")
+
+    assert response.status_code == 200
+    assert "Укажите общую площадь нового объекта числом" in response.get_data(as_text=True)

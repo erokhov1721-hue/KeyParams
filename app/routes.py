@@ -656,16 +656,23 @@ def history_check_page():
     passports = {slug: _safe_passport(root, slug) for slug in slugs}
     adjustments = _history_check_adjustments()
     summary = _investor_summary_table(root, slugs) if slugs else None
+    costs = _section_costs(root, slugs)
+    summary_rows = {row["slug"]: row for row in summary["rows"]} if summary else {}
     report = history_check.build(
-        passports,
-        _section_costs(root, slugs),
-        adjustments,
-        {row["slug"]: row for row in summary["rows"]} if summary else {},
-        request.args.get("class") or None,
+        passports, costs, adjustments, summary_rows, request.args.get("class") or None,
+    )
+    # Прогноз для нового объекта: класс и площадь — из формы на вкладке.
+    new_area_text = (request.args.get("new_area") or "").strip()
+    forecast = history_check.build_forecast(
+        passports, costs, adjustments, summary_rows,
+        request.args.get("new_class") or None,
+        extractors.parse_number(new_area_text) if new_area_text else None,
     )
     return render_template(
         "history_check.html",
         report=report,
+        forecast=forecast,
+        new_area_text=new_area_text,
         adjustments=adjustments,
         has_projects=bool(slugs),
     )

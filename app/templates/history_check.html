@@ -36,6 +36,9 @@
 <div class="card sections-card">
   <form class="adjust-form" method="get" action="{{ url_for('main.history_check_page') }}">
     <input type="hidden" name="set" value="1">
+    {# Прогноз на вкладке «Новый объект» не должен пропадать от «Применить». #}
+    <input type="hidden" name="new_class" value="{{ forecast.building_class or '' }}">
+    <input type="hidden" name="new_area" value="{{ new_area_text }}">
     <label class="adjust-toggle">
       <span>Класс</span>
       <select name="class" class="object-picker-select history-class-select" onchange="this.form.submit()">
@@ -119,6 +122,270 @@
   <button type="button" class="history-tab" data-tab="increase" role="tab">
     Удорожание <span class="history-tab-count">{{ report.counts.increase }}</span>
   </button>
+  <button type="button" class="history-tab" data-tab="forecast" role="tab">
+    Новый объект: прогноз стоимости
+  </button>
+</div>
+
+<div class="card sections-card history-panel" data-panel="forecast" hidden>
+  <div class="sections-head">
+    <h2 class="chart-title">Сколько будет стоить новый объект</h2>
+    <p class="sections-sub">
+      Укажите класс и общую площадь — программа соберёт смету по видам работ
+      из прошлых объектов этого класса. Для каждого вида работ берётся
+      типичная цена за м² (объекты, близкие по площади, учитываются с
+      большим весом) и умножается на площадь нового объекта. Цены — с теми
+      поправками на НДС и инфляцию, что выбраны вверху страницы.
+    </p>
+  </div>
+
+  <form class="adjust-form" method="get" action="{{ url_for('main.history_check_page') }}#forecast">
+    <input type="hidden" name="set" value="1">
+    <input type="hidden" name="class" value="{{ report.building_class or '' }}">
+    <input type="hidden" name="vat_mode" value="{{ adjustments.vat_mode }}">
+    <input type="hidden" name="vat" value="{{ adjustments.vat_display }}">
+    {% if adjustments.inflation is not none %}<input type="hidden" name="inflation_on" value="1">{% endif %}
+    <input type="hidden" name="inflation" value="{{ adjustments.inflation_display }}">
+    <input type="hidden" name="year" value="{{ adjustments.target_year }}">
+    <label class="adjust-toggle">
+      <span>Класс</span>
+      <select name="new_class" class="object-picker-select history-class-select">
+        <option value="">Выберите класс…</option>
+        {% for row in report.classes %}
+        <option value="{{ row.building_class }}" {{ 'selected' if row.building_class == forecast.building_class }}>
+          {{ row.building_class }} ({{ row.count }})
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="adjust-toggle">
+      <span>Общая площадь</span>
+      <input class="adjust-input history-area-input" type="text" name="new_area" inputmode="decimal"
+             value="{{ new_area_text }}" placeholder="например, 120 000">
+      <span class="adjust-unit">м²</span>
+    </label>
+    <button type="submit" class="btn btn-primary">Рассчитать</button>
+  </form>
+
+  {% if forecast.problem == 'no_class' %}
+  <p class="history-empty">Выберите класс и укажите площадь нового объекта.</p>
+  {% elif forecast.problem == 'no_area' %}
+  <p class="history-empty">Укажите общую площадь нового объекта числом, в квадратных метрах.</p>
+  {% elif forecast.problem == 'few' %}
+  <div class="alert alert-warning">
+    В классе «{{ forecast.building_class }}» для прогноза подходит
+    {{ forecast.training_count }} объект(а) — нужно не меньше
+    {{ report.thresholds.min_group }}. По такой выборке прогноз был бы
+    угадыванием, поэтому он не строится.
+  </div>
+  {% else %}
+
+  {% if forecast.confidence == 'rough' %}
+  <div class="alert alert-warning">
+    Прогноз построен по {{ forecast.training_count }} объектам — этого мало:
+    относитесь к цифрам как к ориентиру, а не к расчёту.
+  </div>
+  {% endif %}
+
+  <div class="history-tiles">
+    <div class="history-tile">
+      <span class="history-tile-label">Смета — цена договора</span>
+      <span class="history-tile-value">{{ forecast.total_display }}</span>
+      <span class="history-tile-sub">{{ forecast.rate_display }} · {{ forecast.area_display }}</span>
+      {% if forecast.likely_display %}
+      <span class="history-tile-sub">вероятный диапазон: {{ forecast.likely_display }}</span>
+      {% endif %}
+    </div>
+    <div class="history-tile">
+      <span class="history-tile-label">Типичное удорожание в классе</span>
+      {% if forecast.increase_share_display %}
+      <span class="history-tile-value">+{{ forecast.increase_display }}</span>
+      <span class="history-tile-sub">{{ forecast.increase_share_display }} к смете — середина по {{ forecast.increase_count }} объектам</span>
+      <span class="history-tile-sub">обычно от {{ forecast.increase_range_display }}</span>
+      {% else %}
+      <span class="history-tile-value">—</span>
+      <span class="history-tile-sub">данных об удорожании в классе нет</span>
+      {% endif %}
+    </div>
+    <div class="history-tile is-main">
+      <span class="history-tile-label">Итоговая стоимость с удорожанием</span>
+      {% if forecast.final_display and forecast.final is not none %}
+      <span class="history-tile-value">{{ forecast.final_display }}</span>
+      <span class="history-tile-sub">{{ forecast.final_per_sqm_display }}</span>
+      {% if forecast.final_likely_display %}
+      <span class="history-tile-sub">вероятный диапазон: {{ forecast.final_likely_display }}</span>
+      {% endif %}
+      {% else %}
+      <span class="history-tile-value">—</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if forecast.typical_error_display %}
+  <p class="sections-sub history-accuracy">
+    <strong>Насколько этому можно верить.</strong>
+    Способ проверен на прошлом: каждый из {{ forecast.backtest_count }}
+    объектов класса по очереди убирался из выборки, и его смета
+    предсказывалась по остальным. Обычная ошибка такого прогноза —
+    {{ forecast.typical_error_display }} (у половины объектов меньше, у
+    половины больше), самая большая — {{ forecast.worst_error_display }}.
+    «Вероятный диапазон» — в него попала средняя половина объектов; все
+    прошлые объекты уложились в {{ forecast.extreme_display }}.
+    Прогноз знает только класс и площадь: этажность, подземная часть,
+    уровень отделки и участок в нём не учтены.
+  </p>
+  {% endif %}
+
+  <h3 class="pair-subtitle">
+    Смета по видам работ
+    <span class="sections-sub">типичная цена за м² в классе «{{ forecast.building_class }}» × {{ forecast.area_display }}</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Вид работ</th>
+          <th>Есть у объектов</th>
+          <th>Цена за м²</th>
+          <th>Обычно, ₽/м²</th>
+          <th>Сумма</th>
+          <th>Доля</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forecast.works if row.common %}
+        <tr>
+          <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.frequency_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.rate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-note">{{ row.range_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.share_display }}</span></td>
+        </tr>
+        {% endfor %}
+        {% if forecast.rare_count %}
+        <tr>
+          <td class="sections-label-col">
+            <span class="sections-label">Резерв на редкие виды работ</span>
+          </td>
+          <td class="sections-value"><span class="sections-number history-note">см. ниже</span></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.reserve_rate_display }}</span></td>
+          <td></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.reserve_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.reserve_share_display }}</span></td>
+        </tr>
+        {% endif %}
+      </tbody>
+      <tfoot>
+        <tr class="history-total-row">
+          <td class="sections-label-col"><span class="sections-label">Итого смета</span></td>
+          <td></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.rate_display }}</span></td>
+          <td></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.total_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">100,0 %</span></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  {% if forecast.rare_count %}
+  <h3 class="pair-subtitle">
+    Редкие виды работ
+    <span class="sections-sub">есть меньше чем у половины объектов класса; в итог входят резервом — цена, умноженная на долю объектов, где вид работ встречается</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Вид работ</th>
+          <th>Есть у объектов</th>
+          <th>Цена за м²</th>
+          <th>Обычно, ₽/м²</th>
+          <th>Сумма, если будет</th>
+          <th>В резерве</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forecast.works if not row.common %}
+        <tr>
+          <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.frequency_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.rate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-note">{{ row.range_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.reserve_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <h3 class="pair-subtitle">
+    На каких объектах построен прогноз
+    <span class="sections-sub">сверху — самые близкие по площади; «вес» — насколько объект учитывается</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Объект</th>
+          <th>Год договора</th>
+          <th>Площадь</th>
+          <th>Цена за м²</th>
+          <th>Вес</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forecast.analogs %}
+        <tr>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="sections-value"><span class="sections-number">{{ row.year or '—' }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.area_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.rate_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.weight_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if forecast.skipped %}
+  <p class="sections-sub">
+    Не вошли в расчёт:
+    {% for row in forecast.skipped %}«{{ row.name }}» ({{ row.reason }}){{ '; ' if not loop.last else '.' }}{% endfor %}
+  </p>
+  {% endif %}
+
+  {% if forecast.backtest %}
+  <h3 class="pair-subtitle">
+    Проверка на прошлых объектах
+    <span class="sections-sub">что дал бы этот способ для каждого объекта, если бы его сметы ещё не было</span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="sections-label-col">Объект</th>
+          <th>Прогноз</th>
+          <th>Факт по смете</th>
+          <th>Промах прогноза</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in forecast.backtest %}
+        <tr>
+          <td class="sections-label-col">{{ project_link(row) }}</td>
+          <td class="sections-value"><span class="sections-number">{{ row.predicted_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.actual_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.error_display }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
 </div>
 
 <div class="card sections-card history-panel" data-panel="data">

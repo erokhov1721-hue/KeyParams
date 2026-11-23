@@ -221,3 +221,192 @@ def test_choosing_a_class_narrows_every_report_but_not_the_class_list():
     assert {row["building_class"] for row in report["objects"]} == {"Комфорт"}
     assert {row["building_class"] for row in report["classes"]} == {"Бизнес", "Комфорт"}
     assert report["counts"]["objects"] == 0
+
+
+# --- прогноз стоимости нового объекта ---
+
+def _forecast_base(count=6, **costs_per_object):
+    """``count`` объектов «Бизнеса» по 1000 м² с одинаковой сметой."""
+    costs_per_object = costs_per_object or {"facade": 100_000.0, "roof": 20_000.0}
+    passports = {f"p{i}": _passport(f"Объект {i}") for i in range(count)}
+    costs = {f"p{i}": dict(costs_per_object) for i in range(count)}
+    return passports, costs
+
+
+def test_forecast_multiplies_the_typical_rate_of_each_work_type_by_the_new_area():
+    passports, costs = _forecast_base()
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 2000.0)
+
+    assert forecast["problem"] is None
+    amounts = {row["key"]: row["amount"] for row in forecast["works"]}
+    assert amounts == {"facade": 200_000.0, "roof": 40_000.0}   # 100 и 20 ₽/м² × 2000 м²
+    assert forecast["total"] == 240_000.0
+    assert forecast["total_display"] == "240 000 ₽"
+    assert forecast["rate_display"] == "120 ₽/м²"
+
+
+def test_forecast_work_types_add_up_to_the_total():
+    passports, costs = _forecast_base()
+    costs["p0"] = {"facade": 150_000.0, "roof": 10_000.0, "lifts": 7_000.0}
+    costs["p1"] = {"facade": 90_000.0, "roof": 35_000.0, "restoration": 50_000.0}
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 3000.0)
+
+    common = sum(row["amount"] for row in forecast["works"] if row["common"])
+    rare = sum(
+        row["amount"] * 1 / 6 for row in forecast["works"] if not row["common"]
+    )
+    assert round(common + rare, 6) == round(forecast["total"], 6)
+
+
+def test_a_rare_work_type_enters_the_total_in_proportion_to_how_often_it_occurs():
+    passports, costs = _forecast_base()
+    costs["p0"]["restoration"] = 60_000.0   # 60 ₽/м², у одного из шести
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    rare = [row for row in forecast["works"] if not row["common"]]
+    assert [row["key"] for row in rare] == ["restoration"]
+    assert rare[0]["frequency_display"] == "1 из 6"
+    # 120 ₽/м² обычных работ + 60 × 1/6 резерва
+    assert round(forecast["rate"], 6) == 130.0
+    assert forecast["reserve_display"] == "10 000 ₽"
+
+
+def test_forecast_is_not_moved_by_one_object_with_a_wild_price():
+    passports, costs = _forecast_base()
+    costs["p0"] = {"facade": 5_000_000.0, "roof": 20_000.0}
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert round(forecast["rate"]) == 120
+
+
+def test_forecast_leans_on_the_objects_closest_in_area():
+    passports = {}
+    costs = {}
+    for i in range(4):   # маленькие и дорогие
+        passports[f"s{i}"] = _passport(f"Малый {i}", area=5_000.0)
+        costs[f"s{i}"] = {"facade": 5_000.0 * 300}
+    for i in range(4):   # большие и дешёвые
+        passports[f"b{i}"] = _passport(f"Большой {i}", area=200_000.0)
+        costs[f"b{i}"] = {"facade": 200_000.0 * 100}
+
+    small = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 5_000.0)
+    large = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 200_000.0)
+
+    assert small["rate"] > 250
+    assert large["rate"] < 150
+    assert small["analogs"][0]["name"].startswith("Малый")
+    assert large["analogs"][0]["name"].startswith("Большой")
+
+
+def test_forecast_uses_only_the_chosen_class():
+    passports, costs = _forecast_base()
+    for i in range(6):
+        passports[f"c{i}"] = _passport(f"Комфорт {i}", "Комфорт")
+        costs[f"c{i}"] = {"facade": 8_000.0, "roof": 2_000.0}
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Комфорт", 1000.0)
+
+    assert forecast["total"] == 10_000.0
+    assert forecast["training_count"] == 6
+
+
+def test_forecast_is_refused_for_a_class_with_too_few_objects():
+    passports, costs = _forecast_base(count=3)
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert forecast["problem"] == "few"
+    assert forecast["training_count"] == 3
+    assert "works" not in forecast
+
+
+def test_forecast_asks_for_a_class_and_an_area():
+    passports, costs = _forecast_base()
+
+    assert history_check.build_forecast(passports, costs, OFF, None, None, 1000.0)["problem"] == "no_class"
+    assert history_check.build_forecast(passports, costs, OFF, None, "Бизнес", None)["problem"] == "no_area"
+    assert history_check.build_forecast(passports, costs, OFF, None, "Бизнес", -5.0)["problem"] == "no_area"
+
+
+def test_an_incomplete_estimate_is_kept_out_of_the_forecast_and_named():
+    keys = ["facade", "roof", "concrete", "lifts", "utilities", "landscaping"]
+    passports = {f"p{i}": _passport(f"Объект {i}") for i in range(6)}
+    costs = {f"p{i}": {key: 10_000.0 for key in keys} for i in range(6)}
+    costs["p5"] = {"facade": 10_000.0}
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert forecast["training_count"] == 5
+    assert [row["name"] for row in forecast["skipped"]] == ["Объект 5"]
+    assert "1 видов работ — обычно их 6" in forecast["skipped"][0]["reason"]
+    assert forecast["total"] == 60_000.0
+
+
+def test_forecast_reports_how_far_it_missed_on_past_objects():
+    passports, costs = _forecast_base()
+    costs["p0"] = {"facade": 150_000.0, "roof": 30_000.0}   # 180 ₽/м² против 120
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert forecast["backtest_count"] == 6
+    worst = forecast["backtest"][0]
+    assert worst["name"] == "Объект 0"
+    assert worst["predicted_display"] == "120 ₽/м²"
+    assert worst["actual_display"] == "180 ₽/м²"
+    assert worst["error_display"] == "−33,3 %"
+    assert forecast["typical_error_display"] == "0,0 %"
+    assert forecast["worst_error_display"] == "33,3 %"
+    # Диапазон «все прошлые объекты»: от 120 до 180 ₽/м² на 1000 м².
+    assert forecast["extreme_display"] == "120 000 ₽ – 180 000 ₽"
+
+
+def test_forecast_adds_the_typical_increase_of_the_class():
+    passports, costs = _forecast_base()
+    summary = {f"p{i}": _summary_row(100.0, 20.0) for i in range(6)}
+
+    forecast = history_check.build_forecast(passports, costs, OFF, summary, "Бизнес", 1000.0)
+
+    assert forecast["increase_share_display"] == "20,0 %"
+    assert forecast["increase_display"] == "24 000 ₽"
+    assert forecast["final_display"] == "144 000 ₽"
+    assert forecast["final_per_sqm_display"] == "144 ₽/м²"
+
+
+def test_forecast_without_increase_data_gives_the_estimate_alone():
+    passports, costs = _forecast_base()
+
+    forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
+
+    assert forecast["final"] is None
+    assert forecast["increase_share_display"] is None
+    assert forecast["total_display"] == "120 000 ₽"
+
+
+def test_forecast_prices_are_brought_to_the_target_year():
+    passports, costs = _forecast_base()
+    for passport in passports.values():
+        passport["year_signed"] = 2022
+    adjustments = comparison.Adjustments(inflation=10.0, target_year=2024)
+
+    forecast = history_check.build_forecast(passports, costs, adjustments, None, "Бизнес", 1000.0)
+
+    assert round(forecast["total"], 2) == round(120_000.0 * 1.21, 2)
+
+
+def test_weighted_quantile_matches_the_plain_median_for_equal_weights():
+    pairs = [(value, 1.0) for value in (10.0, 20.0, 30.0, 40.0)]
+
+    assert history_check._weighted_quantile(pairs, 0.5) == 25.0
+    assert history_check._weighted_quantile(pairs[:3], 0.5) == 20.0
+    assert history_check._weighted_quantile([(5.0, 1.0)], 0.25) == 5.0
+    assert history_check._weighted_quantile([], 0.5) is None
+
+
+def test_weighted_quantile_follows_the_heavier_values():
+    pairs = [(10.0, 1.0), (20.0, 1.0), (100.0, 10.0)]
+
+    assert history_check._weighted_quantile(pairs, 0.5) > 60.0

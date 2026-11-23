@@ -18,6 +18,7 @@
 утянул бы среднее за собой и сам на его фоне выглядел бы приличнее. Медиану
 один выброс не сдвигает.
 """
+from math import exp, log
 from statistics import median
 
 from app import comparison, cost_increase, estimate_sections
@@ -421,3 +422,311 @@ def build(passports, costs_by_slug, adjustments, summary_rows_by_slug=None,
             "min_group": MIN_GROUP,
         },
     }
+
+
+# --- Прогноз стоимости нового объекта ---------------------------------------
+#
+# Известны только класс и площадь. Прогноз складывается снизу вверх, по
+# видам работ: для каждого — типичная цена за м² по объектам класса, где он
+# есть (взвешенная медиана: объекты, близкие по площади, весят больше),
+# умноженная на площадь нового объекта. Виды работ, которые есть меньше чем
+# у половины объектов класса, входят в итог одной строкой «резерв на редкие
+# работы» — каждая своей типичной ценой, умноженной на долю объектов, где
+# она встречается. Совсем их не считать значило бы систематически занижать
+# итог: у каждого второго-третьего объекта что-то из редкого да есть.
+#
+# Насколько прогнозу можно верить, не предполагается, а измеряется: каждый
+# прошлый объект по очереди убирается из выборки и предсказывается по
+# остальным — так же, как будет предсказан новый. Из того, как фактическая
+# смета относилась к такому прогнозу, берутся и «обычная ошибка», и диапазон.
+#
+# На данных базы тем же способом проверялись другие способы (медиана цены
+# за м² целиком, портфельное среднее, зависимость цены от площади по
+# регрессии): сумма типичных цен по видам работ ошибается не больше любого
+# из них, не ломается на одном выбросе и сразу даёт разбивку по работам.
+
+# Ширина «окна близости» по площади, в натуральных логарифмах: объект в
+# e ≈ 2,7 раза больше или меньше нового весит 0,61 от объекта той же
+# площади, в 7 раз — 0,14. Окно намеренно широкое: объектов в классе
+# немного, и узкое оставило бы прогноз на двух-трёх из них.
+AREA_BANDWIDTH = 1.0
+# Вид работ входит в итог своей строкой, если есть не меньше чем у этой
+# доли объектов; реже — через резерв на редкие работы.
+COMMON_SHARE = 0.5
+
+FORECAST_NO_CLASS = "no_class"
+FORECAST_NO_AREA = "no_area"
+FORECAST_FEW = "few"
+
+
+def _weighted_quantile(pairs, q):
+    """Квантиль ``q`` (0…1) значений с весами — ``pairs`` это [(значение,
+    вес)]. Между соседними значениями — линейно; при равных весах медиана
+    чётного числа значений — середина между двумя центральными, как у
+    обычной медианы."""
+    pairs = sorted((value, weight) for value, weight in pairs if weight > 0)
+    if not pairs:
+        return None
+    total = sum(weight for _value, weight in pairs)
+    positions = []
+    seen = 0.0
+    for _value, weight in pairs:
+        positions.append((seen + weight / 2.0) / total)
+        seen += weight
+    if q <= positions[0]:
+        return pairs[0][0]
+    if q >= positions[-1]:
+        return pairs[-1][0]
+    for index in range(1, len(pairs)):
+        if q <= positions[index]:
+            left, right = positions[index - 1], positions[index]
+            share = (q - left) / (right - left) if right > left else 0.0
+            return pairs[index - 1][0] + (pairs[index][0] - pairs[index - 1][0]) * share
+    return pairs[-1][0]
+
+
+def _area_weight(own_area, new_area):
+    return exp(-0.5 * ((log(own_area) - log(new_area)) / AREA_BANDWIDTH) ** 2)
+
+
+def _training_set(objects, building_class):
+    """Объекты класса, по которым можно строить прогноз, и те, что пришлось
+    оставить в стороне, — с причиной. Смета, в которой заметно меньше видов
+    работ, чем обычно, в выборку не идёт: она занизила бы прогноз."""
+    section_counts = [len(obj["costs"]) for obj in objects if obj["costs"]]
+    usual_sections = median(section_counts) if section_counts else None
+    used, skipped = [], []
+    for obj in objects:
+        if obj["building_class"] != building_class:
+            continue
+        count = len(obj["costs"])
+        if obj["rate"] is None:
+            skipped.append({"slug": obj["slug"], "name": obj["name"], "reason": _why_no_rate(obj)})
+        elif usual_sections and count < usual_sections * FEW_SECTIONS_SHARE:
+            skipped.append({
+                "slug": obj["slug"], "name": obj["name"],
+                "reason": f"в смете {count} видов работ — обычно их {round(usual_sections)}",
+            })
+        else:
+            used.append(obj)
+    return used, skipped
+
+
+def _work_forecast(training, area):
+    """Типичная цена за м² по каждому виду работ для объекта площадью
+    ``area`` — строки по всем видам работ, что встречались в классе."""
+    weights = {obj["slug"]: _area_weight(obj["area"], area) for obj in training}
+    rows = []
+    for key in estimate_sections.CATEGORY_KEYS:
+        pairs = [
+            (obj["costs"][key] / obj["area"], weights[obj["slug"]])
+            for obj in training if obj["costs"].get(key)
+        ]
+        if not pairs:
+            continue
+        rows.append({
+            "key": key,
+            "count": len(pairs),
+            "frequency": len(pairs) / len(training),
+            "common": len(pairs) >= len(training) * COMMON_SHARE,
+            "rate": _weighted_quantile(pairs, 0.5),
+            "low": _weighted_quantile(pairs, 0.25),
+            "high": _weighted_quantile(pairs, 0.75),
+        })
+    return rows
+
+
+def _reserve_rate(work_rows):
+    """Резерв на редкие виды работ, ₽/м²: цена каждого, умноженная на долю
+    объектов, где он встречается."""
+    return sum(row["rate"] * row["frequency"] for row in work_rows if not row["common"])
+
+
+def _total_rate(work_rows):
+    return sum(row["rate"] for row in work_rows if row["common"]) + _reserve_rate(work_rows)
+
+
+def _predicted_rate(training, area):
+    return _total_rate(_work_forecast(training, area))
+
+
+def _backtest(training):
+    """Проверка на прошлом: каждый объект предсказан по остальным. Список
+    {объект, прогноз, факт, отношение факт/прогноз}; пусто, если после
+    изъятия одного объекта остаётся слишком мало."""
+    if len(training) < MIN_GROUP:
+        return []
+    results = []
+    for obj in training:
+        others = [other for other in training if other is not obj]
+        predicted = _predicted_rate(others, obj["area"])
+        if not predicted:
+            continue
+        results.append({
+            "slug": obj["slug"], "name": obj["name"],
+            "predicted": predicted, "actual": obj["rate"],
+            "ratio": obj["rate"] / predicted,
+        })
+    return results
+
+
+def _increase_shares(slugs, summary_rows_by_slug):
+    shares = []
+    for slug in slugs:
+        summary = summary_rows_by_slug.get(slug)
+        if not summary or not summary.get("has_increase_data") or not summary.get("base"):
+            continue
+        amount = (summary.get("signed") or 0.0) + (summary.get("predicted") or 0.0)
+        shares.append(amount / summary["base"] * 100.0)
+    return shares
+
+
+def _plain_percent(value):
+    return f"{value:.1f}".replace(".", ",").replace("-", "−") + " %"
+
+
+def _money_range(low, high):
+    if low is None or high is None:
+        return None
+    return f"{_money(low)} – {_money(high)}"
+
+
+def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=None,
+                   building_class=None, area=None):
+    """Прогноз стоимости нового объекта класса ``building_class`` площадью
+    ``area`` м² — по видам работ, с диапазоном и с проверкой на прошлых
+    объектах. Цены — в тех же поправках (``adjustments``), что и остальная
+    страница: с инфляцией это цена договора, подписанного в целевом году.
+
+    Всегда возвращает словарь; ``problem`` в нём — почему прогноза нет
+    (не выбран класс, не задана площадь, в классе мало объектов).
+    """
+    summary_rows_by_slug = summary_rows_by_slug or {}
+    result = {"building_class": building_class, "area": area, "problem": None}
+    if not building_class:
+        result["problem"] = FORECAST_NO_CLASS
+        return result
+    if not area or area <= 0:
+        result["problem"] = FORECAST_NO_AREA
+        return result
+
+    objects = _objects(passports, costs_by_slug, adjustments)
+    training, skipped = _training_set(objects, building_class)
+    result["skipped"] = skipped
+    result["training_count"] = len(training)
+    if len(training) < MIN_GROUP:
+        result["problem"] = FORECAST_FEW
+        return result
+
+    work_rows = _work_forecast(training, area)
+    rate = _total_rate(work_rows)
+    reserve = _reserve_rate(work_rows)
+    total = rate * area
+
+    works = []
+    for row in work_rows:
+        amount = row["rate"] * area
+        low, high = format_number(round(row["low"])), format_number(round(row["high"]))
+        works.append({
+            "key": row["key"],
+            "label": estimate_sections.CATEGORY_LABELS[row["key"]],
+            "common": row["common"],
+            "frequency_display": f"{row['count']} из {len(training)}",
+            "rate": row["rate"],
+            "rate_display": _per_sqm(row["rate"]),
+            "range_display": f"{low} – {high}",
+            "amount": amount,
+            "amount_display": _money(amount),
+            "reserve_display": _money(amount * row["frequency"]),
+            "share_display": (
+                _plain_percent(row["rate"] / rate * 100.0) if row["common"] and rate else EMPTY
+            ),
+        })
+    works.sort(key=lambda row: (not row["common"], -row["amount"]))
+
+    # Диапазон и точность — из проверки на прошлых объектах.
+    backtest = _backtest(training)
+    ratios = [(item["ratio"], 1.0) for item in backtest]
+    errors = [(item["predicted"] / item["actual"] - 1.0) * 100.0 for item in backtest]
+    sizes = sorted(abs(error) for error in errors)
+
+    def scaled(q=None, pick=None):
+        if not ratios:
+            return None
+        if pick is not None:
+            return total * pick(value for value, _weight in ratios)
+        return total * _weighted_quantile(ratios, q)
+
+    likely_low, likely_high = scaled(0.25), scaled(0.75)
+
+    # Удорожание: типичная для класса доля к смете — те же суммы, что в
+    # «Сводке по удорожанию», по всем объектам класса, где они известны.
+    class_slugs = [obj["slug"] for obj in objects if obj["building_class"] == building_class]
+    shares = _increase_shares(class_slugs, summary_rows_by_slug)
+    increase = final = final_low = final_high = None
+    share_mid = share_low = share_high = None
+    if shares:
+        share_pairs = [(share, 1.0) for share in shares]
+        share_mid = median(shares)
+        share_low = _weighted_quantile(share_pairs, 0.25)
+        share_high = _weighted_quantile(share_pairs, 0.75)
+        increase = total * share_mid / 100.0
+        final = total + increase
+        if likely_low is not None:
+            final_low = likely_low * (1.0 + share_low / 100.0)
+            final_high = likely_high * (1.0 + share_high / 100.0)
+
+    confidence = _confidence(len(training))
+    result.update({
+        "area_display": _area(area),
+        "confidence": confidence,
+        "confidence_label": CONFIDENCE_LABELS[confidence],
+        "works": works,
+        "rare_count": sum(1 for row in works if not row["common"]),
+        "reserve_rate_display": _per_sqm(reserve),
+        "reserve_display": _money(reserve * area),
+        "reserve_share_display": _plain_percent(reserve / rate * 100.0) if rate else EMPTY,
+        "rate": rate,
+        "rate_display": _per_sqm(rate),
+        "total": total,
+        "total_display": _money(total),
+        "likely_display": _money_range(likely_low, likely_high),
+        "extreme_display": _money_range(scaled(pick=min), scaled(pick=max)),
+        "backtest_count": len(backtest),
+        "typical_error_display": _plain_percent(median(sizes)) if sizes else None,
+        "worst_error_display": _plain_percent(sizes[-1]) if sizes else None,
+        "backtest": sorted(
+            (
+                {
+                    "slug": item["slug"], "name": item["name"],
+                    "predicted_display": _per_sqm(item["predicted"]),
+                    "actual_display": _per_sqm(item["actual"]),
+                    # Насколько прогноз промахнулся мимо факта.
+                    "error": error,
+                    "error_display": cost_increase.format_percent(error),
+                }
+                for item, error in zip(backtest, errors)
+            ),
+            key=lambda item: -abs(item["error"]),
+        ),
+        "increase_count": len(shares),
+        "increase_share_display": _plain_percent(share_mid) if shares else None,
+        "increase_range_display": (
+            f"{_plain_percent(share_low)} – {_plain_percent(share_high)}" if shares else None
+        ),
+        "increase_display": _money(increase),
+        "final": final,
+        "final_display": _money(final),
+        "final_per_sqm_display": _per_sqm(final / area) if final is not None else EMPTY,
+        "final_likely_display": _money_range(final_low, final_high),
+        "analogs": [
+            {
+                "slug": obj["slug"], "name": obj["name"], "year": obj["year"],
+                "area_display": _area(obj["area"]),
+                "rate_display": _per_sqm(obj["rate"]),
+                "weight_display": f"{round(_area_weight(obj['area'], area) * 100)} %",
+            }
+            for obj in sorted(training, key=lambda obj: -_area_weight(obj["area"], area))
+        ],
+    })
+    return result
