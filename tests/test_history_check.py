@@ -496,3 +496,37 @@ def test_forecast_without_increase_by_work_type_has_no_risk_zones():
     forecast = history_check.build_forecast(passports, costs, OFF, None, "Бизнес", 1000.0)
 
     assert forecast["risks"] == []
+
+
+def test_work_types_show_what_they_cost_with_the_extras():
+    passports, costs = _forecast_base()
+    summary = {f"p{i}": _summary_row(100.0, 20.0) for i in range(6)}
+    increase = {f"p{i}": {"facade": 20_000.0} for i in range(6)}
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, summary, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    works = {row["key"]: row for row in forecast["works"]}
+    assert forecast["has_extra"] is True
+    assert works["facade"]["extra_display"] == "24 000 ₽"
+    assert works["facade"]["with_extra_display"] == "124 000 ₽"
+    assert works["roof"]["with_extra_display"] == "20 000 ₽"
+    # Вместе виды работ дают итоговую стоимость: 124 000 + 20 000.
+    assert forecast["final_display"] == "144 000 ₽"
+
+
+def test_an_extra_every_object_pays_is_named_a_steady_one():
+    passports, costs = _forecast_base()
+    # Фасад дорожает у всех на 18–22 %, кровля — у двух из шести.
+    increase = {f"p{i}": {"facade": 18_000.0 + 800.0 * i} for i in range(6)}
+    increase["p0"]["roof"] = 10_000.0
+    increase["p1"]["roof"] = 1_000.0
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 1000.0, increase_by_slug=increase,
+    )
+
+    kinds = {row["key"]: row["kind"] for row in forecast["risks"]}
+    assert kinds == {"facade": "постоянная добавка", "roof": "обычно не дорожает"}
+    assert forecast["steady_count"] == 1

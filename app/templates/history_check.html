@@ -328,6 +328,7 @@
           <th class="history-mark-col"></th>
           <th class="sections-label-col">Вид работ</th>
           <th>Дорожал у объектов</th>
+          <th>Характер доплаты</th>
           <th>Обычно, к своей смете</th>
           <th>У каждого четвёртого — больше чем</th>
           <th>Ожидаемая доплата</th>
@@ -341,6 +342,7 @@
           <td class="history-mark-col">{{ mark(row.level) }}</td>
           <td class="sections-label-col"><span class="sections-label" title="{{ row.label }}">{{ row.label }}{% if not row.common %} <span class="history-note">(редкий)</span>{% endif %}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.grew_display }}</span></td>
+          <td class="sections-value"><span class="sections-number{{ '' if row.steady else ' history-note' }}">{{ row.kind }}</span></td>
           <td class="sections-value"><span class="sections-number history-deviation">{{ row.typical_display }}</span></td>
           <td class="sections-value"><span class="sections-number history-note">{{ row.high_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
@@ -358,6 +360,11 @@
     по объектам класса, где этот вид работ был в смете; объект, где он не
     подорожал, тоже учтён. Рубли разложены так, чтобы вместе давать типичное
     удорожание класса{% if forecast.increase_display %} — {{ forecast.increase_display }}{% endif %}.
+    «Постоянная добавка» — вид работ дорожал почти у всех объектов и даже у
+    нижней четверти не меньше чем на половину обычного: это не случайность, а
+    часть цены, которой нет в договоре, — в том числе там, где договор занижен
+    намеренно. Её стоит закладывать в бюджет сразу. «От случая к случаю» —
+    настоящий риск: может не случиться, а может выйти намного больше.
     Удорожание предсказывается заметно хуже самой сметы: это ориентир, куда
     смотреть, а не точная сумма.
   </p>
@@ -375,8 +382,12 @@
           <th>Есть у объектов</th>
           <th>Цена за м²</th>
           <th>Обычно, ₽/м²</th>
-          <th>Сумма</th>
+          <th>Сумма{% if forecast.has_extra %} в договоре{% endif %}</th>
           <th>Доля</th>
+          {% if forecast.has_extra %}
+          <th>Обычно допами</th>
+          <th>Итого с допами</th>
+          {% endif %}
         </tr>
       </thead>
       <tbody>
@@ -388,6 +399,10 @@
           <td class="sections-value"><span class="sections-number history-note">{{ row.range_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.amount_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ row.share_display }}</span></td>
+          {% if forecast.has_extra %}
+          <td class="sections-value"><span class="sections-number history-note">{{ row.extra_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.with_extra_display }}</span></td>
+          {% endif %}
         </tr>
         {% endfor %}
         {% if forecast.rare_count %}
@@ -400,6 +415,10 @@
           <td></td>
           <td class="sections-value"><span class="sections-number">{{ forecast.reserve_display }}</span></td>
           <td class="sections-value"><span class="sections-number">{{ forecast.reserve_share_display }}</span></td>
+          {% if forecast.has_extra %}
+          <td class="sections-value"><span class="sections-number history-note">{{ forecast.reserve_extra_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.reserve_with_extra_display }}</span></td>
+          {% endif %}
         </tr>
         {% endif %}
       </tbody>
@@ -411,10 +430,23 @@
           <td></td>
           <td class="sections-value"><span class="sections-number">{{ forecast.total_display }}</span></td>
           <td class="sections-value"><span class="sections-number">100,0 %</span></td>
+          {% if forecast.has_extra %}
+          <td class="sections-value"><span class="sections-number">{{ forecast.increase_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ forecast.final_display }}</span></td>
+          {% endif %}
         </tr>
       </tfoot>
     </table>
   </div>
+  {% if forecast.has_extra %}
+  <p class="sections-sub history-accuracy">
+    «Сумма в договоре» — по ценам прошлых договоров; если в них какие-то
+    позиции занижались и добирались допами, она занижена так же. «Итого с
+    допами» от этого не зависит: это то, во что вид работ обходится в итоге,
+    как бы деньги ни делились между договором и допами. На неё и стоит
+    смотреть как на реальную стоимость.
+  </p>
+  {% endif %}
 
   {% if forecast.rare_count %}
   <h3 class="pair-subtitle">

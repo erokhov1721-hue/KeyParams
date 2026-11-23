@@ -470,6 +470,12 @@ RISK_GREW_PERCENT = 0.5
 RISK_ALERT_POINTS = 2.0
 RISK_WARN_POINTS = 0.75
 RISK_OFTEN_SHARE = 2.0 / 3.0
+# «Постоянная добавка»: вид работ дорожал не меньше чем у такой доли
+# объектов, и даже у нижней четверти — не меньше чем на половину обычного.
+# Такая доплата предсказуема: это не риск, а часть цены, которой нет в
+# договоре (в том числе там, где договор занижен намеренно).
+RISK_STEADY_SHARE = 0.8
+RISK_STEADY_FLOOR = 0.5
 
 FORECAST_NO_CLASS = "no_class"
 FORECAST_NO_AREA = "no_area"
@@ -638,6 +644,7 @@ def _risk_rows(works, shares_by_key, total, increase):
             "grew": sum(1 for share in shares if share > RISK_GREW_PERCENT),
             "typical": typical,
             "high": _weighted_quantile(pairs, 0.75),
+            "low": _weighted_quantile(pairs, 0.25),
             "raw": max(work["amount"] * weight * typical / 100.0, 0.0),
         })
     raw_total = sum(row["raw"] for row in rows)
@@ -654,9 +661,21 @@ def _risk_rows(works, shares_by_key, total, increase):
             level = LEVEL_WARN
         else:
             level = LEVEL_OK
+        if row["count"] < MIN_GROUP:
+            kind = "мало данных"
+        elif row["typical"] <= RISK_GREW_PERCENT:
+            kind = "обычно не дорожает"
+        elif (row["grew"] >= row["count"] * RISK_STEADY_SHARE
+              and row["low"] >= row["typical"] * RISK_STEADY_FLOOR):
+            kind = "постоянная добавка"
+        else:
+            kind = "от случая к случаю"
         row.update({
             "amount": amount,
             "level": level,
+            "kind": kind,
+            "steady": kind == "постоянная добавка",
+            "low_display": cost_increase.format_percent(row["low"]),
             "grew_display": f"{row['grew']} из {row['count']}",
             "typical_display": cost_increase.format_percent(row["typical"]),
             "high_display": cost_increase.format_percent(row["high"]),
@@ -821,8 +840,22 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
         total, increase,
     )
 
+    # Та же смета по видам работ, но с допами: сколько вид работ стоит в
+    # итоге. Раскладка та же, что в зонах риска, — в сумме даёт итоговую.
+    extra_by_key = {row["key"]: row["amount"] for row in risks} if increase else {}
+    for work in works:
+        extra = extra_by_key.get(work["key"], 0.0)
+        shown = bool(extra_by_key) and work["common"]
+        work["extra_display"] = _money(extra) if shown else EMPTY
+        work["with_extra_display"] = _money(work["amount"] + extra) if shown else EMPTY
+    reserve_extra = sum(row["amount"] for row in risks if not row["common"])
+
     confidence = _confidence(len(training))
     result.update({
+        "has_extra": bool(extra_by_key),
+        "reserve_extra_display": _money(reserve_extra),
+        "reserve_with_extra_display": _money(reserve * area + reserve_extra),
+        "steady_count": sum(1 for row in risks if row["steady"]),
         "risks": risks,
         "risk_objects": sum(1 for slug in class_slugs if slug in increase_by_slug),
         "risk_alert_count": sum(1 for row in risks if row["level"] == LEVEL_ALERT),
