@@ -165,6 +165,24 @@
       <span class="adjust-unit">м²</span>
     </label>
     <button type="submit" class="btn btn-primary">Рассчитать</button>
+    <div class="history-new-facts">
+      <span class="sections-sub">Необязательно — для сравнения с ближайшим объектом класса:</span>
+      <label class="adjust-toggle">
+        <span>Надземная часть</span>
+        <input class="adjust-input history-area-input" type="text" name="new_above" inputmode="decimal" value="{{ new_texts.new_above }}">
+        <span class="adjust-unit">м²</span>
+      </label>
+      <label class="adjust-toggle">
+        <span>Объём бетона</span>
+        <input class="adjust-input history-area-input" type="text" name="new_concrete" inputmode="decimal" value="{{ new_texts.new_concrete }}">
+        <span class="adjust-unit">м³</span>
+      </label>
+      <label class="adjust-toggle">
+        <span>Площадь фасада</span>
+        <input class="adjust-input history-area-input" type="text" name="new_facade" inputmode="decimal" value="{{ new_texts.new_facade }}">
+        <span class="adjust-unit">м²</span>
+      </label>
+    </div>
   </form>
 
   {% if forecast.problem == 'no_class' %}
@@ -179,6 +197,53 @@
     угадыванием, поэтому он не строится.
   </div>
   {% else %}
+
+  {% if forecast.reference %}
+  {% set ref = forecast.reference %}
+  <h3 class="pair-subtitle">
+    1. Сравнение с ближайшим объектом класса
+    <span class="sections-sub">
+      {{ project_link(ref) }} — {{ ref.area_display }}, договор {{ ref.year or 'без года' }},
+      {{ 'завершён' if ref.completed else 'в работе' }}{% if ref.rate_display != '—' %}, смета {{ ref.rate_display }}{% endif %}
+    </span>
+  </h3>
+  <div class="sections-table-wrap">
+    <table class="sections-table history-table">
+      <thead>
+        <tr>
+          <th class="history-mark-col"></th>
+          <th class="sections-label-col">Показатель</th>
+          <th>Новый объект</th>
+          <th>Объект сравнения</th>
+          <th>Отличие</th>
+          <th>Середина класса</th>
+          <th>Новый к середине класса</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ref.rows %}
+        <tr class="history-row is-{{ row.level }}">
+          <td class="history-mark-col">{% if row.judged %}{{ mark(row.level) }}{% endif %}</td>
+          <td class="sections-label-col"><span class="sections-label">{{ row.label }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.new_display }}</span></td>
+          <td class="sections-value"><span class="sections-number">{{ row.reference_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-deviation">{{ row.difference_display }}</span></td>
+          <td class="sections-value"><span class="sections-number history-note">{{ row.class_display }}{% if row.judged and row.class_count %} · {{ row.class_count }} об.{% endif %}</span></td>
+          <td class="sections-value"><span class="sections-number history-note">{{ row.against_class_display if row.judged else '' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sections-sub history-accuracy">
+    Объект сравнения выбирается сам: того же класса,
+    {% if ref.near %}с площадью не более чем в полтора раза больше или меньше новой, из таких — последний по году договора{% else %}ближайший по площади — объектов с площадью в пределах полутора раз от новой в классе нет{% endif %}.
+    {% if not ref.has_new_figures %}Чтобы увидеть отличия, укажите в форме выше надземную площадь, объём бетона и площадь фасада нового объекта.{% endif %}
+    Жёлтым — удельный показатель отличается от объекта сравнения на 10 % и больше, красным — на 20 % и больше:
+    больше бетона или фасада на метр — монолит или фасад, скорее всего, выйдут дороже прогноза ниже, меньше — дешевле.
+    Сам прогноз от этих цифр не меняется.
+  </p>
+  {% endif %}
 
   {% if forecast.confidence == 'rough' %}
   <div class="alert alert-warning">

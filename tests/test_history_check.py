@@ -580,3 +580,100 @@ def test_with_few_completed_objects_the_increase_falls_back_to_all_of_them():
     assert forecast["increase_count"] == 8
     assert forecast["increase_share_display"] == "10,0 %"
     assert forecast["risk_objects"] == 8
+
+
+# --- сравнение нового объекта с ближайшим объектом класса ---
+
+def _reference_base():
+    passports, costs = {}, {}
+    for slug, area, year in (
+        ("old", 100_000.0, 2020), ("fresh", 130_000.0, 2025),
+        ("close", 101_000.0, 2022), ("far", 400_000.0, 2026),
+        ("p4", 90_000.0, 2019), ("p5", 95_000.0, 2018),
+    ):
+        passport = _passport(slug, area=area)
+        passport["year_signed"] = year
+        passport["aboveground_area_sqm"] = area * 0.8
+        passports[slug] = passport
+        costs[slug] = {"facade": area * 100.0, "roof": area * 20.0}
+    metrics = {
+        slug: {"concrete_volume": passports[slug]["total_area_sqm"] * 0.5,
+               "facade_area": passports[slug]["aboveground_area_sqm"] * 0.8}
+        for slug in passports
+    }
+    return passports, costs, metrics
+
+
+def test_the_reference_object_is_the_latest_among_those_close_in_area():
+    passports, costs, metrics = _reference_base()
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 100_000.0, metrics_by_slug=metrics,
+    )
+
+    reference = forecast["reference"]
+    # «far» свежее, но вчетверо больше; из близких по площади свежее всех «fresh».
+    assert reference["slug"] == "fresh"
+    assert reference["near"] is True
+    assert reference["year"] == 2025
+
+
+def test_without_objects_close_in_area_the_nearest_one_is_taken():
+    passports, costs, metrics = _reference_base()
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 1_000_000.0, metrics_by_slug=metrics,
+    )
+
+    assert forecast["reference"]["slug"] == "far"
+    assert forecast["reference"]["near"] is False
+
+
+def test_the_new_object_is_compared_by_concrete_and_facade_per_square_metre():
+    passports, costs, metrics = _reference_base()
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 100_000.0, metrics_by_slug=metrics,
+        new_object={
+            "aboveground_area": 80_000.0,
+            "concrete_volume": 65_000.0,   # 0,65 м³/м² против 0,5 у объекта сравнения
+            "facade_area": 67_200.0,       # 0,84 м²/м² против 0,8
+        },
+    )
+
+    rows = {row["key"]: row for row in forecast["reference"]["rows"]}
+    assert rows["concrete_per"]["new_display"] == "0,650"
+    assert rows["concrete_per"]["reference_display"] == "0,500"
+    assert rows["concrete_per"]["difference_display"] == "+30,0 %"
+    assert rows["concrete_per"]["level"] == "alert"
+    assert rows["concrete_per"]["class_display"] == "0,500"
+    assert rows["facade_per"]["difference_display"] == "+5,0 %"
+    assert rows["facade_per"]["level"] == "ok"
+    assert forecast["reference"]["has_new_figures"] is True
+    assert forecast["reference"]["alert_count"] == 1
+
+
+def test_without_figures_of_the_new_object_the_reference_is_still_shown():
+    passports, costs, metrics = _reference_base()
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 100_000.0, metrics_by_slug=metrics,
+    )
+
+    rows = {row["key"]: row for row in forecast["reference"]["rows"]}
+    assert forecast["reference"]["has_new_figures"] is False
+    assert rows["concrete_per"]["new_display"] == "—"
+    assert rows["concrete_per"]["reference_display"] == "0,500"
+    assert rows["concrete_per"]["level"] == "none"
+
+
+def test_among_close_objects_one_with_concrete_and_facade_figures_is_preferred():
+    passports, costs, metrics = _reference_base()
+    metrics["fresh"] = {"concrete_volume": None, "facade_area": None}
+
+    forecast = history_check.build_forecast(
+        passports, costs, OFF, None, "Бизнес", 100_000.0, metrics_by_slug=metrics,
+    )
+
+    # «fresh» свежее, но сравнивать с ним нечего — берётся следующий по году.
+    assert forecast["reference"]["slug"] == "close"

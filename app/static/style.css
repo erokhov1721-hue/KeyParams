@@ -4830,3 +4830,14 @@ tbody .label-area.is-empty {
   border-top: 2px solid var(--border);
   font-weight: 700;
 }
+
+/* Необязательные сведения о новом объекте — отдельной строкой под формой
+   прогноза, чтобы не теснить класс и площадь. */
+.history-new-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  flex-basis: 100%;
+  margin-top: 4px;
+}

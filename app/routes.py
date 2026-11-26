@@ -651,6 +651,10 @@ def _history_growth_rate(name, default):
     return default if value is None else value
 
 
+def _history_float(value):
+    return float(value) if value is not None else None
+
+
 def _history_increase_by_section(root, slugs, costs):
     """``{slug: {вид работ: доплата, ₽}}`` — подписанное и прогнозируемое
     удорожание объекта, сложенные по видам работ; из этого «Проверка по
@@ -695,18 +699,49 @@ def history_check_page():
     new_area_text = (request.args.get("new_area") or "").strip()
     low_growth = _history_growth_rate("fc_low", history_check.DEFAULT_LOW_GROWTH)
     high_growth = _history_growth_rate("fc_high", history_check.DEFAULT_HIGH_GROWTH)
+    new_class = request.args.get("new_class") or None
+    # Что известно о самом новом объекте, кроме площади, — для сравнения с
+    # ближайшим объектом класса. Поля необязательные.
+    new_texts = {
+        name: (request.args.get(name) or "").strip()
+        for name in ("new_above", "new_concrete", "new_facade")
+    }
+
+    def new_number(name):
+        return extractors.parse_number(new_texts[name]) if new_texts[name] else None
+
+    # Объём бетона и площадь фасада читаются из смет — только по объектам
+    # выбранного класса: остальным в сравнении делать нечего.
+    class_slugs = [
+        slug for slug in slugs
+        if new_class and (passports[slug].get("building_class") or None) == new_class
+    ]
+    metrics = {
+        slug: {
+            "concrete_volume": _history_float(_concrete_volume(root, slug, passports[slug])),
+            "facade_area": _history_float(_facade_area(root, slug, passports[slug])),
+        }
+        for slug in class_slugs
+    }
     forecast = history_check.build_forecast(
         passports, costs, adjustments, summary_rows,
-        request.args.get("new_class") or None,
+        new_class,
         extractors.parse_number(new_area_text) if new_area_text else None,
         low_growth, high_growth,
         _history_increase_by_section(root, slugs, costs),
+        metrics,
+        {
+            "aboveground_area": new_number("new_above"),
+            "concrete_volume": new_number("new_concrete"),
+            "facade_area": new_number("new_facade"),
+        },
     )
     return render_template(
         "history_check.html",
         report=report,
         forecast=forecast,
         new_area_text=new_area_text,
+        new_texts=new_texts,
         low_growth_text=comparison._percent_text(low_growth),
         high_growth_text=comparison._percent_text(high_growth),
         adjustments=adjustments,

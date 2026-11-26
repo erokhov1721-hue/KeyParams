@@ -742,9 +742,139 @@ def _horizon(total, area, share, base_year, main_rate, low_rate, high_rate):
     }
 
 
+# Объект для сравнения: того же класса, близкий по площади и самый свежий
+# по году договора. «Близкий» — площадь отличается не больше чем в столько
+# раз; среди таких берётся последний по году, при равных годах — ближайший
+# по площади. Нет ни одного близкого — просто ближайший по площади. Из
+# близких сначала смотрятся те, у кого известны и бетон, и фасад: с объектом
+# без этих цифр сравнивать нечего.
+REFERENCE_AREA_BAND = 1.5
+# Отличие удельного показателя (бетон на м², фасад на м²) от объекта
+# сравнения, с которого оно заметное и сильное, %.
+REFERENCE_THRESHOLDS = (10.0, 20.0)
+
+
+def _reference_object(objects, building_class, area, has_figures=lambda obj: True):
+    """Объект для сравнения и признак «близок по площади» — или (None,
+    False), если в классе нет ни одного объекта с известной площадью.
+    ``has_figures`` — есть ли у объекта то, что с ним собираются сравнивать."""
+    candidates = [
+        obj for obj in objects if obj["building_class"] == building_class and obj["area"]
+    ]
+    if not candidates:
+        return None, False
+
+    def ratio(obj):
+        return max(obj["area"], area) / min(obj["area"], area)
+
+    near = [obj for obj in candidates if ratio(obj) <= REFERENCE_AREA_BAND]
+    near = [obj for obj in near if has_figures(obj)] or near
+    if near:
+        return max(near, key=lambda obj: (obj["year"] or 0, -ratio(obj))), True
+    return min(candidates, key=ratio), False
+
+
+def _per(value, base):
+    return value / base if value and base else None
+
+
+def _coefficient(value):
+    return EMPTY if value is None else f"{value:.3f}".replace(".", ",")
+
+
+def _volume(value, unit):
+    return EMPTY if value is None else f"{format_number(round(value))} {unit}"
+
+
+def _reference_comparison(objects, passports, metrics_by_slug, building_class, area, new_object):
+    """Новый объект рядом с объектом сравнения: площади, объём бетона на м²
+    общей площади и площадь фасада на м² надземной части. У нового объекта
+    эти величины заданы в форме; не заданы — в строке стоит прочерк, а
+    объект сравнения и середина класса показаны всё равно, как ориентир.
+    """
+    def facts(slug, total_area):
+        metrics = metrics_by_slug.get(slug) or {}
+        above = (passports.get(slug) or {}).get("aboveground_area_sqm") or None
+        concrete = metrics.get("concrete_volume")
+        facade = metrics.get("facade_area")
+        return {
+            "area": total_area, "above": above, "concrete": concrete, "facade": facade,
+            "concrete_per": _per(concrete, total_area), "facade_per": _per(facade, above),
+        }
+
+    def has_figures(obj):
+        found = facts(obj["slug"], obj["area"])
+        return found["concrete_per"] is not None and found["facade_per"] is not None
+
+    reference, near = _reference_object(objects, building_class, area, has_figures)
+    if reference is None:
+        return None
+    ref = facts(reference["slug"], reference["area"])
+    new = {
+        "area": area,
+        "above": new_object.get("aboveground_area") or None,
+        "concrete": new_object.get("concrete_volume") or None,
+        "facade": new_object.get("facade_area") or None,
+    }
+    new["concrete_per"] = _per(new["concrete"], new["area"])
+    new["facade_per"] = _per(new["facade"], new["above"])
+
+    class_facts = [
+        facts(obj["slug"], obj["area"])
+        for obj in objects if obj["building_class"] == building_class and obj["area"]
+    ]
+
+    def class_median(key):
+        values = [item[key] for item in class_facts if item[key] is not None]
+        return (median(values), len(values)) if values else (None, 0)
+
+    def row(label, key, show, judged=False):
+        ours, theirs = new[key], ref[key]
+        difference = (ours / theirs - 1.0) * 100.0 if ours and theirs else None
+        middle, count = class_median(key) if judged else (None, 0)
+        against_class = (ours / middle - 1.0) * 100.0 if ours and middle else None
+        return {
+            "key": key, "label": label, "judged": judged,
+            "new_display": show(ours), "reference_display": show(theirs),
+            "difference": difference,
+            "difference_display": (
+                cost_increase.format_percent(difference) if difference is not None else EMPTY
+            ),
+            "level": (
+                _level(difference, REFERENCE_THRESHOLDS)
+                if judged and difference is not None else LEVEL_NONE
+            ),
+            "class_display": show(middle) if judged else "",
+            "class_count": count,
+            "against_class_display": (
+                cost_increase.format_percent(against_class) if against_class is not None else EMPTY
+            ),
+        }
+
+    rows = [
+        row("Общая площадь", "area", _area),
+        row("Площадь надземной части", "above", _area),
+        row("Объём бетона", "concrete", lambda value: _volume(value, "м³")),
+        row("Бетон на м² общей площади, м³/м²", "concrete_per", _coefficient, judged=True),
+        row("Площадь фасада", "facade", lambda value: _volume(value, "м²")),
+        row("Фасад на м² надземной части, м²/м²", "facade_per", _coefficient, judged=True),
+    ]
+    return {
+        "slug": reference["slug"], "name": reference["name"],
+        "year": reference["year"], "completed": reference["completed"],
+        "area_display": _area(reference["area"]),
+        "rate_display": _per_sqm(reference["rate"]) if reference["rate"] else EMPTY,
+        "near": near,
+        "rows": rows,
+        "has_new_figures": any(new[key] for key in ("above", "concrete", "facade")),
+        "alert_count": sum(1 for item in rows if item["level"] in (LEVEL_WARN, LEVEL_ALERT)),
+    }
+
+
 def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=None,
                    building_class=None, area=None, low_growth=DEFAULT_LOW_GROWTH,
-                   high_growth=DEFAULT_HIGH_GROWTH, increase_by_slug=None):
+                   high_growth=DEFAULT_HIGH_GROWTH, increase_by_slug=None,
+                   metrics_by_slug=None, new_object=None):
     """Прогноз стоимости нового объекта класса ``building_class`` площадью
     ``area`` м² — по видам работ, с диапазоном и с проверкой на прошлых
     объектах. Цены — в тех же поправках (``adjustments``), что и остальная
@@ -757,6 +887,11 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
     ``increase_by_slug`` — ``{slug: {вид работ: доплата, ₽}}``, подписанное
     и прогнозируемое удорожание прошлых объектов по видам работ; из него
     строятся зоны риска. Объекта без данных об удорожании в словаре нет.
+
+    ``metrics_by_slug`` — ``{slug: {"concrete_volume": м³, "facade_area":
+    м²}}`` по объектам класса, ``new_object`` — то же и ``aboveground_area``
+    для нового объекта, из формы: по ним новый объект сравнивается с
+    ближайшим по площади и самым свежим объектом класса.
 
     Всегда возвращает словарь; ``problem`` в нём — почему прогноза нет
     (не выбран класс, не задана площадь, в классе мало объектов).
@@ -771,6 +906,9 @@ def build_forecast(passports, costs_by_slug, adjustments, summary_rows_by_slug=N
         return result
 
     objects = _objects(passports, costs_by_slug, adjustments)
+    result["reference"] = _reference_comparison(
+        objects, passports, metrics_by_slug or {}, building_class, area, new_object or {},
+    )
     training, skipped = _training_set(objects, building_class)
     result["skipped"] = skipped
     result["training_count"] = len(training)

@@ -5344,3 +5344,18 @@ def test_history_check_forecast_shows_the_cost_for_later_years_of_signing(tmp_pa
     # Низкий и высокий сценарии с формы убраны: одна ставка — инфляция страницы.
     assert "fc_low" not in body
     assert "низкий рост цен" not in body
+
+
+def test_history_check_forecast_compares_the_new_object_with_the_nearest_one(tmp_path):
+    client = create_app(tmp_path).test_client()
+    _history_class(tmp_path, [1000, 1000, 1000, 1000, 1000])
+
+    body = client.get(
+        "/history-check?set=1&vat_mode=own&new_class=Бизнес&new_area=1000"
+        "&new_above=800&new_concrete=600&new_facade=700",
+    ).get_data(as_text=True)
+
+    assert "1. Сравнение с ближайшим объектом класса" in body
+    assert "Бетон на м² общей площади" in body
+    assert "0,600" in body                      # 600 м³ на 1000 м²
+    assert 'name="new_concrete"' in body and 'value="600"' in body
