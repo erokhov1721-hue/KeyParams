@@ -677,3 +677,23 @@ def test_the_investor_summary_pdf_has_the_total_area_column():
     # The header wraps in the narrow column: «Общая» / «площадь, м²».
     assert "площадь, м²" in text
     assert "Объект А 141 823" in text
+
+
+def test_the_investor_summary_pdf_keeps_the_percent_column_of_the_screen():
+    from app import investor_summary
+
+    lines = [cost_increase.Line("Кровля", 100.0, 130.0)]
+    report = cost_increase.build_report(lines, {"roof": 100.0})
+    table = investor_summary.build_table(
+        ["a", "b"], {"a": "Объект А", "b": "Объект Б"},
+        estimate_totals_by_slug={"a": {"roof": 100.0}, "b": {"roof": 200.0}},
+        cost_increase_reports_by_slug={"a": report, "b": None},
+        predicted_increase_by_slug={"a": 50.0},
+    )
+
+    text = "\n".join(_page_texts(pdf_export.build_investor_summary_pdf(table)))
+
+    # Последний столбец экрана — «% удорожания»: у объекта и в «Итого».
+    assert "жания" in text
+    assert table["rows"][0]["estimate_vs_total"]["percent_display"] in text
+    assert table["total"]["estimate_vs_total"]["percent_display"] in text

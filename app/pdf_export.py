@@ -1272,18 +1272,30 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
     на экране; отличается только тем, что тут её рисует reportlab, а не
     CSS ``colspan``/``rowspan``.
     """
-    label_w = min(135.0, page_width * 0.172)
-    rest_total = page_width - label_w
+    label_w = min(116.0, page_width * 0.148)
+    # «% удорожания» — последней колонкой, как на экране; узкая, под
+    # «+123,4 %», и держит одну ячейку через обе строки шапки. Место под
+    # неё взято у названия объекта и у «₽/м²», чтобы «Всего» осталась той
+    # же ширины и 12-значная сумма по-прежнему вставала в одну строку.
+    pct_w = 44.0
+    # Общая площадь объекта — первой колонкой после названия, как на экране,
+    # своей шириной: в неё в одну строку встаёт «площадь, м²» из шапки.
+    area_w = 46.0
+    rest_total = page_width - label_w - pct_w - area_w
     # «Всего» шире «₽/м²»: 27 710 828 200 ₽ против 118 012 — вдвое больше
     # знаков, и половина ширины колонки под шестизначное число выглядела бы
-    # пустой тратой места на 12-значное. Общая площадь объекта — первой
-    # колонкой после названия, как на экране, шириной с «₽/м²»: число того
-    # же порядка. Пропорция подобрана под пять групп на альбомном листе:
-    # в «Всего» целиком, без переноса, встаёт 101 412 499 714 ₽ жирным, в
-    # узкой — «площадь, м²» из шапки.
-    unit = rest_total / (1.0 + len(_INVESTOR_SUMMARY_GROUPS) * (1.63 + 1.0))
-    money_w, sqm_w = unit * 1.63, unit * 1.0
-    col_widths = [label_w, sqm_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS)
+    # пустой тратой места на 12-значное. Пропорция подобрана под пять групп
+    # на альбомном листе: в «Всего» целиком, без переноса, встаёт
+    # 101 412 499 714 ₽ жирным.
+    unit = rest_total / (len(_INVESTOR_SUMMARY_GROUPS) * (1.83 + 1.0))
+    money_w, sqm_w = unit * 1.83, unit * 1.0
+    col_widths = (
+        [label_w, area_w] + [money_w, sqm_w] * len(_INVESTOR_SUMMARY_GROUPS) + [pct_w]
+    )
+
+    def percent_cell(source):
+        evt = source.get("estimate_vs_total")
+        return Paragraph(evt["percent_display"] if evt else "—", styles["cell_right"])
 
     group_row = [
         Paragraph("Объект", styles["head"]),
@@ -1296,6 +1308,8 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
             Paragraph("Всего", styles["subhead_right"]),
             Paragraph("₽/м²", styles["subhead_right"]),
         ]
+    group_row.append(Paragraph("% удоро-<br/>жания", styles["subhead_right"]))
+    subhead_row.append("")
     data = [group_row, subhead_row]
 
     for row in table["rows"]:
@@ -1312,6 +1326,7 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
             Paragraph(row["predicted_per_sqm_display"], styles["cell_muted_right"]),
             Paragraph(row["total_cost_display"], styles["cell_right_bold"]),
             Paragraph(row["total_per_sqm_display"], styles["cell_muted_right"]),
+            percent_cell(row),
         ])
 
     # Строка «Итого» суммирует все объекты сводки — там, где выбран один
@@ -1352,6 +1367,7 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
                 Paragraph(f'{total["total_cost_count"]} из {total["count"]}', styles["note"]),
             ],
             "",
+            percent_cell(total),
         ])
 
     tbl = Table(data, colWidths=col_widths, repeatRows=2)
@@ -1363,7 +1379,10 @@ def _investor_summary_table_block(table, styles, page_width, show_total=True):
         ("BACKGROUND", (1, 0), (1, 1), HEAD_BG),
         ("SPAN", (1, 0), (1, 1)),
         ("VALIGN", (1, 0), (1, 1), "BOTTOM"),
-        ("VALIGN", (1, 1), (-1, 1), "BOTTOM"),
+        ("BACKGROUND", (-1, 0), (-1, 1), HEAD_BG),
+        ("SPAN", (-1, 0), (-1, 1)),
+        ("VALIGN", (-1, 0), (-1, 1), "BOTTOM"),
+        ("VALIGN", (1, 1), (-2, 1), "BOTTOM"),
         ("VALIGN", (0, 2), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
